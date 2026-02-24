@@ -62,4 +62,4 @@ class MetaworldOutputs(transforms.DataTransformFn):
 
     def __call__(self, data: dict) -> dict:
         # For Metaworld, we only return the first 4 actions (since the rest is padding).
-        return {"actions": np.asarray(data["actions"][:, :4])}
+        return {"actions": np.asarray(data["actions"][..., :4])}
