@@ -837,6 +837,20 @@ _CONFIGS = [
         num_train_steps=30_000,
     ),
     TrainConfig(
+        name="pi05_metaworld_eval",
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
+        data=SimpleDataConfig(
+            assets=AssetsConfig(asset_id="metaworld_ml45"),
+            data_transforms=lambda model: _transforms.Group(
+                inputs=[metaworld_lerobot_policy.MetaworldInputs(model_type=ModelType.PI05)],
+                outputs=[metaworld_lerobot_policy.MetaworldOutputs()],
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+    ),
+    TrainConfig(
         name="pi05_metaworld",
         model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
         data=LeRobotMetaworldDataConfig(
