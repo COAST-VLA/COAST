@@ -240,6 +240,8 @@ def main(args: Args) -> None:
             f"video={video_path}"
         )
 
+    env.close()
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
