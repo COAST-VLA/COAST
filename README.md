@@ -6,9 +6,32 @@ GIT_LFS_SKIP_SMUDGE=1 uv sync
 GIT_LFS_SKIP_SMUDGE=1 uv pip install -e .
 ```
 
-# Inference in MetaWorld
+# Train
 ```bash
-MUJOCO_GL=egl uv run examples/metaworld/main.py
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
+    pi05_metaworld \
+    --exp-name pi05_metaworld_test \
+    --overwrite \
+    --num_train_steps 30_000 
+```
+
+# Inference in MetaWorld
+Serve the policy
+```bash
+uv run scripts/serve_policy.py policy:checkpoint \
+    --policy.config=pi05_metaworld_eval \
+    --policy.dir=/path/to/your/checkpoint
+```
+And then run the evaluation script in a separate terminal:
+```bash
+# Evaluate on a single task
+MUJOCO_GL=egl uv run examples/metaworld/eval_single_task.py --env_name reach-v3 --help
+
+# Evaluate on 45 ML45 train tasks
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --benchmark_name ML45-train
+# Evaluate on 5 ML45 test tasks
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --benchmark_name ML45-test
+
 ```
 
 <!-- # openpi

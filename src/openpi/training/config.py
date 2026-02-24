@@ -852,7 +852,7 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi05_metaworld",
-        model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
+        model=pi0_config.Pi0Config(pi05=True, action_horizon=32, discrete_state_input=False),
         data=LeRobotMetaworldDataConfig(
             repo_id="brandonyang/metaworld_ml45",
             base_config=DataConfig(prompt_from_task=True),
@@ -860,10 +860,10 @@ _CONFIGS = [
         ),
         batch_size=128,  # 256,
         lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=10_000,
+            warmup_steps=1_000,
             peak_lr=5e-5,
-            decay_steps=1_000_000,
-            decay_lr=5e-5,
+            decay_steps=29_000,
+            decay_lr=5e-6,
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         ema_decay=0.999,
