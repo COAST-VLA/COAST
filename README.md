@@ -19,13 +19,13 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
 Serve the policy
 ```bash
 uv run scripts/serve_policy.py policy:checkpoint \
-    --policy.config=pi05_metaworld_eval \
+    --policy.config=pi05_metaworld \
     --policy.dir=/path/to/your/checkpoint
 ```
 And then run the evaluation script in a separate terminal:
 ```bash
 # Evaluate on a single task
-MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3 --help
+MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
 
 # Evaluate on 45 ML45 train tasks
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --benchmark_name ML45-train

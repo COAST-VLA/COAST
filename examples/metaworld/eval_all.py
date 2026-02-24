@@ -1,18 +1,17 @@
 """
-NOTE: This creates a lot of parallel environments and may consume a lot of resources. Use main.py
-      if you want to run inference on a single task.
+Evaluate all tasks in ML45 train or test split using the same approach as main.py.
+Each task gets its own set of parallel environments.
 
-      We might deprecate this script in the future in favor of single task eval.
+Train tasks (45):
+    MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
 
-Evaluate on all 45 ML45 train tasks (default):
-- MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --benchmark_name ML45-train
-
-Evaluate on 5 ML45 test tasks:
-- MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --benchmark_name ML45-test
+Test tasks (5):
+    MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
 """
 
 import collections
 import dataclasses
+import json
 import logging
 import math
 import os
@@ -20,7 +19,7 @@ from typing import Literal
 
 import gymnasium as gym
 import imageio.v3 as iio
-import metaworld  # noqa: F401
+import metaworld
 import numpy as np
 from openpi_client import websocket_client_policy as _websocket_client_policy
 from tqdm import tqdm
@@ -39,47 +38,95 @@ CAMERA_IDS = {
     "gripperPOV": 6,
 }
 
+TASK_TO_PROMPT = {
+    "assembly-v3": "pick up the nut and place it onto the peg",
+    "disassemble-v3": "pick up the nut and remove it from the peg",
+    "basketball-v3": "dunk the basketball into the hoop",
+    "soccer-v3": "kick the soccer ball into the goal",
+    "bin-picking-v3": "pick up the object and place it into the bin",
+    "box-close-v3": "grasp the cover and close the box",
+    "button-press-v3": "press the button",
+    "button-press-topdown-v3": "press the button from the top",
+    "button-press-topdown-wall-v3": "press the button on the wall from the top",
+    "button-press-wall-v3": "press the button on the wall",
+    "coffee-button-v3": "push the button on the coffee machine",
+    "coffee-pull-v3": "pull the mug away from the coffee machine",
+    "coffee-push-v3": "push the mug under the coffee machine",
+    "dial-turn-v3": "rotate the dial",
+    "lever-pull-v3": "pull the lever down",
+    "door-close-v3": "close the door",
+    "door-lock-v3": "lock the door by rotating the lock",
+    "door-open-v3": "open the door",
+    "door-unlock-v3": "unlock the door by rotating the lock",
+    "drawer-close-v3": "push the drawer closed",
+    "drawer-open-v3": "pull the drawer open",
+    "faucet-close-v3": "rotate the faucet handle to close it",
+    "faucet-open-v3": "rotate the faucet handle to open it",
+    "hammer-v3": "hammer the nail into the board",
+    "hand-insert-v3": "insert the gripper into the hole",
+    "handle-press-v3": "press the handle down",
+    "handle-press-side-v3": "press the handle down sideways",
+    "handle-pull-v3": "pull the handle up",
+    "handle-pull-side-v3": "pull the handle sideways",
+    "peg-insert-side-v3": "insert the peg into the hole sideways",
+    "peg-unplug-side-v3": "unplug the peg from the hole sideways",
+    "pick-out-of-hole-v3": "pick the object out of the hole",
+    "pick-place-v3": "pick up the object and place it at the goal",
+    "pick-place-wall-v3": "pick up the object and place it at the goal behind the wall",
+    "plate-slide-v3": "slide the plate to the goal",
+    "plate-slide-back-v3": "slide the plate backwards to the goal",
+    "plate-slide-back-side-v3": "slide the plate backwards and sideways to the goal",
+    "plate-slide-side-v3": "slide the plate sideways to the goal",
+    "push-v3": "push the object to the goal",
+    "push-back-v3": "push the object backwards to the goal",
+    "push-wall-v3": "push the object around the wall to the goal",
+    "reach-v3": "reach the goal position",
+    "reach-wall-v3": "reach the goal position behind the wall",
+    "shelf-place-v3": "pick up the object and place it on the shelf",
+    "stick-pull-v3": "use the stick to pull the object",
+    "stick-push-v3": "use the stick to push the object",
+    "sweep-v3": "sweep the object off the table",
+    "sweep-into-v3": "sweep the object into the hole",
+    "window-close-v3": "push the window closed",
+    "window-open-v3": "push the window open",
+}
+
 
 @dataclasses.dataclass
 class Args:
     host: str = "0.0.0.0"
     port: int = 8000
 
-    benchmark_name: Literal["MT1", "MT10", "MT50", "ML1", "ML10-test", "ML10-train", "ML45-test", "ML45-train"] = (
-        "ML45-test"
-    )
-    env_name: str | None = None
+    # Which ML45 split to evaluate.
+    split: Literal["train", "test"] = "train"
+    # Number of parallel environments per task.
+    num_envs: int = 15
+    # Number of episodes per task.
+    num_episodes: int = 1
+    # Maximum steps per episode.
+    max_steps: int = 300
 
     width: int = 224
     height: int = 224
 
-    # Cameras to use for policy input
+    # Cameras to use for policy input.
     policy_cameras: list[str] = dataclasses.field(default_factory=lambda: ["corner", "corner4", "gripperPOV"])
-    # The camera used for rendering the video output (must be one of the policy cameras)
+    # The camera used for rendering the video output (must be one of the policy cameras).
     render_camera: str = "corner"
 
-    num_episodes: int = 2
-    max_steps: int = 200
     fps: int = 24
+    seed: int = 69_420
 
-    seed: int = 42
 
+class MultiCameraWrapper(gym.Wrapper):
+    """Wrapper that renders multiple cameras and includes images in info dict."""
 
-class MultiCameraVectorWrapper(gym.vector.VectorWrapper):
-    """
-    Gym wrapper to render multiple camera views at each step and include them in the info dict.
-
-    info["cameras"]: list[dict[str, np.ndarray]] # camera_names -> image
-        - list length = env vector size
-        - images are (H, W, 3) uint8 RGB
-    """
-
-    def __init__(self, env: gym.vector.VectorEnv, camera_names: list[str]):
+    def __init__(self, env: gym.Env, camera_names: list[str]):
         super().__init__(env)
         self.camera_names = camera_names
 
-    def _render_cameras_one(self, e) -> dict[str, np.ndarray]:
-        renderer = e.unwrapped.mujoco_renderer
+    def _render_cameras(self) -> dict[str, np.ndarray]:
+        renderer = self.unwrapped.mujoco_renderer
         images = {}
         for cam_name in self.camera_names:
             # HACK (branyang02): Very Very Very Hacky
@@ -94,18 +141,15 @@ class MultiCameraVectorWrapper(gym.vector.VectorWrapper):
             images[cam_name] = img[::-1].copy()  # flip vertically
         return images
 
-    def _render_all(self) -> list[dict[str, np.ndarray]]:
-        return [self._render_cameras_one(e) for e in self.env.envs]
-
     def reset(self, **kwargs):
-        obs, infos = self.env.reset(**kwargs)
-        infos["cameras"] = self._render_all()
-        return obs, infos
+        obs, info = super().reset(**kwargs)
+        info["cameras"] = self._render_cameras()
+        return obs, info
 
-    def step(self, actions):
-        obs, rewards, terms, truncs, infos = self.env.step(actions)
-        infos["cameras"] = self._render_all()
-        return obs, rewards, terms, truncs, infos
+    def step(self, action):
+        obs, reward, terminated, truncated, info = super().step(action)
+        info["cameras"] = self._render_cameras()
+        return obs, reward, terminated, truncated, info
 
 
 def tile_frames(frames: list[np.ndarray]) -> np.ndarray:
@@ -127,137 +171,133 @@ def tile_frames(frames: list[np.ndarray]) -> np.ndarray:
     return grid
 
 
-def make_env(
-    benchmark_name: str,
-    env_name: str | None,
-    seed: int,
-    width: int = 224,
-    height: int = 224,
-    camera_names: list[str] | None = None,
-    vector_strategy: Literal["sync", "async"] = "sync",
-) -> gym.vector.VectorEnv:
-    """
-    Environment creation notes:
+def make_env(env_name: str, num_envs: int, width: int, height: int, seed: int, camera_names: list[str]) -> gym.Env:
+    env_fns = [
+        lambda i=i: MultiCameraWrapper(
+            gym.make("Meta-World/MT1", env_name=env_name, seed=seed + i, width=width, height=height),
+            camera_names,
+        )
+        for i in range(num_envs)
+    ]
+    return gym.vector.AsyncVectorEnv(env_fns)
 
-    - MT1 and ML1 create a single environment.
-    - MT10 and MT50 create 10 and 50 environments respectively, each with different tasks.
-    - ML10-test/ML10-train and ML45-test/ML45-train create environments from the test or train
-    split of ML10 and ML45 respectively.
-    - We wrap the environments in a custom wrapper to render multiple camera views at each step
 
-    Task breakdown:
+def eval_task(env_name: str, policy, args: Args, output_dir: str) -> dict[str, float]:
+    """Evaluate a single task over num_episodes and return per-episode success rates."""
+    prompt = TASK_TO_PROMPT.get(env_name, f"complete the {env_name} task")
 
-    ML10 test tasks (5 tasks):
-        0: SawyerDrawerOpenEnvV3
-        1: SawyerDoorCloseEnvV3
-        2: SawyerShelfPlaceEnvV3
-        3: SawyerSweepIntoGoalEnvV3
-        4: SawyerLeverPullEnvV3
-
-    ML45 test tasks (5 tasks):
-        0: SawyerBinPickingEnvV3
-        1: SawyerBoxCloseEnvV3
-        2: SawyerHandInsertEnvV3
-        3: SawyerDoorLockEnvV3
-        4: SawyerDoorUnlockEnvV3
-
-    References:
-    - Meta-World environments: https://meta-world.github.io/
-    - Environment creation code adapted from:
-    https://metaworld.farama.org/introduction/basic_usage/
-    """
-
-    # TODO(branyang02): should we support async vector envs?
-    if vector_strategy == "async":
-        raise NotImplementedError("Async vector environments are not supported yet!")
-
-    # TODO(branyang02): should we support MT1 and ML1?
-    if benchmark_name == "MT1":
-        raise NotImplementedError("MT1 is not implemented yet")
-        env = gym.make("Meta-World/MT1", env_name=env_name, seed=seed)
-    if benchmark_name == "ML1":
-        raise NotImplementedError("ML1 is not implemented yet")
-        env = gym.make("Meta-World/ML1-test", env_name=env_name, seed=seed)
-
-    env = gym.make_vec(
-        f"Meta-World/{benchmark_name}",
-        vector_strategy=vector_strategy,
-        seed=seed,
-        width=width,
-        height=height,
+    env = make_env(
+        env_name=env_name,
+        num_envs=args.num_envs,
+        width=args.width,
+        height=args.height,
+        seed=args.seed,
+        camera_names=args.policy_cameras,
     )
+    num_envs = env.num_envs
 
-    return MultiCameraVectorWrapper(env, camera_names)
+    task_output_dir = os.path.join(output_dir, env_name)
+    os.makedirs(task_output_dir, exist_ok=True)
+
+    episode_success_rates = []
+
+    for episode in range(args.num_episodes):
+        obs, info = env.reset(seed=args.seed + episode)
+        camera_views = info["cameras"]
+        success = np.zeros(num_envs, dtype=bool)
+        total_reward = np.zeros(num_envs)
+        action_plan = collections.deque()
+
+        video_path = os.path.join(task_output_dir, f"episode_{episode:03d}.mp4")
+        with iio.imopen(video_path, "w", plugin="pyav") as video:
+            video.init_video_stream("h264", fps=args.fps)
+
+            pbar = tqdm(
+                range(args.max_steps),
+                desc=f"[{env_name}] Episode {episode + 1}/{args.num_episodes}",
+                leave=False,
+            )
+            for _step in pbar:
+                grid_frame = tile_frames(list(camera_views[args.render_camera]))
+                video.write_frame(grid_frame)
+
+                if not action_plan:
+                    result = policy.infer(
+                        {
+                            "observation/image": camera_views["corner4"],
+                            "observation/wrist_image": camera_views["gripperPOV"],
+                            "observation/state": obs.astype(np.float32)[
+                                ..., :4
+                            ],  # first 4 dims are the true observable state in Metaworld.
+                            "prompt": [prompt] * num_envs,
+                        }
+                    )
+                    action_chunk = np.clip(result["actions"], -1.0, 1.0).astype(
+                        np.float32
+                    )  # (num_envs, action_horizon, action_dim)
+                    for t in range(action_chunk.shape[1]):
+                        action_plan.append(action_chunk[:, t, :])
+
+                action = action_plan.popleft()  # (num_envs, action_dim=4)
+
+                obs, reward, terminated, truncated, info = env.step(action)
+                camera_views = info["cameras"]
+                total_reward += reward
+                success |= np.asarray(info.get("success", np.zeros(num_envs)), dtype=bool)
+                if success.all():
+                    break
+
+                pbar.set_postfix(reward=f"{total_reward.mean():.1f}", success=f"{success.mean():.0%}")
+
+        rate = float(success.mean())
+        episode_success_rates.append(rate)
+        logger.info(
+            f"[{env_name}] Episode {episode + 1}/{args.num_episodes}: "
+            f"mean_reward={total_reward.mean():.2f}, success_rate={rate:.2f}, "
+            f"video={video_path}"
+        )
+
+    env.close()
+    return {"success_rate": float(np.mean(episode_success_rates))}
 
 
 def main(args: Args) -> None:
     policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
     logger.info(f"Server metadata: {policy.get_server_metadata()}")
 
-    output_dir = os.path.join(os.path.dirname(__file__), "output", args.benchmark_name)
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = os.path.join(os.path.dirname(__file__), "output", f"ML45-{args.split}")
 
-    env = make_env(
-        args.benchmark_name,
-        args.env_name,
-        args.seed,
-        width=args.width,
-        height=args.height,
-        camera_names=args.policy_cameras,
-    )
-    num_envs = env.num_envs
+    ml45 = metaworld.ML45()
+    env_names = list(ml45.train_classes.keys()) if args.split == "train" else list(ml45.test_classes.keys())
 
-    for episode in range(args.num_episodes):
-        obs, info = env.reset(seed=args.seed + episode)
-        camera_views = info["cameras"]
-        total_reward = np.zeros(num_envs)
-        success = np.zeros(num_envs, dtype=bool)
-        action_plan = collections.deque()
+    logger.info(f"Evaluating {len(env_names)} tasks from ML45-{args.split}")
 
-        video_path = os.path.join(output_dir, f"episode_{episode:03d}.mp4")
-        with iio.imopen(video_path, "w", plugin="pyav") as video:
-            video.init_video_stream("h264", fps=args.fps)
+    results_path = os.path.join(output_dir, "results.json")
+    results: dict[str, float] = {}
+    for env_name in tqdm(env_names, desc=f"ML45-{args.split}"):
+        task_result = eval_task(env_name, policy, args, output_dir)
+        results[env_name] = task_result["success_rate"]
+        logger.info(f"[{env_name}] success_rate={results[env_name]:.2f}")
 
-            pbar = tqdm(range(args.max_steps), desc=f"Episode {episode + 1}/{args.num_episodes}")
-            for _step in pbar:
-                frames = [cv[args.render_camera] for cv in camera_views]  # list of (H, W, 3)
-                grid_frame = tile_frames(frames) if num_envs > 5 else np.concatenate(frames, axis=1)
-                video.write_frame(grid_frame)
+        # Save incrementally so progress isn't lost on early exit.
+        with open(results_path, "w") as f:
+            json.dump(results, f, indent=2)
 
-                if not action_plan:
-                    result = policy.infer(
-                        {
-                            "observation/image": np.stack([cv["corner4"] for cv in camera_views], axis=0),
-                            "observation/wrist_image": np.stack([cv["gripperPOV"] for cv in camera_views], axis=0),
-                            "observation/state": obs.astype(np.float32)[
-                                ..., :4
-                            ],  # first 4 dims are the true observable state in Metaworld.
-                            # TODO(branyang02): replace placeholder prompt with task-specific prompts
-                            "prompt": ["Perform the task successfully and efficiently."] * num_envs,
-                        }
-                    )
-                    action_chunk = np.clip(result["actions"], -1.0, 1.0).astype(
-                        np.float32
-                    )  # (b, action_horizon, action_dim)
-                    for t in range(action_chunk.shape[1]):
-                        action_plan.append(action_chunk[:, t, :])
+    # Summary
+    mean_success = float(np.mean(list(results.values())))
+    summary = {
+        "mean_success_rate": mean_success,
+        "per_task": dict(sorted(results.items(), key=lambda x: x[1], reverse=True)),
+    }
+    with open(results_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    logger.info(f"Results saved to {results_path}")
 
-                action = action_plan.popleft()  # (num_envs, action_dim=4)
-                # action = env.action_space.sample()  # (5, 4)
-
-                obs, reward, terminated, truncated, info = env.step(action)
-                camera_views = info["cameras"]
-                total_reward += reward
-                success |= np.asarray(info.get("success", np.zeros(num_envs)), dtype=bool)
-                pbar.set_postfix(reward=f"{total_reward.mean():.1f}", success=f"{success.mean():.0%}")
-
-        logger.info(
-            f"Episode {episode + 1}/{args.num_episodes}: "
-            f"mean_reward={total_reward.mean():.2f}, success_rate={success.mean():.2f}, "
-            f"video={video_path}"
-        )
-
-    env.close()
+    logger.info("=" * 60)
+    logger.info(f"Overall mean success rate: {mean_success:.2f} ({mean_success:.0%})")
+    logger.info("Per-task results:")
+    for env_name, rate in sorted(results.items(), key=lambda x: x[1], reverse=True):
+        logger.info(f"  {env_name:<40s} {rate:.2f}")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 """
-MUJOCO_GL=egl uv run examples/metaworld/main.py
+Evaluate a single task (using parallel envs) in MetaWorld
+
+MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
 """
 
 import collections
@@ -94,6 +96,7 @@ class Args:
     num_envs: int = 10
     # Number of episodes to run.
     num_episodes: int = 1
+    # Maximum steps per episode.
     max_steps: int = 300
 
     width: int = 224
@@ -105,7 +108,7 @@ class Args:
     render_camera: str = "corner"
 
     fps: int = 24
-    seed: int = 42
+    seed: int = 69_420
 
 
 class MultiCameraWrapper(gym.Wrapper):
