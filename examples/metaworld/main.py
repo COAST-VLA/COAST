@@ -98,6 +98,8 @@ class Args:
     num_episodes: int = 1
     # Maximum steps per episode.
     max_steps: int = 300
+    # Number of steps to execute from the model's action plan before re-planning.
+    replan_steps: int = 10
 
     width: int = 224
     height: int = 224
@@ -222,7 +224,11 @@ def main(args: Args) -> None:
                     action_chunk = np.clip(result["actions"], -1.0, 1.0).astype(
                         np.float32
                     )  # (b_size, action_horizon, action_dim)
-                    for t in range(action_chunk.shape[1]):
+                    assert action_chunk.ndim == 3, (
+                        f"Model output must have shape (batch_size, action_horizon, action_dim), but got {action_chunk.shape}"
+                    )
+                    assert action_chunk.shape[1] >= args.replan_steps, "Model must output at least replan_steps actions"
+                    for t in range(args.replan_steps):
                         action_plan.append(action_chunk[:, t, :])
 
                 action = action_plan.popleft()  # (num_envs, action_dim=4)
