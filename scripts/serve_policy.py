@@ -1,7 +1,7 @@
 """
 uv run scripts/serve_policy.py policy:checkpoint \
     --policy.config=pi05_metaworld \
-    --policy.dir=/home/brandony/.cache/huggingface/hub/models--ksb21st--metaworld45_100demos_hf/snapshots/a2f7b1a852bc55dad2b714dda0cccd110b96fdc0/5100
+    --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/
 
 """
 
