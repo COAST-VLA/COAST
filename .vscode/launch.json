@@ -18,18 +18,60 @@
             }
         },
         {
+            "name": "metaworld server",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/serve_policy.py",
+            "args": [
+                "policy:checkpoint",
+                "--policy.config",
+                "pi05_metaworld_eval",
+                "--policy.dir",
+                "/home/brandony/.cache/huggingface/hub/models--ksb21st--openpi_sae_metaworld/snapshots/bfa1311b9b9d009e05ddce34d48558bed021a6d7",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "MUJOCO_GL": "egl",
+                "CUDA_VISIBLE_DEVICES": "6",
+            }
+        },
+        {
             "name": "metaworld dataset",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/scripts/generate_metaworld_dataset.py",
             "args": [
-                "--num_envs", "2"
+                "--num_envs",
+                "2"
             ],
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {
                 "MUJOCO_GL": "egl",
                 "CUDA_VISIBLE_DEVICES": "1",
+            }
+        },
+        {
+            "name": "metaworld train",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/train.py",
+            "args": [
+                "pi05_metaworld",
+                "--exp-name",
+                "temp_exp",
+                "--batch-size",
+                "4",
+                "--overwrite",
+                "--no-wandb-enabled"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "MUJOCO_GL": "egl",
+                "CUDA_VISIBLE_DEVICES": "7",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.9",
             }
         },
     ]

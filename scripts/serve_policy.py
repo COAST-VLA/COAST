@@ -1,3 +1,10 @@
+"""
+uv run scripts/serve_policy.py policy:checkpoint \
+    --policy.config=pi05_metaworld \
+    --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/
+
+"""
+
 import dataclasses
 import enum
 import logging

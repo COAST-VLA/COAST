@@ -1,18 +1,25 @@
 """
-Evaluate a single task (using parallel envs) in MetaWorld
+Evaluate all tasks in ML45 train or test split using the same approach as main.py.
+Each task gets its own set of parallel environments.
 
-MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
+Train tasks (45):
+    MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
+
+Test tasks (5):
+    MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
 """
 
 import collections
 import dataclasses
+import json
 import logging
 import math
 import os
+from typing import Literal
 
 import gymnasium as gym
 import imageio.v3 as iio
-import metaworld  # noqa: F401
+import metaworld
 import numpy as np
 from openpi_client import websocket_client_policy as _websocket_client_policy
 from tqdm import tqdm
@@ -90,11 +97,11 @@ class Args:
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # Environment name (e.g., "pick-place-v3").
-    env_name: str = "pick-place-v3"
-    # Number of parallel environments to run.
-    num_envs: int = 10
-    # Number of episodes to run.
+    # Which ML45 split to evaluate.
+    split: Literal["train", "test"] = "train"
+    # Number of parallel environments per task.
+    num_envs: int = 15
+    # Number of episodes per task.
     num_episodes: int = 1
     # Maximum steps per episode.
     max_steps: int = 300
@@ -104,9 +111,9 @@ class Args:
     width: int = 224
     height: int = 224
 
-    # Cameras to use for policy input
+    # Cameras to use for policy input.
     policy_cameras: list[str] = dataclasses.field(default_factory=lambda: ["corner", "corner4", "gripperPOV"])
-    # The camera used for rendering the video output (must be one of the policy cameras)
+    # The camera used for rendering the video output (must be one of the policy cameras).
     render_camera: str = "corner"
 
     fps: int = 24
@@ -177,15 +184,12 @@ def make_env(env_name: str, num_envs: int, width: int, height: int, seed: int, c
     return gym.vector.AsyncVectorEnv(env_fns)
 
 
-def main(args: Args) -> None:
-    policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
-    logger.info(f"Server metadata: {policy.get_server_metadata()}")
-
-    output_dir = os.path.join(os.path.dirname(__file__), "output", args.env_name)
-    os.makedirs(output_dir, exist_ok=True)
+def eval_task(env_name: str, policy, args: Args, output_dir: str) -> dict[str, float]:
+    """Evaluate a single task over num_episodes and return per-episode success rates."""
+    prompt = TASK_TO_PROMPT.get(env_name, f"complete the {env_name} task")
 
     env = make_env(
-        env_name=args.env_name,
+        env_name=env_name,
         num_envs=args.num_envs,
         width=args.width,
         height=args.height,
@@ -194,6 +198,11 @@ def main(args: Args) -> None:
     )
     num_envs = env.num_envs
 
+    task_output_dir = os.path.join(output_dir, env_name)
+    os.makedirs(task_output_dir, exist_ok=True)
+
+    episode_success_rates = []
+
     for episode in range(args.num_episodes):
         obs, info = env.reset(seed=args.seed + episode)
         camera_views = info["cameras"]
@@ -201,11 +210,15 @@ def main(args: Args) -> None:
         total_reward = np.zeros(num_envs)
         action_plan = collections.deque()
 
-        video_path = os.path.join(output_dir, f"episode_{episode:03d}.mp4")
+        video_path = os.path.join(task_output_dir, f"episode_{episode:03d}.mp4")
         with iio.imopen(video_path, "w", plugin="pyav") as video:
             video.init_video_stream("h264", fps=args.fps)
 
-            pbar = tqdm(range(args.max_steps), desc=f"Episode {episode + 1}/{args.num_episodes}")
+            pbar = tqdm(
+                range(args.max_steps),
+                desc=f"[{env_name}] Episode {episode + 1}/{args.num_episodes}",
+                leave=False,
+            )
             for _step in pbar:
                 grid_frame = tile_frames(list(camera_views[args.render_camera]))
                 video.write_frame(grid_frame)
@@ -218,21 +231,19 @@ def main(args: Args) -> None:
                             "observation/state": obs.astype(np.float32)[
                                 ..., :4
                             ],  # first 4 dims are the true observable state in Metaworld.
-                            "prompt": [TASK_TO_PROMPT[args.env_name]] * num_envs,
+                            "prompt": [prompt] * num_envs,
                         }
                     )
                     action_chunk = np.clip(result["actions"], -1.0, 1.0).astype(
                         np.float32
-                    )  # (b_size, action_horizon, action_dim)
-                    assert action_chunk.ndim == 3, (
-                        f"Model output must have shape (batch_size, action_horizon, action_dim), but got {action_chunk.shape}"
+                    )  # (num_envs, action_horizon, action_dim)
+                    assert action_chunk.shape[1] >= args.replan_steps, (
+                        f"Model must output at least replan_steps actions, got {action_chunk.shape[1]} < {args.replan_steps}"
                     )
-                    assert action_chunk.shape[1] >= args.replan_steps, "Model must output at least replan_steps actions"
                     for t in range(args.replan_steps):
                         action_plan.append(action_chunk[:, t, :])
 
                 action = action_plan.popleft()  # (num_envs, action_dim=4)
-                # action = env.action_space.sample()  # (5, 4)
 
                 obs, reward, terminated, truncated, info = env.step(action)
                 camera_views = info["cameras"]
@@ -243,13 +254,55 @@ def main(args: Args) -> None:
 
                 pbar.set_postfix(reward=f"{total_reward.mean():.1f}", success=f"{success.mean():.0%}")
 
+        rate = float(success.mean())
+        episode_success_rates.append(rate)
         logger.info(
-            f"Episode {episode + 1}/{args.num_episodes}: "
-            f"mean_reward={total_reward.mean():.2f}, success_rate={success.mean():.2f}, "
+            f"[{env_name}] Episode {episode + 1}/{args.num_episodes}: "
+            f"mean_reward={total_reward.mean():.2f}, success_rate={rate:.2f}, "
             f"video={video_path}"
         )
 
     env.close()
+    return {"success_rate": float(np.mean(episode_success_rates))}
+
+
+def main(args: Args) -> None:
+    policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
+    logger.info(f"Server metadata: {policy.get_server_metadata()}")
+
+    output_dir = os.path.join(os.path.dirname(__file__), "output", f"ML45-{args.split}")
+
+    ml45 = metaworld.ML45()
+    env_names = list(ml45.train_classes.keys()) if args.split == "train" else list(ml45.test_classes.keys())
+
+    logger.info(f"Evaluating {len(env_names)} tasks from ML45-{args.split}")
+
+    results_path = os.path.join(output_dir, "results.json")
+    results: dict[str, float] = {}
+    for env_name in tqdm(env_names, desc=f"ML45-{args.split}"):
+        task_result = eval_task(env_name, policy, args, output_dir)
+        results[env_name] = task_result["success_rate"]
+        logger.info(f"[{env_name}] success_rate={results[env_name]:.2f}")
+
+        # Save incrementally so progress isn't lost on early exit.
+        with open(results_path, "w") as f:
+            json.dump(results, f, indent=2)
+
+    # Summary
+    mean_success = float(np.mean(list(results.values())))
+    summary = {
+        "mean_success_rate": mean_success,
+        "per_task": dict(sorted(results.items(), key=lambda x: x[1], reverse=True)),
+    }
+    with open(results_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    logger.info(f"Results saved to {results_path}")
+
+    logger.info("=" * 60)
+    logger.info(f"Overall mean success rate: {mean_success:.2f} ({mean_success:.0%})")
+    logger.info("Per-task results:")
+    for env_name, rate in sorted(results.items(), key=lambda x: x[1], reverse=True):
+        logger.info(f"  {env_name:<40s} {rate:.2f}")
 
 
 if __name__ == "__main__":

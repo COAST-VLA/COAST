@@ -86,8 +86,8 @@ class Args:
 
     # Number of environments running in parallel (vectorized)
     num_envs: int = 50
-    # Number of times to roll out all parallel envs; total episodes per task = num_envs * num_batches
-    num_batches: int = 2
+    # Number of times to roll out all parallel envs; total episodes per task = num_envs * num_episodes
+    num_episodes: int = 2
     max_steps: int = 500
 
     width: int = 224
@@ -151,8 +151,8 @@ def run_env(env_name: str, policy, dataset: LeRobotDataset, args: Args) -> None:
     )
     num_envs = env.num_envs
 
-    for batch in range(args.num_batches):
-        obs, info = env.reset(seed=args.seed + batch)
+    for episode in range(args.num_episodes):
+        obs, info = env.reset(seed=args.seed + episode)
         camera_views = info["cameras"]
         success = np.zeros(num_envs, dtype=bool)
         total_reward = np.zeros(num_envs)
@@ -162,7 +162,7 @@ def run_env(env_name: str, policy, dataset: LeRobotDataset, args: Args) -> None:
         traj_actions = [[] for _ in range(num_envs)]
         traj_images = [{cam: [] for cam in args.policy_cameras} for _ in range(num_envs)]
 
-        pbar = tqdm(range(args.max_steps), desc=f"[{env_name}] Batch {batch + 1}/{args.num_batches}")
+        pbar = tqdm(range(args.max_steps), desc=f"[{env_name}] Episode {episode + 1}/{args.num_episodes}")
         for _step in pbar:
             actions = np.stack([policy.get_action(obs[i]) for i in range(num_envs)], axis=0)
 
@@ -199,7 +199,7 @@ def run_env(env_name: str, policy, dataset: LeRobotDataset, args: Args) -> None:
             dataset.save_episode()
 
         logger.info(
-            f"[{env_name}] Batch {batch + 1}/{args.num_batches}: "
+            f"[{env_name}] Episode {episode + 1}/{args.num_episodes}: "
             f"mean_reward={total_reward.mean():.2f}, success_rate={success.mean():.2f}, "
             f"saved={success.sum()} episodes"
         )
