@@ -42,10 +42,9 @@ PyTorch inference uses the same serve + eval pipeline with a `--pytorch` flag. N
 
 ```bash
 # Terminal 1: Serve with PyTorch (auto-converts JAX checkpoint if needed)
-uv run scripts/serve_policy.py policy:checkpoint \
+uv run scripts/serve_policy.py --pytorch policy:checkpoint \
     --policy.config=pi05_metaworld \
-    --policy.dir=/path/to/your/checkpoint \
-    --pytorch
+    --policy.dir=/path/to/your/checkpoint
 
 # Terminal 2: Evaluate (same as JAX)
 MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
