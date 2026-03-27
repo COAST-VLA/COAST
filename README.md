@@ -33,6 +33,18 @@ MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
 ```
 
+# Testing
+
+MetaWorld environment tests require a GPU with EGL rendering support. They are marked as `manual` and skipped in CI.
+
+```bash
+# Run all MetaWorld tests locally (requires GPU + EGL):
+MUJOCO_GL=egl uv run pytest examples/metaworld/test_metaworld_envs.py -v
+
+# Run only pure-logic tests (no GPU / rendering required):
+uv run pytest examples/metaworld/test_metaworld_envs.py -v -m "not manual"
+```
+
 <!-- # openpi
 
 openpi holds open-source models and packages for robotics, published by the [Physical Intelligence team](https://www.physicalintelligence.company/).
