@@ -28,10 +28,9 @@ And then run the evaluation script in a separate terminal:
 MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
 
 # Evaluate on 45 ML45 train tasks
-MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --benchmark_name ML45-train
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
 # Evaluate on 5 ML45 test tasks
-MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --benchmark_name ML45-test
-
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
 ```
 
 <!-- # openpi
