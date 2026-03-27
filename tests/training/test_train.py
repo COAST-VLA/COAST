@@ -1,4 +1,5 @@
 import dataclasses
+import importlib
 import os
 import pathlib
 
@@ -8,7 +9,16 @@ os.environ["JAX_PLATFORMS"] = "cpu"
 
 from openpi.training import config as _config
 
-from . import train
+
+def _import_train():
+    """Import scripts/train.py as a module."""
+    spec = importlib.util.spec_from_file_location("train", pathlib.Path(__file__).parents[2] / "scripts" / "train.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+train = _import_train()
 
 
 @pytest.mark.parametrize("config_name", ["debug"])

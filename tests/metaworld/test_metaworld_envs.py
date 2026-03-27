@@ -4,12 +4,13 @@ These tests require a MuJoCo-compatible rendering backend (EGL for headless GPU)
 They are marked as ``manual`` so CI (which runs with ``-m "not manual"``) skips them.
 
 Run all MetaWorld tests locally:
-    MUJOCO_GL=egl uv run pytest examples/metaworld/test_metaworld_envs.py -v
+    MUJOCO_GL=egl uv run pytest tests/metaworld/test_metaworld_envs.py -v
 
 Run only the pure-logic tests (no rendering / no GPU required):
-    uv run pytest examples/metaworld/test_metaworld_envs.py -v -m "not manual"
+    uv run pytest tests/metaworld/test_metaworld_envs.py -v -m "not manual"
 """
 
+import importlib
 import math
 from pathlib import Path
 import sys
@@ -17,7 +18,9 @@ import sys
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent))
+# Import from examples/metaworld/ scripts
+_examples_dir = str(Path(__file__).parents[2] / "examples" / "metaworld")
+sys.path.insert(0, _examples_dir)
 
 from eval_all import make_env as make_eval_env
 from main import CAMERA_IDS
