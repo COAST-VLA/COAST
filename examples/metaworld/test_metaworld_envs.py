@@ -1,10 +1,13 @@
 """Tests for Metaworld environment creation and basic functionality.
 
-Run with:
+These tests require a MuJoCo-compatible rendering backend (EGL for headless GPU).
+They are marked as ``manual`` so CI (which runs with ``-m "not manual"``) skips them.
+
+Run all MetaWorld tests locally:
     MUJOCO_GL=egl uv run pytest examples/metaworld/test_metaworld_envs.py -v
 
-Skip slow tests with:
-    MUJOCO_GL=egl uv run pytest examples/metaworld/test_metaworld_envs.py -v -m "not slow"
+Run only the pure-logic tests (no rendering / no GPU required):
+    uv run pytest examples/metaworld/test_metaworld_envs.py -v -m "not manual"
 """
 
 import math
@@ -34,6 +37,7 @@ SAMPLE_TASKS = ["reach-v3", "pick-place-v3", "door-open-v3"]
 # ── eval_all.make_env ─────────────────────────────────────────────────────────
 
 
+@pytest.mark.manual
 @pytest.mark.parametrize("env_name", SAMPLE_TASKS)
 def test_eval_env_creates_and_runs(env_name):
     """Env can be created, reset, and stepped for each task."""
@@ -71,6 +75,7 @@ def test_eval_env_creates_and_runs(env_name):
         env.close()
 
 
+@pytest.mark.manual
 @pytest.mark.parametrize("env_name", SAMPLE_TASKS)
 def test_camera_images_shape_and_dtype(env_name):
     """Camera images are (num_envs, H, W, 3) uint8 arrays after reset and step."""
@@ -98,6 +103,7 @@ def test_camera_images_shape_and_dtype(env_name):
         env.close()
 
 
+@pytest.mark.manual
 @pytest.mark.parametrize("env_name", SAMPLE_TASKS)
 def test_obs_state_has_at_least_four_dims(env_name):
     """Observation state has at least 4 dims (first 4 are passed to the policy)."""
@@ -212,6 +218,7 @@ def test_tile_frames_black_padding_for_incomplete_grid():
 # ── main.make_env (single-task vectorised env) ────────────────────────────────
 
 
+@pytest.mark.manual
 def test_single_task_env_num_envs():
     """main.make_env produces an env with the requested number of sub-envs."""
     env = make_single_task_env(
@@ -228,6 +235,7 @@ def test_single_task_env_num_envs():
         env.close()
 
 
+@pytest.mark.manual
 def test_single_task_env_reset_and_step():
     """main.make_env env resets and steps without error; obs/reward shapes are correct."""
     env = make_single_task_env(
