@@ -16,7 +16,10 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
 ```
 
 # Inference in MetaWorld
-Serve the policy
+
+## JAX (default)
+
+Serve the policy:
 ```bash
 uv run scripts/serve_policy.py policy:checkpoint \
     --policy.config=pi05_metaworld \
@@ -32,6 +35,42 @@ MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
 # Evaluate on 5 ML45 test tasks
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
 ```
+
+## PyTorch
+
+PyTorch inference uses the same serve + eval pipeline with a `--pytorch` flag. No manual setup is required — the transformers library patch is auto-applied on first import, and JAX checkpoints are auto-converted to PyTorch format on first serve.
+
+```bash
+# Terminal 1: Serve with PyTorch (auto-converts JAX checkpoint if needed)
+uv run scripts/serve_policy.py --pytorch policy:checkpoint \
+    --policy.config=pi05_metaworld \
+    --policy.dir=/path/to/your/checkpoint
+
+# Terminal 2: Evaluate (same as JAX)
+MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
+```
+
+On the first run, the server will:
+1. Auto-patch the transformers library (adds AdaRMS, precision control, KV cache support)
+2. Auto-convert the JAX checkpoint to `model.safetensors` (takes ~1 min, cached for future runs)
+3. Load the PyTorch model and start serving
+
+Subsequent runs with `--pytorch` skip the conversion (a hash of the JAX checkpoint is stored to detect changes).
+
+You can also convert manually if needed:
+```bash
+uv run examples/convert_jax_model_to_pytorch.py \
+    --checkpoint_dir /path/to/your/checkpoint \
+    --config_name pi05_metaworld \
+    --output_path /path/to/your/checkpoint
+```
+
+### Performance notes
+
+- **First inference call takes ~6 minutes** due to `torch.compile(mode="max-autotune")` benchmarking Triton kernels. This is a one-time cost per process launch.
+- After warmup, inference runs at ~3 calls/sec (comparable to JAX after JIT compilation).
+- GPU memory usage is ~70 GB during warmup, settling to ~10 GB for steady-state inference.
 
 # Testing
 

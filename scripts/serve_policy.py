@@ -58,6 +58,9 @@ class Args:
     # Record the policy's behavior for debugging.
     record: bool = False
 
+    # Use PyTorch backend for inference. Auto-converts the JAX checkpoint if needed.
+    pytorch: bool = False
+
     # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
     policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
 
@@ -96,6 +99,10 @@ def create_policy(args: Args) -> _policy.Policy:
     """Create a policy from the given arguments."""
     match args.policy:
         case Checkpoint():
+            if args.pytorch:
+                from openpi.models_pytorch.convert import ensure_pytorch_checkpoint
+
+                ensure_pytorch_checkpoint(args.policy.dir, args.policy.config)
             return _policy_config.create_trained_policy(
                 _config.get_config(args.policy.config), args.policy.dir, default_prompt=args.default_prompt
             )
