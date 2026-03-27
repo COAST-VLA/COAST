@@ -97,9 +97,12 @@ def test_camera_images_shape_and_dtype(env_name):
             for cam_name in CAMERA_NAMES:
                 assert cam_name in cameras, f"camera '{cam_name}' missing"
                 img = cameras[cam_name]
-                assert img.shape == (num_envs, HEIGHT, WIDTH, 3), (
-                    f"'{cam_name}': expected ({num_envs}, {HEIGHT}, {WIDTH}, 3), got {img.shape}"
-                )
+                assert img.shape == (
+                    num_envs,
+                    HEIGHT,
+                    WIDTH,
+                    3,
+                ), f"'{cam_name}': expected ({num_envs}, {HEIGHT}, {WIDTH}, 3), got {img.shape}"
                 assert img.dtype == np.uint8, f"'{cam_name}': expected uint8, got {img.dtype}"
     finally:
         env.close()
