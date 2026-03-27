@@ -1,8 +1,7 @@
 import numpy as np
+from openpi_client import msgpack_numpy
 import pytest
 import tree
-
-from openpi_client import msgpack_numpy
 
 
 def _check(expected, actual):
@@ -20,7 +19,7 @@ def _check(expected, actual):
         1,  # int
         1.0,  # float
         "hello",  # string
-        np.bool_(True),  # boolean scalar
+        np.bool_(True),  # boolean scalar  # noqa: FBT003
         np.array([1, 2, 3])[0],  # int scalar
         np.str_("asdf"),  # string scalar
         [1, 2, 3],  # list

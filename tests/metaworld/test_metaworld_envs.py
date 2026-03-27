@@ -10,7 +10,6 @@ Run only the pure-logic tests (no rendering / no GPU required):
     uv run pytest tests/metaworld/test_metaworld_envs.py -v -m "not manual"
 """
 
-import importlib
 import math
 from pathlib import Path
 import sys
@@ -18,15 +17,15 @@ import sys
 import numpy as np
 import pytest
 
-# Import from examples/metaworld/ scripts
+# Import from examples/metaworld/ scripts — sys.path must be set before these imports
 _examples_dir = str(Path(__file__).parents[2] / "examples" / "metaworld")
 sys.path.insert(0, _examples_dir)
 
-from eval_all import make_env as make_eval_env
-from main import CAMERA_IDS
-from main import TASK_TO_PROMPT
-from main import make_env as make_single_task_env
-from main import tile_frames
+from eval_all import make_env as make_eval_env  # noqa: E402
+from main import CAMERA_IDS  # noqa: E402
+from main import TASK_TO_PROMPT  # noqa: E402
+from main import make_env as make_single_task_env  # noqa: E402
+from main import tile_frames  # noqa: E402
 
 SEED = 42
 CAMERA_NAMES = ["corner4", "gripperPOV", "corner"]
