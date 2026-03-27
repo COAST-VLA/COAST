@@ -42,6 +42,8 @@ class WebsocketPolicyServer:
             compression=None,
             max_size=None,
             process_request=_health_check,
+            # Long timeout for first inference (e.g., PyTorch torch.compile warmup)
+            ping_timeout=600,
         ) as server:
             await server.serve_forever()
 

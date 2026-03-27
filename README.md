@@ -16,7 +16,10 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py \
 ```
 
 # Inference in MetaWorld
-Serve the policy
+
+## JAX (default)
+
+Serve the policy:
 ```bash
 uv run scripts/serve_policy.py policy:checkpoint \
     --policy.config=pi05_metaworld \
@@ -32,6 +35,53 @@ MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
 # Evaluate on 5 ML45 test tasks
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
 ```
+
+## PyTorch
+
+PyTorch inference uses the same serve + eval pipeline. You just need to convert the JAX checkpoint to PyTorch format first. The system auto-detects PyTorch when it finds `model.safetensors` in the checkpoint directory.
+
+### One-time setup
+
+1. Install the patched transformers library:
+   ```bash
+   uv pip install transformers==4.53.2
+   cp -r ./src/openpi/models_pytorch/transformers_replace/* \
+       .venv/lib/python3.11/site-packages/transformers/
+   ```
+
+2. Convert the JAX checkpoint to PyTorch:
+   ```bash
+   uv run examples/convert_jax_model_to_pytorch.py \
+       --checkpoint_dir /path/to/your/jax/checkpoint \
+       --config_name pi05_metaworld \
+       --output_path /path/to/your/jax/checkpoint
+   ```
+   This places `model.safetensors` alongside the existing `params/` directory. The policy server auto-detects PyTorch when it finds this file.
+
+   If the checkpoint doesn't have an `assets/` subdirectory (older checkpoints), copy it from another checkpoint that does:
+   ```bash
+   cp -r /path/to/other/checkpoint/assets /path/to/your/jax/checkpoint/assets
+   ```
+
+### Serve and evaluate
+
+Same commands as JAX — auto-detection handles the rest:
+```bash
+# Terminal 1: Serve (first inference takes ~6 min for torch.compile warmup)
+uv run scripts/serve_policy.py policy:checkpoint \
+    --policy.config=pi05_metaworld \
+    --policy.dir=/path/to/your/checkpoint
+
+# Terminal 2: Evaluate
+MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
+```
+
+### Performance notes
+
+- **First inference call takes ~6 minutes** due to `torch.compile(mode="max-autotune")` benchmarking Triton kernels. This is a one-time cost per process launch.
+- After warmup, inference runs at ~3 calls/sec (comparable to JAX after JIT compilation).
+- GPU memory usage is ~70 GB during warmup, settling to ~10 GB for steady-state inference.
 
 # Testing
 

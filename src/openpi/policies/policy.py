@@ -106,11 +106,12 @@ class Policy(BasePolicy):
         inputs = collate_transformed_singles(singles)
 
         if self._is_pytorch_model:
-            raise NotImplementedError("infer_batched is not implemented for PyTorch models yet.")
-
-        # Make a batch and convert to jax.Array.
-        inputs = jax.tree.map(lambda x: jnp.asarray(x), inputs)
-        self._rng, sample_rng_or_pytorch_device = jax.random.split(self._rng)
+            inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device), inputs)
+            sample_rng_or_pytorch_device = self._pytorch_device
+        else:
+            # Make a batch and convert to jax.Array.
+            inputs = jax.tree.map(lambda x: jnp.asarray(x), inputs)
+            self._rng, sample_rng_or_pytorch_device = jax.random.split(self._rng)
 
         # Prepare kwargs for sample_actions
         sample_kwargs = dict(self._sample_kwargs)
@@ -129,7 +130,13 @@ class Policy(BasePolicy):
         }
         model_time = time.monotonic() - start_time
 
-        outputs = jax.tree.map(lambda x: np.asarray(x), outputs)
+        if self._is_pytorch_model:
+            outputs = jax.tree.map(
+                lambda x: np.asarray(x.detach().cpu()) if isinstance(x, torch.Tensor) else np.asarray(x),
+                outputs,
+            )
+        else:
+            outputs = jax.tree.map(lambda x: np.asarray(x), outputs)
 
         outputs = self._output_transform(outputs)
         outputs["policy_timing"] = {
