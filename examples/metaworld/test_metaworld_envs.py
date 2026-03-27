@@ -3,7 +3,7 @@
 Run with:
     MUJOCO_GL=egl uv run pytest examples/metaworld/test_metaworld_envs.py -v
 
-Skip heavy benchmarks (MT50, ML45-*) with:
+Skip slow tests with:
     MUJOCO_GL=egl uv run pytest examples/metaworld/test_metaworld_envs.py -v -m "not slow"
 """
 
@@ -16,45 +16,45 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from eval_all import make_env as make_benchmark_env
+from eval_all import make_env as make_eval_env
 from main import CAMERA_IDS
 from main import TASK_TO_PROMPT
 from main import make_env as make_single_task_env
 from main import tile_frames
-
-# Benchmarks that create 10 or fewer envs (fast to run)
-FAST_BENCHMARKS = ["MT10", "ML10-test", "ML10-train"]
-# Benchmarks that create many envs (slow)
-SLOW_BENCHMARKS = ["MT50", "ML45-test", "ML45-train"]
-UNIMPLEMENTED_BENCHMARKS = ["MT1", "ML1"]
 
 SEED = 42
 CAMERA_NAMES = ["corner4", "gripperPOV", "corner"]
 WIDTH = 224
 HEIGHT = 224
 
+# A few representative tasks for parametrized tests.
+SAMPLE_TASKS = ["reach-v3", "pick-place-v3", "door-open-v3"]
+
 
 # ── eval_all.make_env ─────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("benchmark_name", FAST_BENCHMARKS)
-def test_benchmark_creates_and_runs(benchmark_name):
-    """Env can be created, reset, and stepped for each supported benchmark."""
-    env = make_benchmark_env(
-        benchmark_name,
-        env_name=None,
-        seed=SEED,
+@pytest.mark.parametrize("env_name", SAMPLE_TASKS)
+def test_eval_env_creates_and_runs(env_name):
+    """Env can be created, reset, and stepped for each task."""
+    env = make_eval_env(
+        env_name=env_name,
+        num_envs=2,
         width=WIDTH,
         height=HEIGHT,
+        seed=SEED,
         camera_names=CAMERA_NAMES,
     )
     try:
-        assert env.num_envs > 0
+        assert env.num_envs == 2
 
         obs, info = env.reset(seed=SEED)
         assert obs.shape[0] == env.num_envs
         assert "cameras" in info
-        assert len(info["cameras"]) == env.num_envs
+        # AsyncVectorEnv stacks info into {cam_name: stacked_array}
+        for cam_name in CAMERA_NAMES:
+            assert cam_name in info["cameras"], f"camera '{cam_name}' missing from info"
+            assert info["cameras"][cam_name].shape[0] == env.num_envs
 
         action = env.action_space.sample()
         obs2, reward, terminated, truncated, info2 = env.step(action)
@@ -64,80 +64,49 @@ def test_benchmark_creates_and_runs(benchmark_name):
         assert terminated.shape == (env.num_envs,)
         assert truncated.shape == (env.num_envs,)
         assert "cameras" in info2
-        assert len(info2["cameras"]) == env.num_envs
+        for cam_name in CAMERA_NAMES:
+            assert cam_name in info2["cameras"]
+            assert info2["cameras"][cam_name].shape[0] == env.num_envs
     finally:
         env.close()
 
 
-@pytest.mark.slow
-@pytest.mark.parametrize("benchmark_name", SLOW_BENCHMARKS)
-def test_heavy_benchmark_creates_and_runs(benchmark_name):
-    """Large benchmarks (MT50, ML45-*) can be created, reset, and stepped."""
-    env = make_benchmark_env(
-        benchmark_name,
-        env_name=None,
-        seed=SEED,
+@pytest.mark.parametrize("env_name", SAMPLE_TASKS)
+def test_camera_images_shape_and_dtype(env_name):
+    """Camera images are (num_envs, H, W, 3) uint8 arrays after reset and step."""
+    num_envs = 2
+    env = make_eval_env(
+        env_name=env_name,
+        num_envs=num_envs,
         width=WIDTH,
         height=HEIGHT,
+        seed=SEED,
         camera_names=CAMERA_NAMES,
     )
     try:
-        assert env.num_envs > 0
-        obs, info = env.reset(seed=SEED)
-        assert obs.shape[0] == env.num_envs
-        assert "cameras" in info
-        assert len(info["cameras"]) == env.num_envs
-
-        action = env.action_space.sample()
-        _, reward, _, _, info2 = env.step(action)
-        assert reward.shape == (env.num_envs,)
-        assert "cameras" in info2
-    finally:
-        env.close()
-
-
-@pytest.mark.parametrize("benchmark_name", UNIMPLEMENTED_BENCHMARKS)
-def test_unimplemented_benchmarks_raise(benchmark_name):
-    """MT1 and ML1 raise NotImplementedError."""
-    with pytest.raises(NotImplementedError):
-        make_benchmark_env(benchmark_name, env_name=None, seed=SEED, camera_names=CAMERA_NAMES)
-
-
-@pytest.mark.parametrize("benchmark_name", FAST_BENCHMARKS)
-def test_camera_images_shape_and_dtype(benchmark_name):
-    """Camera images are (H, W, 3) uint8 arrays for every env after reset and step."""
-    env = make_benchmark_env(
-        benchmark_name,
-        env_name=None,
-        seed=SEED,
-        width=WIDTH,
-        height=HEIGHT,
-        camera_names=CAMERA_NAMES,
-    )
-    try:
+        # AsyncVectorEnv stacks info into {cam_name: (num_envs, H, W, 3)}
         for info in [env.reset(seed=SEED)[1], env.step(env.action_space.sample())[4]]:
-            for i, cam_dict in enumerate(info["cameras"]):
-                for cam_name in CAMERA_NAMES:
-                    assert cam_name in cam_dict, f"env[{i}]: camera '{cam_name}' missing"
-                    img = cam_dict[cam_name]
-                    assert img.ndim == 3, f"env[{i}] '{cam_name}': expected 3D, got {img.ndim}D"
-                    assert img.shape == (HEIGHT, WIDTH, 3), (
-                        f"env[{i}] '{cam_name}': expected ({HEIGHT}, {WIDTH}, 3), got {img.shape}"
-                    )
-                    assert img.dtype == np.uint8, f"env[{i}] '{cam_name}': expected uint8, got {img.dtype}"
+            cameras = info["cameras"]
+            for cam_name in CAMERA_NAMES:
+                assert cam_name in cameras, f"camera '{cam_name}' missing"
+                img = cameras[cam_name]
+                assert img.shape == (num_envs, HEIGHT, WIDTH, 3), (
+                    f"'{cam_name}': expected ({num_envs}, {HEIGHT}, {WIDTH}, 3), got {img.shape}"
+                )
+                assert img.dtype == np.uint8, f"'{cam_name}': expected uint8, got {img.dtype}"
     finally:
         env.close()
 
 
-@pytest.mark.parametrize("benchmark_name", FAST_BENCHMARKS)
-def test_obs_state_has_at_least_four_dims(benchmark_name):
+@pytest.mark.parametrize("env_name", SAMPLE_TASKS)
+def test_obs_state_has_at_least_four_dims(env_name):
     """Observation state has at least 4 dims (first 4 are passed to the policy)."""
-    env = make_benchmark_env(
-        benchmark_name,
-        env_name=None,
-        seed=SEED,
+    env = make_eval_env(
+        env_name=env_name,
+        num_envs=2,
         width=WIDTH,
         height=HEIGHT,
+        seed=SEED,
         camera_names=CAMERA_NAMES,
     )
     try:
