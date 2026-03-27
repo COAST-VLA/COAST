@@ -1,5 +1,9 @@
+import inspect
 import logging
 import math
+from pathlib import Path
+import shutil
+import sys
 
 import torch
 from torch import Tensor
@@ -7,8 +11,42 @@ from torch import nn
 import torch.nn.functional as F  # noqa: N812
 
 import openpi.models.gemma as _gemma
-from openpi.models_pytorch.gemma_pytorch import PaliGemmaWithExpertModel
 import openpi.models_pytorch.preprocessing_pytorch as _preprocessing
+
+logger = logging.getLogger(__name__)
+
+
+def _ensure_transformers_patched():
+    """Auto-apply the transformers library patch if not already applied.
+
+    The patch adds AdaRMS support, precision control, and KV cache flexibility
+    to the transformers library's Gemma, PaliGemma, and SigLIP models.
+    """
+    from transformers.models.gemma.modeling_gemma import GemmaRMSNorm
+
+    # Check if patch is already applied (AdaRMS adds cond_dim parameter)
+    if "cond_dim" in inspect.signature(GemmaRMSNorm.__init__).parameters:
+        return
+
+    import transformers
+
+    logger.info("Auto-applying transformers library patch for AdaRMS/precision/KV-cache support...")
+    patch_src = Path(__file__).parent / "transformers_replace"
+    transformers_dir = Path(transformers.__file__).parent
+    shutil.copytree(patch_src, transformers_dir, dirs_exist_ok=True)
+
+    # Force re-import of patched modules so changes take effect
+    for mod_name in list(sys.modules):
+        if mod_name.startswith(
+            ("transformers.models.gemma", "transformers.models.paligemma", "transformers.models.siglip")
+        ):
+            del sys.modules[mod_name]
+    logger.info("Transformers patch applied successfully.")
+
+
+_ensure_transformers_patched()
+
+from openpi.models_pytorch.gemma_pytorch import PaliGemmaWithExpertModel  # noqa: E402
 
 
 def get_safe_dtype(target_dtype, device_type):
@@ -114,14 +152,7 @@ class PI0Pytorch(nn.Module):
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
 
-        msg = "transformers_replace is not installed correctly. Please install it with `uv pip install transformers==4.53.2` and `cp -r ./src/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/`."
-        try:
-            from transformers.models.siglip import check
-
-            if not check.check_whether_transformers_replace_is_installed_correctly():
-                raise ValueError(msg)
-        except ImportError:
-            raise ValueError(msg) from None
+        # Transformers patch is auto-applied at module import time by _ensure_transformers_patched()
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
