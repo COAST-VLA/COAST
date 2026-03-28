@@ -12,7 +12,7 @@ jobs:
   pr_tests:
     name: MetaWorld Tests (PR)
     if: github.event_name == 'pull_request'
-    runs-on: openpi-verylarge
+    runs-on: ubuntu-latest
     env:
       GIT_LFS_SKIP_SMUDGE: true
     steps:
