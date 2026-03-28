@@ -3,6 +3,12 @@ assets/
 checkpoints/
 data/
 wandb/
+activations/
+
+# Debug artifacts
+*.pkl
+collection_log.txt
+activations_run.log
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

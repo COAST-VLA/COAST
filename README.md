@@ -78,10 +78,10 @@ MetaWorld environment tests require a GPU with EGL rendering support. They are m
 
 ```bash
 # Run all MetaWorld tests locally (requires GPU + EGL):
-MUJOCO_GL=egl uv run pytest examples/metaworld/test_metaworld_envs.py -v
+MUJOCO_GL=egl uv run pytest tests/metaworld/test_metaworld_envs.py -v
 
 # Run only pure-logic tests (no GPU / rendering required):
-uv run pytest examples/metaworld/test_metaworld_envs.py -v -m "not manual"
+uv run pytest tests/metaworld/test_metaworld_envs.py -v -m "not manual"
 ```
 
 <!-- # openpi
