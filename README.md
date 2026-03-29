@@ -72,6 +72,51 @@ uv run examples/convert_jax_model_to_pytorch.py \
 - After warmup, inference runs at ~3 calls/sec (comparable to JAX after JIT compilation).
 - GPU memory usage is ~70 GB during warmup, settling to ~10 GB for steady-state inference.
 
+# Collecting Activations for Mechanistic Interpretability
+
+Collect intermediate activations from the pi0.5 model during MetaWorld evaluation rollouts using PyTorch `register_forward_hook`. Activations are captured at each of the 10 denoising steps for Action Expert layers 0, 5, 11, 17 (residual streams and MLP hidden states).
+
+```bash
+# Single task
+CUDA_VISIBLE_DEVICES=1 MUJOCO_GL=egl uv run scripts/collect_activations.py \
+    --policy.config=pi05_metaworld \
+    --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
+    --tasks reach-v3 --num_envs 2
+
+# All 45 ML45 train tasks
+CUDA_VISIBLE_DEVICES=1 MUJOCO_GL=egl uv run scripts/collect_activations.py \
+    --policy.config=pi05_metaworld \
+    --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
+    --split train --num_envs 2
+
+# Multi-GPU (splits tasks across GPUs, launches parallel subprocesses)
+MUJOCO_GL=egl uv run scripts/collect_activations.py \
+    --policy.config=pi05_metaworld \
+    --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
+    --split train --num_envs 2 --gpus 0 1
+```
+
+Output structure:
+```
+activations/{checkpoint_step}/{task_name}/
+  episode_000_env_000/
+    metadata.json          # episode_success, total_reward, steps_to_success, ...
+    rewards.npz            # per_step_reward, cumulative_reward, success_at_step
+    step_0000/
+      denoising.npz        # all_x_t (10,32,32), all_v_t (10,32,32)
+      adarms_cond.npz      # all_adarms_cond (10,1024)
+      suffix_residual.npz  # all_suffix_residual (10,4,32,1024)
+      suffix_mlp_hidden.npz # all_suffix_mlp_hidden (10,4,32,4096)
+      metadata.json        # cumulative_reward, success_so_far, ...
+    step_0010/
+      ...
+```
+
+Validate collected activations:
+```bash
+ACTIVATIONS_DIR=activations/5000/reach-v3 uv run pytest tests/test_activations.py -v
+```
+
 # Testing
 
 MetaWorld environment tests require a GPU with EGL rendering support. They are marked as `manual` and skipped in CI.
