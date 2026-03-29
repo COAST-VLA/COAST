@@ -47,6 +47,8 @@ def _prepare_observation(policy, obs_dict):
 def policy():
     if not pathlib.Path(CHECKPOINT_DIR).exists():
         pytest.skip(f"Checkpoint not found: {CHECKPOINT_DIR}")
+    if not pathlib.Path(CHECKPOINT_DIR, "model.safetensors").exists():
+        pytest.skip("PyTorch checkpoint not found (model.safetensors)")
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
     train_config = _config.get_config(CONFIG_NAME)
