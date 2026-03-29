@@ -449,6 +449,148 @@ class PI0Pytorch(nn.Module):
             time += dt
         return x_t
 
+    @torch.no_grad()
+    def sample_actions_with_intermediates(
+        self,
+        device,
+        observation,
+        *,
+        noise=None,
+        num_steps=10,
+        collect_layers=(0, 5, 11, 17),
+    ) -> tuple[Tensor, dict]:
+        """Like sample_actions() but collects per-step intermediates via hooks.
+
+        Does NOT use torch.compile — runs in eager mode for hook compatibility.
+        Returns (final_actions, intermediates_dict).
+        """
+        bsize = observation.state.shape[0]
+        if noise is None:
+            actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
+            noise = self.sample_noise(actions_shape, device)
+
+        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
+
+        # Prefix pass — compute KV cache (same as sample_actions)
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+
+        _, past_key_values = self.paligemma_with_expert.forward(
+            attention_mask=prefix_att_2d_masks_4d,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+
+        # Register hooks on Action Expert layers
+        hooks = []
+        step_activations = {}
+
+        def make_output_hook(name):
+            """Capture module output (for layer residual streams)."""
+
+            def hook_fn(module, input, output):
+                if isinstance(output, tuple):
+                    step_activations[name] = output[0].detach().cpu()
+                else:
+                    step_activations[name] = output.detach().cpu()
+
+            return hook_fn
+
+        def make_input_hook(name):
+            """Capture module input (for MLP hidden = input to down_proj)."""
+
+            def hook_fn(module, input, output):
+                step_activations[name] = input[0].detach().cpu()
+
+            return hook_fn
+
+        expert_layers = self.paligemma_with_expert.gemma_expert.model.layers
+        for i in collect_layers:
+            hooks.append(expert_layers[i].register_forward_hook(make_output_hook(f"expert_residual_{i}")))
+            hooks.append(
+                expert_layers[i].mlp.down_proj.register_forward_hook(make_input_hook(f"expert_mlp_hidden_{i}"))
+            )
+
+        try:
+            all_x_t, all_v_t, all_adarms_cond = [], [], []
+            all_suffix_residual, all_suffix_mlp_hidden = [], []
+
+            dt = -1.0 / num_steps
+            dt_tensor = torch.tensor(dt, dtype=torch.float32, device=device)
+
+            x_t = noise
+            time = torch.tensor(1.0, dtype=torch.float32, device=device)
+
+            while time >= -dt_tensor / 2:
+                expanded_time = time.expand(bsize)
+                step_activations.clear()
+
+                # Inline denoise_step to capture adarms_cond
+                suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(
+                    state, x_t, expanded_time
+                )
+
+                suffix_len = suffix_pad_masks.shape[1]
+                batch_size = prefix_pad_masks.shape[0]
+                prefix_len = prefix_pad_masks.shape[1]
+
+                prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+                suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+                full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+
+                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+                position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+
+                full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+                self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
+
+                outputs_embeds, _ = self.paligemma_with_expert.forward(
+                    attention_mask=full_att_2d_masks_4d,
+                    position_ids=position_ids,
+                    past_key_values=past_key_values,
+                    inputs_embeds=[None, suffix_embs],
+                    use_cache=False,
+                    adarms_cond=[None, adarms_cond],
+                )
+
+                suffix_out = outputs_embeds[1]
+                suffix_out = suffix_out[:, -self.config.action_horizon :]
+                suffix_out = suffix_out.to(dtype=torch.float32)
+                v_t = self.action_out_proj(suffix_out)
+
+                # Capture intermediates
+                all_x_t.append(x_t.detach().cpu())
+                all_v_t.append(v_t.detach().cpu())
+                all_adarms_cond.append(adarms_cond.detach().cpu())
+
+                all_suffix_residual.append(
+                    torch.stack([step_activations[f"expert_residual_{i}"] for i in collect_layers])
+                )
+                all_suffix_mlp_hidden.append(
+                    torch.stack([step_activations[f"expert_mlp_hidden_{i}"] for i in collect_layers])
+                )
+
+                # Euler step
+                x_t = x_t + dt_tensor * v_t
+                time += dt_tensor
+        finally:
+            for h in hooks:
+                h.remove()
+
+        intermediates = {
+            "all_x_t": torch.stack(all_x_t).float().numpy(),
+            "all_v_t": torch.stack(all_v_t).float().numpy(),
+            "all_adarms_cond": torch.stack(all_adarms_cond).float().numpy(),
+            "all_suffix_residual": torch.stack(all_suffix_residual).float().numpy(),
+            "all_suffix_mlp_hidden": torch.stack(all_suffix_mlp_hidden).float().numpy(),
+        }
+        return x_t, intermediates
+
     def denoise_step(
         self,
         state,
