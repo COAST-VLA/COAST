@@ -206,7 +206,7 @@ Add a method that:
 
 Adapt the collection script from the JAX version:
 - Load policy in-process with `create_trained_policy` (auto-detects PyTorch from `model.safetensors`)
-- Use `SyncVectorEnv` with `num_envs=2`
+- Use `AsyncVectorEnv(context="spawn")` for parallel env stepping
 - At each replan point, call `policy.infer_with_intermediates()`
 - Save per-env, per-step activations AND metadata to disk
 - After each episode completes, write episode-level metadata with outcome labels
