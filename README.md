@@ -78,6 +78,8 @@ uv run examples/convert_jax_model_to_pytorch.py \
 
 **Mean success rate: 74.1%** (500/675 episodes)
 
+> **Note:** Results are from a single set of rollouts (V1 activation collection). MetaWorld randomizes initial object placements per episode, so re-running produces slightly different per-task rates (e.g., V2 collection yielded 69.9% mean over different random seeds). Tasks at 100% and 0% are stable across runs; variance is concentrated in partial-success tasks.
+
 | Task | Success | Rate |
 |---|---|---|
 | button-press-topdown-v3 | 15/15 | 100% |
