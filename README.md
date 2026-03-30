@@ -72,9 +72,86 @@ uv run examples/convert_jax_model_to_pytorch.py \
 - After warmup, inference runs at ~3 calls/sec (comparable to JAX after JIT compilation).
 - GPU memory usage is ~70 GB during warmup, settling to ~10 GB for steady-state inference.
 
+# Evaluation Results
+
+## ML45 Train Tasks — `pi05_metaworld_test/5000` (15 envs per task)
+
+**Mean success rate: 74.1%** (500/675 episodes)
+
+> **Note:** Results are from a single set of rollouts (V1 activation collection). MetaWorld randomizes initial object placements per episode, so re-running produces slightly different per-task rates (e.g., V2 collection yielded 69.9% mean over different random seeds). Tasks at 100% and 0% are stable across runs; variance is concentrated in partial-success tasks.
+
+| Task | Success | Rate |
+|---|---|---|
+| button-press-topdown-v3 | 15/15 | 100% |
+| button-press-topdown-wall-v3 | 15/15 | 100% |
+| button-press-v3 | 15/15 | 100% |
+| button-press-wall-v3 | 15/15 | 100% |
+| coffee-button-v3 | 15/15 | 100% |
+| door-close-v3 | 15/15 | 100% |
+| drawer-close-v3 | 15/15 | 100% |
+| drawer-open-v3 | 15/15 | 100% |
+| faucet-open-v3 | 15/15 | 100% |
+| handle-press-side-v3 | 15/15 | 100% |
+| handle-press-v3 | 15/15 | 100% |
+| peg-unplug-side-v3 | 15/15 | 100% |
+| plate-slide-side-v3 | 15/15 | 100% |
+| plate-slide-v3 | 15/15 | 100% |
+| push-wall-v3 | 15/15 | 100% |
+| reach-wall-v3 | 15/15 | 100% |
+| window-close-v3 | 15/15 | 100% |
+| window-open-v3 | 15/15 | 100% |
+| coffee-pull-v3 | 14/15 | 93% |
+| door-open-v3 | 14/15 | 93% |
+| reach-v3 | 14/15 | 93% |
+| faucet-close-v3 | 12/15 | 80% |
+| pick-place-v3 | 12/15 | 80% |
+| plate-slide-back-side-v3 | 12/15 | 80% |
+| push-v3 | 12/15 | 80% |
+| shelf-place-v3 | 12/15 | 80% |
+| sweep-into-v3 | 12/15 | 80% |
+| sweep-v3 | 12/15 | 80% |
+| lever-pull-v3 | 11/15 | 73% |
+| push-back-v3 | 11/15 | 73% |
+| coffee-push-v3 | 10/15 | 67% |
+| pick-place-wall-v3 | 10/15 | 67% |
+| peg-insert-side-v3 | 9/15 | 60% |
+| stick-pull-v3 | 9/15 | 60% |
+| disassemble-v3 | 7/15 | 47% |
+| handle-pull-v3 | 7/15 | 47% |
+| plate-slide-back-v3 | 7/15 | 47% |
+| basketball-v3 | 5/15 | 33% |
+| hammer-v3 | 4/15 | 27% |
+| pick-out-of-hole-v3 | 4/15 | 27% |
+| soccer-v3 | 4/15 | 27% |
+| assembly-v3 | 3/15 | 20% |
+| handle-pull-side-v3 | 2/15 | 13% |
+| stick-push-v3 | 1/15 | 7% |
+| dial-turn-v3 | 0/15 | 0% |
+
 # Collecting Activations for Mechanistic Interpretability
 
 We provide two activation collection scripts. **V2 is recommended** — it collects richer data (attention weights, adaRMS gates, proprioceptive state) in 65% less storage, informed by findings from 15 mechanistic interpretability experiments on the V1 data.
+
+## Downloading Pre-Collected Activations
+
+Pre-collected activation datasets are available on HuggingFace. Download them to local directories that match the expected folder names:
+
+```bash
+# V2 activations (recommended) — 126 GB, 15 envs per task
+hf download brandonyang/pi05-metaworld-activations-v2 --repo-type dataset --local-dir pi05-metaworld-activations-v2
+
+# V1 activations (15 envs per task) — 357 GB
+hf download brandonyang/ml45-activations-15 --repo-type dataset --local-dir ml45-activations-15
+
+# V1 activations (2 envs per task) — 20 GB
+hf download brandonyang/ml45-activations --repo-type dataset --local-dir ml45-activations
+```
+
+> **Note:** The V2 dataset is uploaded as per-task `.tar` files. After downloading, extract them:
+> ```bash
+> cd pi05-metaworld-activations-v2
+> for f in *.tar; do tar xf "$f"; done
+> ```
 
 ## V2 Collection (Recommended)
 
