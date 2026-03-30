@@ -99,7 +99,7 @@ MUJOCO_GL=egl uv run scripts/collect_activations_v2.py \
 ```
 activations_v2/{checkpoint_step}/
   adarms_cond_global.npz                  # Saved ONCE (deterministic across all episodes)
-    adarms_cond_global: (10, 1024)        #   10 denoising steps, 1024-dim conditioning vector
+    adarms_cond_global: (num_envs, 1024)  #   1024-dim conditioning vector (all rows identical)
   {task_name}/
     episode_000_env_000/
       metadata.json                       # Episode-level metadata (see below)
