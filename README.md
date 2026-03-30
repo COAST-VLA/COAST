@@ -74,7 +74,138 @@ uv run examples/convert_jax_model_to_pytorch.py \
 
 # Collecting Activations for Mechanistic Interpretability
 
-Collect intermediate activations from the pi0.5 model during MetaWorld evaluation rollouts using PyTorch `register_forward_hook`. Activations are captured at each of the 10 denoising steps for Action Expert layers 0, 5, 11, 17 (residual streams and MLP hidden states).
+We provide two activation collection scripts. **V2 is recommended** — it collects richer data (attention weights, adaRMS gates, proprioceptive state) in 65% less storage, informed by findings from 15 mechanistic interpretability experiments on the V1 data.
+
+## V2 Collection (Recommended)
+
+Dataset: [brandonyang/pi05-metaworld-activations-v2](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v2)
+
+```bash
+# Single task
+CUDA_VISIBLE_DEVICES=1 MUJOCO_GL=egl uv run scripts/collect_activations_v2.py \
+    --policy.config=pi05_metaworld \
+    --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
+    --tasks reach-v3 --num_envs 2
+
+# All 45 ML45 train tasks (multi-GPU)
+MUJOCO_GL=egl uv run scripts/collect_activations_v2.py \
+    --policy.config=pi05_metaworld \
+    --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
+    --split train --num_envs 15 --gpus 1 6
+```
+
+### V2 Output Structure
+
+```
+activations_v2/{checkpoint_step}/
+  adarms_cond_global.npz                  # Saved ONCE (deterministic across all episodes)
+    adarms_cond_global: (num_envs, 1024)  #   1024-dim conditioning vector (all rows identical)
+  {task_name}/
+    episode_000_env_000/
+      metadata.json                       # Episode-level metadata (see below)
+      rewards.npz                         # Reward trajectory
+        per_step_reward: (300,) float32   #   Per-environment-step reward
+        cumulative_reward: (300,) float32 #   Running sum
+        success_at_step: (300,) bool      #   Whether task succeeded by this step
+      step_0000/
+        denoising.npz                     # Denoising trajectory (3 of 10 steps: 0, 4, 9)
+          all_x_t: (3, 32, 32) float32   #   Noisy actions at collected denoising steps
+          all_v_t: (3, 32, 32) float32   #   Velocity predictions (model output)
+        suffix_residual.npz               # Action Expert residual streams
+          all_suffix_residual: (3, 2, 32, 1024) float32
+            # (denoise_steps, layers[5,11], action_tokens, hidden_dim)
+        suffix_mlp_hidden.npz             # Action Expert MLP hidden states
+          all_suffix_mlp_hidden: (3, 1, 32, 4096) float32
+            # (denoise_steps, layers[11], action_tokens, mlp_dim)
+        attention_weights.npz             # Action Expert attention patterns
+          all_attention_weights: (3, 2, 8, 32, ~1000) float32
+            # (denoise_steps, layers[5,11], heads, action_tokens, prefix_seq_len)
+            # Shows which image/language tokens each action token attends to
+        adarms_gates.npz                  # Adaptive RMSNorm gate values
+          all_adarms_gates: (3, 18, 2, 1, 1024) float32
+            # (denoise_steps, all_18_layers, 2[attn_gate,mlp_gate], batch, hidden_dim)
+            # Controls per-layer contribution at each denoising timestep
+        metadata.json                     # Step-level metadata (see below)
+      step_0010/
+        ...
+```
+
+### V2 Episode Metadata (`episode_*/metadata.json`)
+
+```json
+{
+  "task_name": "reach-v3",
+  "episode_id": 0,
+  "env_id": 0,
+  "episode_success": true,
+  "total_reward": 2574.66,
+  "steps_to_success": 34,
+  "total_env_steps": 300,
+  "total_inference_steps": 30,
+  "prompt": "reach the goal position",
+  "checkpoint_dir": "checkpoints/pi05_metaworld/pi05_metaworld_test/5000/",
+  "config_name": "pi05_metaworld",
+  "collection_version": "v2",
+  "collected_denoise_steps": [0, 4, 9],
+  "collected_residual_layers": [5, 11],
+  "collected_mlp_layers": [11],
+  "collected_attention_layers": [5, 11]
+}
+```
+
+### V2 Step Metadata (`step_*/metadata.json`)
+
+```json
+{
+  "task_name": "reach-v3",
+  "episode_id": 0,
+  "env_id": 0,
+  "step": 0,
+  "inference_step": 0,
+  "prompt": "reach the goal position",
+  "cumulative_reward": 0.0,
+  "success_so_far": false,
+  "reward_since_last_inference": 0.0,
+  "proprio_state": [0.005, 0.601, 0.195, 1.0],
+  "object_positions": [0.002, 0.683, 0.02],
+  "predicted_actions": [-0.04, 1.0, -0.29, 0.006]
+}
+```
+
+| Field | Description |
+|---|---|
+| `cumulative_reward` | Total reward accumulated from episode start to this step |
+| `success_so_far` | Whether the task has been completed by this step |
+| `reward_since_last_inference` | Reward accumulated during the 10 env steps since last inference call |
+| `proprio_state` | Robot proprioceptive state: `[hand_x, hand_y, hand_z, gripper_angle]` |
+| `object_positions` | Task object position from observation: `[obj_x, obj_y, obj_z]` |
+| `predicted_actions` | Actions sent to the environment: `[dx, dy, dz, gripper]` |
+
+### V2 Storage
+
+~8.7 MB per inference step (vs ~26 MB for V1). Total for 45 tasks × 15 envs: **~126 GB** (vs 357 GB for V1).
+
+### Validate V2 Activations
+
+```bash
+# Validate a single task
+ACTIVATIONS_V2_DIR=activations_v2/5000/reach-v3 \
+ACTIVATIONS_V2_BASE=activations_v2/5000 \
+  uv run pytest tests/test_activations_v2.py -v
+
+# Validate a different task
+ACTIVATIONS_V2_DIR=activations_v2/5000/pick-place-v3 \
+ACTIVATIONS_V2_BASE=activations_v2/5000 \
+  uv run pytest tests/test_activations_v2.py -v
+```
+
+---
+
+## V1 Collection (Original)
+
+Datasets:
+- [brandonyang/ml45-activations](https://huggingface.co/datasets/brandonyang/ml45-activations) — 2 envs per task
+- [brandonyang/ml45-activations-15](https://huggingface.co/datasets/brandonyang/ml45-activations-15) — 15 envs per task
 
 ```bash
 # Single task
@@ -89,32 +220,57 @@ CUDA_VISIBLE_DEVICES=1 MUJOCO_GL=egl uv run scripts/collect_activations.py \
     --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
     --split train --num_envs 2
 
-# Multi-GPU (splits tasks across GPUs, launches parallel subprocesses)
+# Multi-GPU
 MUJOCO_GL=egl uv run scripts/collect_activations.py \
     --policy.config=pi05_metaworld \
     --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
     --split train --num_envs 2 --gpus 0 1
 ```
 
-Output structure:
+### V1 Output Structure
+
 ```
 activations/{checkpoint_step}/{task_name}/
   episode_000_env_000/
-    metadata.json          # episode_success, total_reward, steps_to_success, ...
-    rewards.npz            # per_step_reward, cumulative_reward, success_at_step
+    metadata.json                         # Episode-level metadata
+      # task_name, episode_id, env_id, episode_success, total_reward,
+      # steps_to_success, total_env_steps, total_inference_steps, prompt,
+      # checkpoint_dir, config_name
+    rewards.npz                           # Reward trajectory
+      per_step_reward: (300,) float32
+      cumulative_reward: (300,) float32
+      success_at_step: (300,) bool
     step_0000/
-      denoising.npz        # all_x_t (10,32,32), all_v_t (10,32,32)
-      adarms_cond.npz      # all_adarms_cond (10,1024)
-      suffix_residual.npz  # all_suffix_residual (10,4,32,1024)
-      suffix_mlp_hidden.npz # all_suffix_mlp_hidden (10,4,32,4096)
-      metadata.json        # cumulative_reward, success_so_far, ...
+      denoising.npz                       # All 10 denoising steps
+        all_x_t: (10, 32, 32) float32    #   Noisy action states
+        all_v_t: (10, 32, 32) float32    #   Velocity predictions
+      adarms_cond.npz                     # Timestep conditioning (per step)
+        all_adarms_cond: (10, 1024) float32
+      suffix_residual.npz                 # 4 Action Expert layers
+        all_suffix_residual: (10, 4, 32, 1024) float32
+          # (denoise_steps, layers[0,5,11,17], action_tokens, hidden_dim)
+      suffix_mlp_hidden.npz               # 4 Action Expert MLP layers
+        all_suffix_mlp_hidden: (10, 4, 32, 4096) float32
+          # (denoise_steps, layers[0,5,11,17], action_tokens, mlp_dim)
+      metadata.json                       # Step-level metadata
+        # task_name, episode_id, env_id, step, inference_step, prompt,
+        # cumulative_reward, success_so_far, reward_since_last_inference
     step_0010/
       ...
 ```
 
-Validate collected activations:
+### V1 Storage
+
+~26 MB per inference step. Total for 45 tasks × 15 envs: **~357 GB**.
+
+### Validate V1 Activations
+
 ```bash
+# Validate a single task
 ACTIVATIONS_DIR=activations/5000/reach-v3 uv run pytest tests/test_activations.py -v
+
+# Validate a different task
+ACTIVATIONS_DIR=activations/5000/pick-place-v3 uv run pytest tests/test_activations.py -v
 ```
 
 # Testing
