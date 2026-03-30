@@ -181,21 +181,6 @@ activations_v2/{checkpoint_step}/
 | `object_positions` | Task object position from observation: `[obj_x, obj_y, obj_z]` |
 | `predicted_actions` | Actions sent to the environment: `[dx, dy, dz, gripper]` |
 
-### V2 Design Rationale
-
-V2 was designed based on findings from 15 experiments on the V1 data:
-
-| Change | Reason |
-|---|---|
-| Only denoising steps 0, 4, 9 | CKA analysis (exp 8) showed steps 0-3 are nearly identical (CKA ~0.99). Steps 0, 4, 9 capture the full trajectory. |
-| Only residual layers 5, 11 | Layer-wise analysis (exp 5) showed layer 0 is just input embedding, layer 17 is pre-output. Middle layers are most interpretable. |
-| Only MLP hidden at layer 11 | SAE training (exp 13) only needed layer 11. Neuron analysis (exp 9) showed layer 11 has 0% dead neurons. |
-| adaRMS cond saved once globally | Conditioning is perfectly deterministic across all episodes (exp 2) — identical for every episode at each denoising step. |
-| **Added attention weights** | Biggest gap in V1 — cannot answer "which image patch drives which action" without attention patterns. |
-| **Added adaRMS gates** | Gate values control per-layer contribution and are input-dependent (unlike the deterministic conditioning vector). |
-| **Added proprio/object state** | Enables probing "does neuron X encode gripper position?" — impossible without physical state. |
-| **Added predicted actions** | Enables correlating activations with actual robot behavior. |
-
 ### V2 Storage
 
 ~8.7 MB per inference step (vs ~26 MB for V1). Total for 45 tasks × 15 envs: **~126 GB** (vs 357 GB for V1).
