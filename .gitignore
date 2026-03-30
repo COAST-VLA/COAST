@@ -3,12 +3,20 @@ assets/
 checkpoints/
 data/
 wandb/
-activations/
+
+# Activation datasets (see HuggingFace for remote copies)
+ml45-activations/
+ml45-activations-15/
+pi05-metaworld-activations-v2/
+
+# Analysis outputs
+results/
 
 # Debug artifacts
 *.pkl
 collection_log.txt
 activations_run.log
+benchmark_results_async.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
