@@ -132,6 +132,27 @@ uv run examples/convert_jax_model_to_pytorch.py \
 
 We provide two activation collection scripts. **V2 is recommended** — it collects richer data (attention weights, adaRMS gates, proprioceptive state) in 65% less storage, informed by findings from 15 mechanistic interpretability experiments on the V1 data.
 
+## Downloading Pre-Collected Activations
+
+Pre-collected activation datasets are available on HuggingFace. Download them to local directories that match the expected folder names:
+
+```bash
+# V2 activations (recommended) — 126 GB, 15 envs per task
+hf download brandonyang/pi05-metaworld-activations-v2 --repo-type dataset --local-dir pi05-metaworld-activations-v2
+
+# V1 activations (15 envs per task) — 357 GB
+hf download brandonyang/ml45-activations-15 --repo-type dataset --local-dir ml45-activations-15
+
+# V1 activations (2 envs per task) — 20 GB
+hf download brandonyang/ml45-activations --repo-type dataset --local-dir ml45-activations
+```
+
+> **Note:** The V2 dataset is uploaded as per-task `.tar` files. After downloading, extract them:
+> ```bash
+> cd pi05-metaworld-activations-v2
+> for f in *.tar; do tar xf "$f"; done
+> ```
+
 ## V2 Collection (Recommended)
 
 Dataset: [brandonyang/pi05-metaworld-activations-v2](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v2)
