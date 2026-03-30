@@ -146,7 +146,7 @@ Uses **PyTorch inference** via `scripts/collect_activations.py` which loads the 
 **Why PyTorch:** The JAX implementation had multiple blockers for activation collection (NNX graph inflation, `nn.scan` hiding per-layer outputs, `sow()`/NNX-bridge compatibility). PyTorch's `register_forward_hook` natively supports per-layer extraction with no workarounds.
 
 Key setup:
-- **`SyncVectorEnv`** with `num_envs=2` (AsyncVectorEnv forks cause deadlocks)
+- **`AsyncVectorEnv(context="spawn")`** for parallel env stepping (default `fork` causes CUDA/EGL deadlocks; `spawn` avoids this)
 - **`register_forward_hook`** on target layers — activations captured and moved to CPU via `.detach().cpu()` each denoising step
 - **No `torch.compile`** for the intermediates path — hooks work on underlying modules in eager mode
 - Hook targets for Action Expert: `model.paligemma_with_expert.gemma_expert.model.layers[i]` and `.layers[i].mlp`

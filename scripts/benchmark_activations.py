@@ -73,10 +73,10 @@ def save_step_activations(step_dir, intermediates, env_id, step_metadata):
     all_adarms_cond = intermediates["all_adarms_cond"][:, env_id]
     all_suffix_residual = intermediates["all_suffix_residual"][:, :, env_id]
     all_suffix_mlp_hidden = intermediates["all_suffix_mlp_hidden"][:, :, env_id]
-    np.savez_compressed(step_dir / "denoising.npz", all_x_t=all_x_t, all_v_t=all_v_t)
-    np.savez_compressed(step_dir / "adarms_cond.npz", all_adarms_cond=all_adarms_cond)
-    np.savez_compressed(step_dir / "suffix_residual.npz", all_suffix_residual=all_suffix_residual)
-    np.savez_compressed(step_dir / "suffix_mlp_hidden.npz", all_suffix_mlp_hidden=all_suffix_mlp_hidden)
+    np.savez(step_dir / "denoising.npz", all_x_t=all_x_t, all_v_t=all_v_t)
+    np.savez(step_dir / "adarms_cond.npz", all_adarms_cond=all_adarms_cond)
+    np.savez(step_dir / "suffix_residual.npz", all_suffix_residual=all_suffix_residual)
+    np.savez(step_dir / "suffix_mlp_hidden.npz", all_suffix_mlp_hidden=all_suffix_mlp_hidden)
     with open(step_dir / "metadata.json", "w") as f:
         json.dump(step_metadata, f, indent=2)
 
@@ -129,7 +129,7 @@ def make_env(task: str, num_envs: int, seed: int) -> gym.vector.VectorEnv:
         )
         for i in range(num_envs)
     ]
-    return gym.vector.SyncVectorEnv(env_fns)
+    return gym.vector.AsyncVectorEnv(env_fns, context="spawn")
 
 
 def build_obs_dict(obs, camera_views, prompt, num_envs):

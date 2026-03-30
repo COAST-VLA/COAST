@@ -18,7 +18,7 @@ One "inference cycle" = 10 env steps + 1 policy inference + disk I/O. The benchm
 
 | Stage | What it measures |
 |-------|-----------------|
-| Env stepping (10 steps) | SyncVectorEnv step + 3-camera rendering per step |
+| Env stepping (10 steps) | AsyncVectorEnv step + 3-camera rendering per step |
 | Input transforms | Unbatch → per-example transform → collate → GPU transfer |
 | Model inference (total) | Full `sample_actions_with_intermediates` with cuda sync |
 | — Prefix pass | embed_prefix + KV cache forward (once per inference) |
@@ -29,7 +29,7 @@ One "inference cycle" = 10 env steps + 1 policy inference + disk I/O. The benchm
 
 ### Approach
 
-1. Load policy once, create SyncVectorEnv with `num_envs`
+1. Load policy once, create AsyncVectorEnv with `num_envs`
 2. Do 1 warmup inference call (untimed) to warm CUDA kernels
 3. For `num_inference_calls` iterations (default 3):
    - Time env stepping: 10 `env.step()` calls with the previous action chunk

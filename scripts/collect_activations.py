@@ -230,10 +230,10 @@ def save_step_activations(
     all_suffix_residual = intermediates["all_suffix_residual"][:, :, env_id]  # (10, 4, 32, 1024)
     all_suffix_mlp_hidden = intermediates["all_suffix_mlp_hidden"][:, :, env_id]  # (10, 4, 32, 4096)
 
-    np.savez_compressed(step_dir / "denoising.npz", all_x_t=all_x_t, all_v_t=all_v_t)
-    np.savez_compressed(step_dir / "adarms_cond.npz", all_adarms_cond=all_adarms_cond)
-    np.savez_compressed(step_dir / "suffix_residual.npz", all_suffix_residual=all_suffix_residual)
-    np.savez_compressed(step_dir / "suffix_mlp_hidden.npz", all_suffix_mlp_hidden=all_suffix_mlp_hidden)
+    np.savez(step_dir / "denoising.npz", all_x_t=all_x_t, all_v_t=all_v_t)
+    np.savez(step_dir / "adarms_cond.npz", all_adarms_cond=all_adarms_cond)
+    np.savez(step_dir / "suffix_residual.npz", all_suffix_residual=all_suffix_residual)
+    np.savez(step_dir / "suffix_mlp_hidden.npz", all_suffix_mlp_hidden=all_suffix_mlp_hidden)
 
     with open(step_dir / "metadata.json", "w") as f:
         json.dump(step_metadata, f, indent=2)
@@ -245,7 +245,8 @@ def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Pa
     prompt = TASK_TO_PROMPT[task_name]
     num_envs = args.num_envs
 
-    # Create envs with SyncVectorEnv (not Async — async forks cause deadlocks)
+    # Use AsyncVectorEnv with context="spawn" to parallelize env stepping.
+    # Default fork() causes CUDA/EGL deadlocks; spawn starts fresh interpreters.
     env_fns = [
         lambda i=i: MultiCameraWrapper(
             gym.make(
@@ -259,7 +260,7 @@ def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Pa
         )
         for i in range(num_envs)
     ]
-    env = gym.vector.SyncVectorEnv(env_fns)
+    env = gym.vector.AsyncVectorEnv(env_fns, context="spawn")
 
     try:
         obs, info = env.reset(seed=args.seed)
@@ -358,7 +359,7 @@ def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Pa
             rewards_arr = np.array(per_step_rewards[env_id], dtype=np.float32)
             cumulative_arr = np.cumsum(rewards_arr).astype(np.float32)
             success_arr = np.array(per_step_success[env_id], dtype=bool)
-            np.savez_compressed(
+            np.savez(
                 episode_dir / "rewards.npz",
                 per_step_reward=rewards_arr,
                 cumulative_reward=cumulative_arr,

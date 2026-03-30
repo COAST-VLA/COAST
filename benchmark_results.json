@@ -1,62 +1,62 @@
 [
   {
     "num_envs": 1,
-    "env_stepping_ms": 3043.1917812675238,
-    "inference_ms": 411.05547174811363,
-    "disk_compressed_ms": 11296.732367947698,
-    "disk_uncompressed_ms": 66.80794060230255,
-    "prefix_ms": 144.33570454518,
-    "denoising_ms": 463.392569993933,
-    "numpy_ms": 2.7249778310457864,
-    "total_compressed_ms": 14750.979620963335,
-    "total_uncompressed_ms": 3521.05519361794
+    "env_stepping_ms": 2993.755377829075,
+    "inference_ms": 410.11264982322854,
+    "disk_compressed_ms": 66.51146709918976,
+    "disk_uncompressed_ms": 62.88559424380462,
+    "prefix_ms": 217.90930069983006,
+    "denoising_ms": 499.19576570391655,
+    "numpy_ms": 1.5481244772672653,
+    "total_compressed_ms": 3470.379494751493,
+    "total_uncompressed_ms": 3466.7536218961077
   },
   {
     "num_envs": 2,
-    "env_stepping_ms": 6356.404468417168,
-    "inference_ms": 507.5409685571989,
-    "disk_compressed_ms": 21496.583802625537,
-    "disk_uncompressed_ms": 211.32143090168634,
-    "prefix_ms": 197.64830358326435,
+    "env_stepping_ms": 3147.2011723866067,
+    "inference_ms": 448.99109688897926,
+    "disk_compressed_ms": 139.23943974077702,
+    "disk_uncompressed_ms": 132.87082811196646,
+    "prefix_ms": 180.43979071080685,
     "denoising_ms": 0.0,
     "numpy_ms": 0.0,
-    "total_compressed_ms": 28360.529239599902,
-    "total_uncompressed_ms": 7075.266867876053
+    "total_compressed_ms": 3735.431709016363,
+    "total_uncompressed_ms": 3729.0630973875527
   },
   {
     "num_envs": 5,
-    "env_stepping_ms": 15831.049448500076,
-    "inference_ms": 602.2232541193565,
-    "disk_compressed_ms": 47595.759473120175,
-    "disk_uncompressed_ms": 369.41555080314475,
+    "env_stepping_ms": 3193.1309290230274,
+    "inference_ms": 582.2005874166886,
+    "disk_compressed_ms": 357.7912201484044,
+    "disk_uncompressed_ms": 340.8148506035407,
     "prefix_ms": 0.0,
     "denoising_ms": 0.0,
     "numpy_ms": 0.0,
-    "total_compressed_ms": 64029.03217573961,
-    "total_uncompressed_ms": 16802.688253422577
+    "total_compressed_ms": 4133.1227365881205,
+    "total_uncompressed_ms": 4116.146367043257
   },
   {
     "num_envs": 10,
-    "env_stepping_ms": 30970.937577386696,
-    "inference_ms": 786.6036035120487,
-    "disk_compressed_ms": 97778.89213028054,
-    "disk_uncompressed_ms": 699.2456056177616,
+    "env_stepping_ms": 3198.797618970275,
+    "inference_ms": 762.29995675385,
+    "disk_compressed_ms": 679.5002122720083,
+    "disk_uncompressed_ms": 691.2885333100954,
     "prefix_ms": 0.0,
     "denoising_ms": 0.0,
     "numpy_ms": 0.0,
-    "total_compressed_ms": 129536.43331117928,
-    "total_uncompressed_ms": 32456.786786516506
+    "total_compressed_ms": 4640.597787996133,
+    "total_uncompressed_ms": 4652.386109034221
   },
   {
     "num_envs": 15,
-    "env_stepping_ms": 47418.30877338847,
-    "inference_ms": 1001.4368947595358,
-    "disk_compressed_ms": 141844.75688822567,
-    "disk_uncompressed_ms": 1013.0357903738816,
+    "env_stepping_ms": 3696.845481172204,
+    "inference_ms": 960.2567131320635,
+    "disk_compressed_ms": 1026.1630763610203,
+    "disk_uncompressed_ms": 1062.359031289816,
     "prefix_ms": 0.0,
     "denoising_ms": 0.0,
     "numpy_ms": 0.0,
-    "total_compressed_ms": 190264.50255637369,
-    "total_uncompressed_ms": 49432.78145852189
+    "total_compressed_ms": 5683.265270665288,
+    "total_uncompressed_ms": 5719.461225594084
   }
 ]
