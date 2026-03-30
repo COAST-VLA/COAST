@@ -185,6 +185,20 @@ activations_v2/{checkpoint_step}/
 
 ~8.7 MB per inference step (vs ~26 MB for V1). Total for 45 tasks × 15 envs: **~126 GB** (vs 357 GB for V1).
 
+### Validate V2 Activations
+
+```bash
+# Validate a single task
+ACTIVATIONS_V2_DIR=activations_v2/5000/reach-v3 \
+ACTIVATIONS_V2_BASE=activations_v2/5000 \
+  uv run pytest tests/test_activations_v2.py -v
+
+# Validate a different task
+ACTIVATIONS_V2_DIR=activations_v2/5000/pick-place-v3 \
+ACTIVATIONS_V2_BASE=activations_v2/5000 \
+  uv run pytest tests/test_activations_v2.py -v
+```
+
 ---
 
 ## V1 Collection (Original)
@@ -252,7 +266,11 @@ activations/{checkpoint_step}/{task_name}/
 ### Validate V1 Activations
 
 ```bash
+# Validate a single task
 ACTIVATIONS_DIR=activations/5000/reach-v3 uv run pytest tests/test_activations.py -v
+
+# Validate a different task
+ACTIVATIONS_DIR=activations/5000/pick-place-v3 uv run pytest tests/test_activations.py -v
 ```
 
 # Testing
