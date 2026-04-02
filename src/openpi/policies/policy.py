@@ -274,6 +274,55 @@ class Policy(BasePolicy):
         outputs["policy_timing"] = {"infer_ms": model_time * 1000}
         return outputs, intermediates
 
+    def infer_with_steering(self, obs: dict, *, steering_hooks=None) -> tuple[dict, dict]:
+        """Like infer_batched() but applies steering hooks during denoising. PyTorch only.
+
+        Args:
+            obs: Observation dict (batched).
+            steering_hooks: list of (layer_idx, hook_callable) pairs.
+
+        Returns:
+            (outputs_dict, diagnostics_dict)
+        """
+        if not self._is_pytorch_model:
+            raise NotImplementedError("infer_with_steering is only supported for PyTorch models")
+
+        inputs = jax.tree.map(lambda x: x, obs)
+
+        eval_batch_size = int(inputs["observation/state"].shape[0])
+        singles = []
+        for i in range(eval_batch_size):
+            ex = {}
+            for k, v in inputs.items():
+                if k == "prompt":
+                    ex[k] = v[i]
+                else:
+                    ex[k] = v[i]
+            singles.append(ex)
+        singles = [self._input_transform(ex) for ex in singles]
+        inputs = collate_transformed_singles(singles)
+
+        inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device), inputs)
+
+        observation = _model.Observation.from_dict(inputs)
+        start_time = time.monotonic()
+        actions, diagnostics = self._model.sample_actions_with_steering(
+            self._pytorch_device, observation, steering_hooks=steering_hooks
+        )
+        model_time = time.monotonic() - start_time
+
+        outputs = {
+            "state": inputs["state"],
+            "actions": actions,
+        }
+        outputs = jax.tree.map(
+            lambda x: np.asarray(x.detach().cpu()) if isinstance(x, torch.Tensor) else np.asarray(x),
+            outputs,
+        )
+        outputs = self._output_transform(outputs)
+        outputs["policy_timing"] = {"infer_ms": model_time * 1000}
+        return outputs, diagnostics
+
     @property
     def metadata(self) -> dict[str, Any]:
         return self._metadata
