@@ -4,6 +4,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
+#SBATCH --time=3-00:00:00
+#SBATCH --constraint=48GBgpu
 #SBATCH --output=experiments/steering_results/slurm_%j.out
 #SBATCH --error=experiments/steering_results/slurm_%j.err
 
@@ -12,10 +14,10 @@
 
 set -e
 
-PYTHON=/home1/m/miaom/miniconda3/envs/ml_env/bin/python
-export PYTHONPATH=/nlpgpu/data/miaom/torch_pkg:/nlpgpu/data/miaom/activation_inform/.packages:$PYTHONPATH
-export MUJOCO_GL=egl
+PYTHON=/nlpgpu/data/miaom/openpi-metaworld/.venv/bin/python
+export MUJOCO_GL=osmesa
 export HF_HOME=/nlp/data/huggingface_cache
+export TORCH_COMPILE_DISABLE=1
 
 cd /nlpgpu/data/miaom/openpi-metaworld
 
@@ -29,7 +31,7 @@ $PYTHON experiments/conceptor_steering.py \
     --betas 0.1 0.3 0.5 \
     --steering-layer 11 \
     --linear-alphas 0.5 1.0 2.0 5.0 \
-    --num-envs 15 \
+    --num-envs 5 \
     --max-steps 300 \
     --replan-steps 10 \
     --output-dir experiments/steering_results

@@ -1,0 +1,5 @@
+cpu-bind=MASK - nlpgpu01, task  0  0 [58872]: mask 0xf0000000f set
+Traceback (most recent call last):
+  File "/mnt/nlpgpu-io1/data/miaom/openpi-metaworld/experiments/conceptor_steering.py", line 32, in <module>
+    import gymnasium as gym
+ModuleNotFoundError: No module named 'gymnasium'

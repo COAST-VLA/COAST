@@ -1,6 +1,7 @@
 import inspect
 import logging
 import math
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -147,7 +148,8 @@ class PI0Pytorch(nn.Module):
             self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
         torch.set_float32_matmul_precision("high")
-        self.sample_actions = torch.compile(self.sample_actions, mode="max-autotune")
+        if not os.environ.get("TORCH_COMPILE_DISABLE"):
+            self.sample_actions = torch.compile(self.sample_actions, mode="max-autotune")
 
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
@@ -865,9 +867,6 @@ class PI0Pytorch(nn.Module):
                 hook_handles.append(handle)
 
         try:
-            all_x_t = []
-            all_v_t = []
-
             dt = -1.0 / num_steps
             dt_tensor = torch.tensor(dt, dtype=torch.float32, device=device)
 
@@ -917,9 +916,6 @@ class PI0Pytorch(nn.Module):
                 suffix_out = suffix_out.to(dtype=torch.float32)
                 v_t = self.action_out_proj(suffix_out)
 
-                all_x_t.append(x_t.detach().cpu())
-                all_v_t.append(v_t.detach().cpu())
-
                 # Euler step
                 x_t = x_t + dt_tensor * v_t
                 time += dt_tensor
@@ -928,11 +924,7 @@ class PI0Pytorch(nn.Module):
             for h in hook_handles:
                 h.remove()
 
-        diagnostics = {
-            "all_x_t": torch.stack(all_x_t).float().numpy(),
-            "all_v_t": torch.stack(all_v_t).float().numpy(),
-        }
-        return x_t, diagnostics
+        return x_t, {}
 
     def denoise_step(
         self,

@@ -23,6 +23,7 @@ Usage:
 
 import collections
 import dataclasses
+import gc
 import json
 import logging
 import os
@@ -127,11 +128,12 @@ def find_mixed_outcome_tasks(tasks):
         success_envs = []
         failure_envs = []
         for env_idx in range(15):
-            env_name = f"env_{env_idx:03d}"
+            env_name = f"episode_000_env_{env_idx:03d}"
             try:
                 meta_path = hf_hub_download(
                     REPO_ID,
-                    f"ckpt_5000/{task}/{env_name}/metadata.json",
+                    f"5000/{task}/{env_name}/metadata.json",
+                    repo_type="dataset",
                     cache_dir=HF_CACHE,
                 )
                 with open(meta_path) as f:
@@ -160,7 +162,7 @@ def load_activations_for_episode(task, env_name, layer_idx=2):
 
     Args:
         task: e.g., "assembly-v3"
-        env_name: e.g., "env_000"
+        env_name: e.g., "episode_000_env_000"
         layer_idx: index into the 4 captured layers [0,5,11,17].
                    layer_idx=2 corresponds to model layer 11.
 
@@ -170,7 +172,8 @@ def load_activations_for_episode(task, env_name, layer_idx=2):
     """
     meta_path = hf_hub_download(
         REPO_ID,
-        f"ckpt_5000/{task}/{env_name}/metadata.json",
+        f"5000/{task}/{env_name}/metadata.json",
+        repo_type="dataset",
         cache_dir=HF_CACHE,
     )
     with open(meta_path) as f:
@@ -181,10 +184,11 @@ def load_activations_for_episode(task, env_name, layer_idx=2):
     all_activations = {t: [] for t in range(10)}
 
     for step in range(n_inference):
-        step_name = f"step_{step:04d}"
+        step_name = f"step_{step * 10:04d}"
         res_path = hf_hub_download(
             REPO_ID,
-            f"ckpt_5000/{task}/{env_name}/{step_name}/suffix_residual.npz",
+            f"5000/{task}/{env_name}/{step_name}/suffix_residual.npz",
+            repo_type="dataset",
             cache_dir=HF_CACHE,
         )
         data = np.load(res_path)
@@ -465,7 +469,7 @@ class MultiCameraWrapper(gym.Wrapper):
 
 
 def make_env(env_name, num_envs, seed, width=224, height=224,
-             camera_names=("corner", "corner4", "gripperPOV")):
+             camera_names=("corner4", "gripperPOV")):
     env_fns = [
         lambda i=i: MultiCameraWrapper(
             gym.make("Meta-World/MT1", env_name=env_name,
@@ -808,9 +812,16 @@ def generate_summary_table(all_metrics, task, output_dir, stat_tests=None):
         rows.append(row)
 
     import csv
+    all_keys: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for k in row:
+            if k not in seen:
+                all_keys.append(k)
+                seen.add(k)
     csv_path = output_dir / f"results_{task}.csv"
     with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+        writer = csv.DictWriter(f, fieldnames=all_keys, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -860,7 +871,7 @@ class Args:
     replan_steps: int = 10
     width: int = 224
     height: int = 224
-    policy_cameras: list[str] = dataclasses.field(default_factory=lambda: ["corner", "corner4", "gripperPOV"])
+    policy_cameras: list[str] = dataclasses.field(default_factory=lambda: ["corner4", "gripperPOV"])
     seed: int = 69_420
 
     output_dir: str = "experiments/steering_results"
@@ -888,6 +899,8 @@ def run_full_experiment(task, env_splits, policy, args, output_dir, device="cuda
         )
     finally:
         env.close()
+        gc.collect()
+        torch.cuda.empty_cache()
     all_results["baseline"] = baseline
     all_metrics["baseline"] = {
         "baseline_success_rate": float(np.mean([r["success"] for r in baseline])),
@@ -935,6 +948,8 @@ def run_full_experiment(task, env_splits, policy, args, output_dir, device="cuda
                 )
             finally:
                 env.close()
+                gc.collect()
+                torch.cuda.empty_cache()
             all_results[name] = results
             all_metrics[name] = compute_metrics(baseline, results)
             stat_tests[name] = statistical_tests(baseline, results)
@@ -958,6 +973,8 @@ def run_full_experiment(task, env_splits, policy, args, output_dir, device="cuda
                 )
             finally:
                 env.close()
+                gc.collect()
+                torch.cuda.empty_cache()
             all_results[name] = results
             all_metrics[name] = compute_metrics(baseline, results)
             stat_tests[name] = statistical_tests(baseline, results)
@@ -987,6 +1004,8 @@ def run_full_experiment(task, env_splits, policy, args, output_dir, device="cuda
             )
         finally:
             env.close()
+            gc.collect()
+            torch.cuda.empty_cache()
         all_results[name] = results
         all_metrics[name] = compute_metrics(baseline, results)
         stat_tests[name] = statistical_tests(baseline, results)
@@ -1010,6 +1029,8 @@ def run_full_experiment(task, env_splits, policy, args, output_dir, device="cuda
         )
     finally:
         env.close()
+        gc.collect()
+        torch.cuda.empty_cache()
     all_results["random_conceptor"] = results
     all_metrics["random_conceptor"] = compute_metrics(baseline, results)
     stat_tests["random_conceptor"] = statistical_tests(baseline, results)
