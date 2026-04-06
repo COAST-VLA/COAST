@@ -8,7 +8,7 @@ comparing successful vs failed episodes. Produces 4 figures:
   4. Variance decay across denoising steps
 
 Usage:
-    uv run scripts/analysis/exp1_denoising.py
+    uv run denoising_step_exp/exp1_denoising.py
 """
 
 from pathlib import Path
@@ -31,7 +31,7 @@ from data_utils import get_step_dirs  # noqa: E402
 from data_utils import load_activations  # noqa: E402
 from data_utils import load_episode_index  # noqa: E402
 
-OUTPUT_DIR = "results/figures/exp1"
+OUTPUT_DIR = "denoising_step_exp/results/figures/exp1"
 NUM_DENOISING_STEPS = 10
 ACTION_HORIZON = 32
 ACTION_DIM = 32

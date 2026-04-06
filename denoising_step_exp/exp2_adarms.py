@@ -13,7 +13,7 @@ Produces 4 figures:
   4. Effective dimensionality: cumulative variance + scree plot
 
 Usage:
-    uv run scripts/analysis/exp2_adarms.py
+    uv run denoising_step_exp/exp2_adarms.py
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from data_utils import get_step_dirs  # noqa: E402
 from data_utils import load_activations  # noqa: E402
 from data_utils import load_episode_index  # noqa: E402
 
-FIGURE_DIR = "results/figures/exp2"
+FIGURE_DIR = "denoising_step_exp/results/figures/exp2"
 N_DENOISING_STEPS = 10
 COND_DIM = 1024
 

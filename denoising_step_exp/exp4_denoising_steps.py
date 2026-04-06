@@ -1,15 +1,14 @@
 """
-Exp16: Analyze denoising step ablation results.
+Exp 4: Analyze denoising step ablation results.
 
-Loads result JSONs from results/denoising_ablation/ and produces:
+Loads result JSONs from denoising_step_exp/results/ablation/ and produces:
 - Summary table (step count x mean success rate)
 - Per-task comparison across step counts
-- Bar chart saved to results/figures/exp16/
+- Bar chart saved to denoising_step_exp/results/figures/exp4/
 - Identification of tasks where fewer steps cause degradation
 
 Usage:
-    uv run scripts/analysis/exp16_denoising_steps.py
-    uv run scripts/analysis/exp16_denoising_steps.py --results_dir results/denoising_ablation
+    uv run denoising_step_exp/exp4_denoising_steps.py
 """
 
 import dataclasses
@@ -17,17 +16,24 @@ import json
 import logging
 import pathlib
 
+import matplotlib as mpl
+
+mpl.use("Agg")
+
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 import tyro
+
+sns.set_theme(style="whitegrid", context="paper", font_scale=1.3)
 
 logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
 class Args:
-    results_dir: str = "results/denoising_ablation"
-    figures_dir: str = "results/figures/exp16"
+    results_dir: str = "denoising_step_exp/results/ablation"
+    figures_dir: str = "denoising_step_exp/results/figures/exp4"
     # Threshold for flagging degradation (absolute drop from 10-step baseline).
     degradation_threshold: float = 0.1
 
@@ -121,15 +127,16 @@ def main(args: Args) -> None:
     mean_srs = [all_results[ns]["mean_success_rate"] for ns in step_counts]
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    bars = ax.bar([str(ns) for ns in step_counts], mean_srs, color="#4C72B0", edgecolor="black", linewidth=0.5)
+    palette = sns.color_palette("muted")
+    bars = ax.bar([str(ns) for ns in step_counts], mean_srs, color=palette[0], edgecolor="black", linewidth=0.5)
 
     # Add value labels on bars
     for bar, sr in zip(bars, mean_srs, strict=True):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005, f"{sr:.3f}", ha="center", va="bottom")
 
-    ax.set_xlabel("Number of Denoising Steps")
+    ax.set_xlabel("Number of Denoising Steps $N$")
     ax.set_ylabel("Mean Success Rate")
-    ax.set_title("Pi0.5 MetaWorld: Denoising Step Ablation")
+    ax.set_title(r"Pi0.5 MetaWorld: Denoising Step Ablation ($N \in \{1,2,3,5,10\}$)")
     ax.set_ylim(0, min(1.0, max(mean_srs) * 1.15))
     ax.grid(axis="y", alpha=0.3)
 
@@ -170,7 +177,7 @@ def main(args: Args) -> None:
             for task in all_tasks
         },
     }
-    summary_path = figures_dir / "exp16_summary.json"
+    summary_path = figures_dir / "exp4_summary.json"
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
     logger.info(f"Summary saved to {summary_path}")

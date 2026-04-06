@@ -9,7 +9,7 @@ Uses PyTorch inference loaded in-process (no WebSocket server).
 
 Usage:
     export CUDA_VISIBLE_DEVICES=1
-    MUJOCO_GL=egl uv run scripts/eval_denoising_steps.py \
+    MUJOCO_GL=egl uv run denoising_step_exp/eval_denoising_steps.py \
         --policy.config=pi05_metaworld \
         --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
         --num_steps 1 --split train
@@ -205,7 +205,7 @@ class Args:
     # Number of steps between re-planning.
     replan_steps: int = 10
     # Output directory for results.
-    output_dir: str = "results/denoising_ablation"
+    output_dir: str = "denoising_step_exp/results/ablation"
 
     width: int = 224
     height: int = 224

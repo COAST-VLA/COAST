@@ -4,14 +4,14 @@
 #
 # Usage:
 #   export CUDA_VISIBLE_DEVICES=1
-#   bash scripts/run_denoising_ablation.sh
+#   bash denoising_step_exp/run_denoising_ablation.sh
 
 set -euo pipefail
 
-CHECKPOINT="/home/brandony/openpi-metaworld/checkpoints/pi05_metaworld/pi05_metaworld_test/5000/"
+CHECKPOINT="checkpoints/pi05_metaworld/pi05_metaworld_test/5000/"
 CONFIG="pi05_metaworld"
 SPLIT="train"
-OUTPUT_DIR="results/denoising_ablation"
+OUTPUT_DIR="denoising_step_exp/results/ablation"
 STEP_COUNTS=(1 2 3 5 10)
 
 echo "=== Denoising Step Ablation ==="
@@ -23,7 +23,7 @@ echo ""
 
 for NUM_STEPS in "${STEP_COUNTS[@]}"; do
     echo "--- Running num_steps=${NUM_STEPS} ---"
-    MUJOCO_GL=egl uv run scripts/eval_denoising_steps.py \
+    MUJOCO_GL=egl uv run denoising_step_exp/eval_denoising_steps.py \
         --policy.config="${CONFIG}" \
         --policy.dir="${CHECKPOINT}" \
         --num_steps "${NUM_STEPS}" \

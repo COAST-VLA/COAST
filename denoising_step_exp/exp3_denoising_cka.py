@@ -6,7 +6,7 @@ on suffix residual activations. Produces 2 figures:
   2. CKA similarity to final step (step 9) vs denoising step, per layer
 
 Usage:
-    uv run scripts/analysis/exp3_denoising_cka.py
+    uv run denoising_step_exp/exp3_denoising_cka.py
 """
 
 from pathlib import Path
@@ -31,7 +31,7 @@ from data_utils import load_activations  # noqa: E402
 from data_utils import load_episode_index  # noqa: E402
 from data_utils import sample_episodes  # noqa: E402
 
-OUTPUT_DIR = "results/figures/exp3"
+OUTPUT_DIR = "denoising_step_exp/results/figures/exp3"
 NUM_DENOISING_STEPS = 10
 NUM_LAYERS = 4  # len(LAYER_INDICES)
 NUM_TOKENS = 32
