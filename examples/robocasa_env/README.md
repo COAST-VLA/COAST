@@ -26,14 +26,6 @@ uv run python -m robocasa.scripts.download_kitchen_assets   # Caution: Assets to
 hf download robocasa/robocasa365_checkpoints --include "pi05_pretrain_human300/multitask_learning/75000/*"  --local-dir .
 ```
 
-The checkpoint's norm_stats must be in `assets/robocasa/`. If your checkpoint has `assets/norm_stats.json` (flat), restructure it:
-
-```bash
-cd <checkpoint_dir>
-mkdir -p assets/robocasa
-mv assets/norm_stats.json assets/robocasa/norm_stats.json
-```
-
 ### Start the Server
 
 ```bash
