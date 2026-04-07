@@ -36,7 +36,7 @@ name = "pytorch-cu113"
 url = "https://download.pytorch.org/whl/cu113"
 
 [tool.uv.sources]
-robocasa = { path = "../../third_party/libero", editable = true }
+libero = { path = "../../third_party/libero", editable = true }
 
 [dependency-groups]
 dev = [
