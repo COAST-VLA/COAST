@@ -120,15 +120,16 @@ def test_robocasa_inputs_float_chw_image_normalization():
     assert out["image"]["left_wrist_0_rgb"].shape == (224, 224, 3)
 
 
-def test_robocasa_outputs_slices_to_12_dims():
+@pytest.mark.parametrize("shape", [(50, 32), (2, 50, 32)])
+def test_robocasa_outputs_slices_to_12_dims(shape):
     transform = robocasa_policy.RobocasaOutputs()
-    # Model returns (horizon, action_dim=32) padded actions.
-    actions = np.random.rand(50, 32).astype(np.float32)
+    # Model may return unbatched (H, D) or batched (B, H, D) padded actions.
+    actions = np.random.rand(*shape).astype(np.float32)
 
     out = transform({"actions": actions})
 
-    assert out["actions"].shape == (50, 12)
-    assert np.allclose(out["actions"], actions[:, :12])
+    assert out["actions"].shape == shape[:-1] + (12,)
+    assert np.allclose(out["actions"], actions[..., :12])
 
 
 @pytest.mark.manual

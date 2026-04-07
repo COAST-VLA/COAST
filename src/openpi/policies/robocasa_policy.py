@@ -8,7 +8,7 @@ from openpi.models import model as _model
 
 
 def make_robocasa_example() -> dict:
-    """Creates a random input example for the Libero policy."""
+    """Creates a random input example for the RoboCasa policy."""
     return {
         "observation/state": np.random.rand(16),
         "observation/image": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
@@ -44,12 +44,11 @@ class RobocasaInputs(transforms.DataTransformFn):
     model_type: _model.ModelType = _model.ModelType.PI0
 
     def __call__(self, data: dict) -> dict:
-        # We only mask padding for pi0 model, not pi0-FAST. Do not change this for your own dataset.
+        # We only mask padding for pi0 model; pi0.5 and pi0-FAST leave all masks True.
         mask_padding = self.model_type == _model.ModelType.PI0
 
-        # We pad the proprioceptive input to the action dimension of the model.
-        # For pi0-FAST, we don't pad the state. For Libero, we don't need to differentiate
-        # since the pi0-FAST action_dim = 7, which is < state_dim = 8, so pad is skipped.
+        # Pad the proprioceptive input to the model action dimension. This is used by pi0/pi0.5
+        # (and is a no-op if state_dim >= action_dim).
         # Keep this for your own dataset, but if your dataset stores the proprioceptive input
         # in a different key than "observation/state", you should change it below.
         state = transforms.pad_to_dim(data["observation/state"], self.action_dim)
@@ -112,6 +111,6 @@ class RobocasaOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
         # Only return the first N actions -- since we padded actions above to fit the model action
         # dimension, we need to now parse out the correct number of actions in the return dict.
-        # For Libero, we only return the first 7 actions (since the rest is padding).
-        # For your own dataset, replace `7` with the action dimension of your dataset.
-        return {"actions": np.asarray(data["actions"][:, :12])}
+        # For RoboCasa, actions are 12-dimensional (the rest is padding).
+        # Support both unbatched (H, D) and batched (B, H, D) model outputs.
+        return {"actions": np.asarray(data["actions"])[..., :12]}
