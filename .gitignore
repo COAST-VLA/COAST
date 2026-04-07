@@ -17,6 +17,7 @@ results/
 collection_log.txt
 activations_run.log
 benchmark_results_async.txt
+MUJOCO_LOG.TXT
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

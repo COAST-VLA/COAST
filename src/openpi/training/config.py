@@ -21,6 +21,7 @@ from openpi.policies import metaworld_lerobot_policy
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.robocasa_policy as robocasa_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
@@ -538,6 +539,33 @@ class LeRobotMetaworldDataConfig(DataConfigFactory):
 
 
 @dataclasses.dataclass(frozen=True)
+class LeRobotRobocasaDataConfig(DataConfigFactory):
+    """Config for Robocasa inference and training."""
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_transform = _transforms.Group()
+
+        data_transforms = _transforms.Group(
+            inputs=[
+                robocasa_policy.RobocasaInputs(action_dim=model_config.action_dim, model_type=model_config.model_type)
+            ],
+            outputs=[robocasa_policy.RobocasaOutputs()],
+        )
+
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            # Robocasa checkpoint uses z-score normalization (no quantile stats).
+            use_quantile_norm=False,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class TrainConfig:
     # Name of the config. Must be unique. Will be used to reference this config.
     name: tyro.conf.Suppress[str]
@@ -856,6 +884,17 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         pytorch_weight_path="/path/to/your/pytorch_weight_path",
         num_train_steps=30_000,
+    ),
+    #
+    # Robocasa configs.
+    #
+    TrainConfig(
+        name="pi05_robocasa",
+        model=pi0_config.Pi0Config(pi05=True, max_token_len=96),
+        data=LeRobotRobocasaDataConfig(
+            assets=AssetsConfig(asset_id="robocasa"),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
     ),
     #
     # Fine-tuning Aloha configs.

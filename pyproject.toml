@@ -74,6 +74,9 @@ dlimp = { git = "https://github.com/kvablack/dlimp", rev = "ad72ce3a9b414db2185b
 
 [tool.uv.workspace]
 members = ["packages/*"]
+exclude = [
+    "examples/robocasa_env",
+]
 
 [tool.ruff]
 line-length = 120
