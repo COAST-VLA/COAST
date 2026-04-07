@@ -3,6 +3,7 @@ assets/
 checkpoints/
 data/
 wandb/
+pi05_pretrain_human300/
 
 # Activation datasets (see HuggingFace for remote copies)
 ml45-activations/
