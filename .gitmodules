@@ -10,3 +10,4 @@
 [submodule "third_party/robocasa"]
 	path = third_party/robocasa
 	url = https://github.com/robocasa/robocasa
+	ignore = untracked
