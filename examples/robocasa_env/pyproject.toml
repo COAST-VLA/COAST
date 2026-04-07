@@ -1,0 +1,22 @@
+[project]
+name = "robocasa_env"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "robocasa",
+    "robosuite",
+    "openpi-client"
+]
+
+
+[tool.uv.sources]
+robocasa = { path = "../../third_party/robocasa", editable = true }
+robosuite = { path = "../../third_party/robosuite", editable = true }
+openpi-client = { path = "../../packages/openpi-client", editable = true }
+
+[dependency-groups]
+dev = [
+    "tyro>=1.0.12",
+]
