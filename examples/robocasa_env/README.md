@@ -43,6 +43,16 @@ uv run scripts/serve_policy.py policy:checkpoint \
     --policy.dir=/home/brandony/openpi-metaworld/pi05_pretrain_human300/multitask_learning/75000
 ```
 
+To use the PyTorch backend instead of JAX, add `--pytorch`. The first run converts the JAX checkpoint to `model.safetensors` (cached, so later runs are fast):
+
+```bash
+uv run scripts/serve_policy.py --pytorch policy:checkpoint \
+    --policy.config=pi05_robocasa \
+    --policy.dir=/home/brandony/openpi-metaworld/pi05_pretrain_human300/multitask_learning/75000
+```
+
+The client (`main.py` / `eval_all.py`) is unchanged — the WebSocket protocol is the same for both backends.
+
 ### Run Evaluation
 
 There are two evaluation entry points:
