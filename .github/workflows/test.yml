@@ -7,22 +7,28 @@ on:
 
 jobs:
   test:
-    name: Tests (CPU, not-manual)
+    name: Tests (CPU)
     runs-on: ubuntu-latest
     env:
       GIT_LFS_SKIP_SMUDGE: true
-      # Force JAX onto CPU. The runner has no GPU, but conftest's auto-detect
-      # depends on pynvml; setting this explicitly avoids any ambiguity and
-      # also keeps `jax.device_count() == 1` so data-loader tests with small
-      # batch sizes don't try to shard across multiple devices.
+      # Force JAX onto CPU. The runner has no GPU; setting this explicitly
+      # avoids any ambiguity and keeps `jax.device_count() == 1` so data-loader
+      # tests with small batch sizes don't try to shard across multiple devices.
       JAX_PLATFORMS: cpu
+      # Software-rendered MuJoCo via mesa's osmesa. Used by the libero_env
+      # tests below; works on a CPU-only runner with libosmesa6 installed.
+      MUJOCO_GL: osmesa
     steps:
       - uses: actions/checkout@v4
+        with:
+          # libero is installed editable from third_party/libero so the libero_env
+          # step needs the submodule cloned.
+          submodules: recursive
 
-      - name: Install FFmpeg dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libavcodec-dev libavformat-dev libavutil-dev
+          sudo apt-get install -y ffmpeg libosmesa6
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -33,5 +39,13 @@ jobs:
       - name: Install the project
         run: uv sync --all-extras --dev
 
-      - name: Run tests
+      - name: Run main openpi tests
         run: uv run pytest --strict-markers -m "not manual"
+
+      - name: Sync libero_env venv
+        working-directory: examples/libero_env
+        run: uv sync
+
+      - name: Run libero_env tests
+        working-directory: examples/libero_env
+        run: uv run pytest -v

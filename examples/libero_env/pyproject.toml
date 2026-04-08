@@ -42,9 +42,13 @@ openpi-client = { path = "../../packages/openpi-client", editable = true }
 
 [dependency-groups]
 dev = [
+    "pytest>=8.3.5",
     "ruff>=0.15.9",
     "tyro>=0.9.17",
 ]
 
 [tool.ruff.lint]
 select = ["I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

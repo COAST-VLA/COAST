@@ -37,10 +37,12 @@ class TestLiberoOutputsSlice:
         outputs = libero_policy.LiberoOutputs()
         actions = np.arange(2 * 10 * 32, dtype=np.float32).reshape(2, 10, 32)
         result = outputs({"actions": actions})
-        assert result["actions"].shape == (2, 10, 7), (
-            "regression: LiberoOutputs must slice the action_dim axis, not action_horizon. " "Got shape {}".format(
-                result["actions"].shape
-            )
+        assert result["actions"].shape == (
+            2,
+            10,
+            7,
+        ), "regression: LiberoOutputs must slice the action_dim axis, not action_horizon. Got shape {}".format(
+            result["actions"].shape
         )
         np.testing.assert_array_equal(result["actions"], actions[..., :7])
 

@@ -28,8 +28,6 @@ NUM_MLP_LAYERS = 1
 NUM_ATTENTION_LAYERS = 2
 # Action Expert has 8 attention heads
 NUM_ATTENTION_HEADS = 8
-# Action horizon = 32 tokens
-ACTION_TOKENS = 32
 # Hidden dim
 HIDDEN_DIM = 1024
 # MLP dim
@@ -40,6 +38,11 @@ ACTION_DIM = 32
 NUM_EXPERT_LAYERS = 18
 # 2 norms per layer (attn + mlp)
 NUM_NORMS_PER_LAYER = 2
+# NOTE: action_horizon (a.k.a. number of action tokens) is NOT a constant here.
+# It varies by training config (32 for pi05_metaworld, 10 for pi05_libero, etc.)
+# and is read from the policy config registry via the `expected_action_horizon`
+# fixture below. Hardcoding it would either break libero collection coverage or
+# create a self-referential check (data discovers its own contract).
 
 
 @pytest.fixture
@@ -81,6 +84,30 @@ def step_dirs(first_episode):
 @pytest.fixture
 def first_step(step_dirs):
     return step_dirs[0]
+
+
+@pytest.fixture
+def expected_action_horizon(first_episode):
+    """Action horizon from the policy config registered for this episode's
+    `config_name`. Source of truth is `openpi.training.config`, NOT the
+    activation file under test — deriving the horizon from the data would
+    be circular and would silently pass if collection wrote a globally
+    wrong horizon (e.g. policy loaded with the wrong config).
+    """
+    from openpi.training import config as _config
+
+    with open(first_episode / "metadata.json") as f:
+        episode_meta = json.load(f)
+    config_name = episode_meta.get("config_name")
+    if not config_name:
+        pytest.skip(f"episode metadata.json has no 'config_name' field at {first_episode}")
+    try:
+        train_config = _config.get_config(config_name)
+    except (ValueError, KeyError) as exc:
+        pytest.skip(f"config_name {config_name!r} not registered in openpi.training.config: {exc}")
+    if not hasattr(train_config.model, "action_horizon"):
+        pytest.skip(f"config {config_name!r} model has no action_horizon attribute")
+    return int(train_config.model.action_horizon)
 
 
 # --- Global file tests ---
@@ -260,29 +287,29 @@ class TestStepMetadata:
 
 
 class TestActivationShapes:
-    def test_denoising_shapes(self, first_step):
+    def test_denoising_shapes(self, first_step, expected_action_horizon):
         data = np.load(first_step / "denoising.npz")
-        assert data["all_x_t"].shape == (NUM_COLLECTED_DENOISE_STEPS, ACTION_TOKENS, ACTION_DIM)
-        assert data["all_v_t"].shape == (NUM_COLLECTED_DENOISE_STEPS, ACTION_TOKENS, ACTION_DIM)
+        assert data["all_x_t"].shape == (NUM_COLLECTED_DENOISE_STEPS, expected_action_horizon, ACTION_DIM)
+        assert data["all_v_t"].shape == (NUM_COLLECTED_DENOISE_STEPS, expected_action_horizon, ACTION_DIM)
 
-    def test_suffix_residual_shape(self, first_step):
+    def test_suffix_residual_shape(self, first_step, expected_action_horizon):
         data = np.load(first_step / "suffix_residual.npz")
         arr = data["all_suffix_residual"]
-        assert arr.shape == (NUM_COLLECTED_DENOISE_STEPS, NUM_RESIDUAL_LAYERS, ACTION_TOKENS, HIDDEN_DIM)
+        assert arr.shape == (NUM_COLLECTED_DENOISE_STEPS, NUM_RESIDUAL_LAYERS, expected_action_horizon, HIDDEN_DIM)
 
-    def test_suffix_mlp_hidden_shape(self, first_step):
+    def test_suffix_mlp_hidden_shape(self, first_step, expected_action_horizon):
         data = np.load(first_step / "suffix_mlp_hidden.npz")
         arr = data["all_suffix_mlp_hidden"]
-        assert arr.shape == (NUM_COLLECTED_DENOISE_STEPS, NUM_MLP_LAYERS, ACTION_TOKENS, MLP_DIM)
+        assert arr.shape == (NUM_COLLECTED_DENOISE_STEPS, NUM_MLP_LAYERS, expected_action_horizon, MLP_DIM)
 
-    def test_attention_weights_shape(self, first_step):
+    def test_attention_weights_shape(self, first_step, expected_action_horizon):
         data = np.load(first_step / "attention_weights.npz")
         arr = data["all_attention_weights"]
         assert arr.ndim == 5, f"Expected 5D, got {arr.ndim}D"
         assert arr.shape[0] == NUM_COLLECTED_DENOISE_STEPS
         assert arr.shape[1] == NUM_ATTENTION_LAYERS
         assert arr.shape[2] == NUM_ATTENTION_HEADS
-        assert arr.shape[3] == ACTION_TOKENS
+        assert arr.shape[3] == expected_action_horizon
         # Last dim is prefix_seq_len (varies, but should be > 0)
         assert arr.shape[4] > 0, "Attention weights last dim (prefix_len) should be > 0"
 

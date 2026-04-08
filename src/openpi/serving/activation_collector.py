@@ -130,8 +130,7 @@ class CollectingPolicy(_base_policy.BasePolicy):
 
         if collect_meta is None:
             raise ValueError(
-                "Collection-only server requires either "
-                f"{_COLLECT_KEY} or {_FINALIZE_KEY} to be set on every request."
+                f"Collection-only server requires either {_COLLECT_KEY} or {_FINALIZE_KEY} to be set on every request."
             )
 
         return self._handle_collect_infer(obs, collect_meta)
