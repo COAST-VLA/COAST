@@ -222,6 +222,33 @@ class TestCollectingPolicyDispatch:
         with pytest.raises(ValueError, match="both"):
             wrapper.infer(obs)
 
+    def test_rejects_batched_obs_to_avoid_silent_corruption(self, policy_setup) -> None:
+        """The __collect__ payload carries one env_id, so we cannot label
+        per-element activations from a multi-env batch. The wrapper must reject
+        batched obs (state.shape[0] > 1) loudly rather than silently slicing
+        batch index 0 and writing it under metadata's env_id, which would
+        silently corrupt the on-disk dataset.
+        """
+        _, wrapper = policy_setup
+        obs = {
+            "observation/state": np.zeros((4, 8), dtype=np.float32),
+            "observation/image": np.zeros((4, 224, 224, 3), dtype=np.uint8),
+            "prompt": ["a", "b", "c", "d"],
+            "__collect__": {
+                "task_name": "t",
+                "episode_id": 0,
+                "env_id": 0,
+                "step": 0,
+                "inference_step": 0,
+                "prompt": "x",
+                "cumulative_reward": 0.0,
+                "success_so_far": False,
+                "reward_since_last_inference": 0.0,
+            },
+        }
+        with pytest.raises(ValueError, match="single-example"):
+            wrapper.infer(obs)
+
 
 class TestCollectingPolicyInferCollect:
     def test_calls_underlying_with_clean_obs_and_saves_activations(self, policy_setup, tmp_path: pathlib.Path) -> None:

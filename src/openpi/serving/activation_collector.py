@@ -172,13 +172,29 @@ class CollectingPolicy(_base_policy.BasePolicy):
         clean_obs = {k: v for k, v in obs.items() if k not in (_COLLECT_KEY, _FINALIZE_KEY)}
 
         batched_obs = self._batch_single_example(clean_obs)
+
+        # Collection mode is single-example only: the __collect__ payload carries
+        # one env_id, so we cannot label per-element activations from a multi-env
+        # batch. Reject batched obs loudly here rather than silently slicing
+        # batch index 0 and writing it under the metadata's env_id (which would
+        # corrupt the on-disk dataset). Future support for batched collection
+        # would require extending the protocol so __collect__ carries a list
+        # of per-element metadata dicts.
+        state_arr = np.asarray(batched_obs["observation/state"])
+        if state_arr.ndim != 2 or state_arr.shape[0] != 1:
+            raise ValueError(
+                f"Collection mode only supports single-example inputs "
+                f"(observation/state shape (1, state_dim)), got shape "
+                f"{tuple(state_arr.shape)}. Send one inference call per env."
+            )
+
         result, intermediates = self._policy.infer_with_intermediates(batched_obs)
 
         step_dir = self._step_dir(collect_meta)
         save_step_activations(
             step_dir=step_dir,
             intermediates=intermediates,
-            env_id=0,
+            env_id=0,  # batch_size is enforced to 1 above
             step_metadata=dict(collect_meta),
         )
 
