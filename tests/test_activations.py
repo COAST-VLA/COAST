@@ -153,25 +153,43 @@ class TestStepMetadata:
 
 
 # --- Activation shape tests ---
+#
+# Some dims are fixed by the model architecture (10 denoising steps,
+# 4 sampled layers, 1024 hidden, 4096 mlp hidden, 32 action_dim) and others
+# vary by training config (action_horizon: 10 for pi05_libero, 32 for
+# pi05_metaworld). The action_horizon is inferred from `all_x_t.shape[1]`
+# so the same test file works for any env that uses the v1 collection schema.
+
+
+@pytest.fixture
+def action_horizon(first_step):
+    data = np.load(first_step / "denoising.npz")
+    arr = data["all_x_t"]
+    assert arr.ndim == 3, f"all_x_t should be 3D (denoising_steps, action_horizon, action_dim), got {arr.shape}"
+    return int(arr.shape[1])
 
 
 class TestActivationShapes:
-    def test_denoising_shapes(self, first_step):
+    def test_denoising_shapes(self, first_step, action_horizon):
         data = np.load(first_step / "denoising.npz")
-        assert data["all_x_t"].shape == (10, 32, 32)
-        assert data["all_v_t"].shape == (10, 32, 32)
+        # (denoising_steps, action_horizon, action_dim)
+        assert data["all_x_t"].shape == (10, action_horizon, 32)
+        # all_v_t must match all_x_t exactly (paired flow-matching outputs)
+        assert data["all_v_t"].shape == data["all_x_t"].shape
 
     def test_adarms_cond_shape(self, first_step):
         data = np.load(first_step / "adarms_cond.npz")
         assert data["all_adarms_cond"].shape == (10, 1024)
 
-    def test_suffix_residual_shape(self, first_step):
+    def test_suffix_residual_shape(self, first_step, action_horizon):
         data = np.load(first_step / "suffix_residual.npz")
-        assert data["all_suffix_residual"].shape == (10, 4, 32, 1024)
+        # (denoising_steps, num_layers, action_horizon, hidden_dim)
+        assert data["all_suffix_residual"].shape == (10, 4, action_horizon, 1024)
 
-    def test_suffix_mlp_hidden_shape(self, first_step):
+    def test_suffix_mlp_hidden_shape(self, first_step, action_horizon):
         data = np.load(first_step / "suffix_mlp_hidden.npz")
-        assert data["all_suffix_mlp_hidden"].shape == (10, 4, 32, 4096)
+        # (denoising_steps, num_layers, action_horizon, mlp_hidden_dim)
+        assert data["all_suffix_mlp_hidden"].shape == (10, 4, action_horizon, 4096)
 
     def test_all_float32(self, first_step):
         for fname in ["denoising.npz", "adarms_cond.npz", "suffix_residual.npz", "suffix_mlp_hidden.npz"]:

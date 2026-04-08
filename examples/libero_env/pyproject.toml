@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.8,<3.9"
 dependencies = [
     "libero",
+    "openpi-client",
     "hydra-core==1.2.0",
     "numpy==1.22.4",
     "wandb==0.13.1",
@@ -37,9 +38,13 @@ url = "https://download.pytorch.org/whl/cu113"
 
 [tool.uv.sources]
 libero = { path = "../../third_party/libero", editable = true }
+openpi-client = { path = "../../packages/openpi-client", editable = true }
 
 [dependency-groups]
 dev = [
     "ruff>=0.15.9",
     "tyro>=0.9.17",
 ]
+
+[tool.ruff.lint]
+select = ["I"]

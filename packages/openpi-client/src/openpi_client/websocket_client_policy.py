@@ -34,14 +34,22 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
         while True:
             try:
                 headers = {"Authorization": f"Api-Key {self._api_key}"} if self._api_key else None
-                conn = websockets.sync.client.connect(
-                    self._uri,
-                    compression=None,
-                    max_size=None,
-                    additional_headers=headers,
-                    # Long timeout for first inference (e.g., PyTorch torch.compile warmup)
-                    ping_timeout=600,
-                )
+                connect_kwargs = {
+                    "compression": None,
+                    "max_size": None,
+                    "additional_headers": headers,
+                }
+                try:
+                    conn = websockets.sync.client.connect(
+                        self._uri,
+                        # Long timeout for first inference (e.g., PyTorch torch.compile warmup)
+                        ping_timeout=600,
+                        **connect_kwargs,
+                    )
+                except TypeError as exc:
+                    if "ping_timeout" not in str(exc):
+                        raise
+                    conn = websockets.sync.client.connect(self._uri, **connect_kwargs)
                 metadata = msgpack_numpy.unpackb(conn.recv())
                 return conn, metadata
             except ConnectionRefusedError:

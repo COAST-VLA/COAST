@@ -14,7 +14,6 @@ Usage:
 
 import collections
 import dataclasses
-import json
 import logging
 import pathlib
 import subprocess
@@ -28,6 +27,8 @@ from tqdm import tqdm
 import tyro
 
 from openpi.policies import policy_config as _policy_config
+from openpi.serving.activation_collector import save_episode_files
+from openpi.serving.activation_collector import save_step_activations
 from openpi.training import config as _config
 
 logger = logging.getLogger(__name__)
@@ -213,32 +214,6 @@ class Args:
     gpus: list[int] = dataclasses.field(default_factory=list)
 
 
-def save_step_activations(
-    step_dir: pathlib.Path,
-    intermediates: dict,
-    env_id: int,
-    step_metadata: dict,
-):
-    """Save per-env, per-step activation data."""
-    step_dir.mkdir(parents=True, exist_ok=True)
-
-    # Slice out this env's data from the batch dimension
-    # intermediates shapes: (num_steps, batch, ...) or (num_steps, num_layers, batch, ...)
-    all_x_t = intermediates["all_x_t"][:, env_id]  # (10, 32, 32)
-    all_v_t = intermediates["all_v_t"][:, env_id]  # (10, 32, 32)
-    all_adarms_cond = intermediates["all_adarms_cond"][:, env_id]  # (10, 1024)
-    all_suffix_residual = intermediates["all_suffix_residual"][:, :, env_id]  # (10, 4, 32, 1024)
-    all_suffix_mlp_hidden = intermediates["all_suffix_mlp_hidden"][:, :, env_id]  # (10, 4, 32, 4096)
-
-    np.savez(step_dir / "denoising.npz", all_x_t=all_x_t, all_v_t=all_v_t)
-    np.savez(step_dir / "adarms_cond.npz", all_adarms_cond=all_adarms_cond)
-    np.savez(step_dir / "suffix_residual.npz", all_suffix_residual=all_suffix_residual)
-    np.savez(step_dir / "suffix_mlp_hidden.npz", all_suffix_mlp_hidden=all_suffix_mlp_hidden)
-
-    with open(step_dir / "metadata.json", "w") as f:
-        json.dump(step_metadata, f, indent=2)
-
-
 def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Path):
     """Collect activations for a single task."""
     logger.info(f"Collecting activations for {task_name}")
@@ -337,7 +312,6 @@ def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Pa
         total_env_steps = len(per_step_rewards[0])
         for env_id in range(num_envs):
             episode_dir = task_output_dir / f"episode_000_env_{env_id:03d}"
-            episode_dir.mkdir(parents=True, exist_ok=True)
 
             episode_metadata = {
                 "task_name": task_name,
@@ -352,18 +326,11 @@ def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Pa
                 "checkpoint_dir": args.policy.dir,
                 "config_name": args.policy.config,
             }
-            with open(episode_dir / "metadata.json", "w") as f:
-                json.dump(episode_metadata, f, indent=2)
-
-            # Reward trajectory
-            rewards_arr = np.array(per_step_rewards[env_id], dtype=np.float32)
-            cumulative_arr = np.cumsum(rewards_arr).astype(np.float32)
-            success_arr = np.array(per_step_success[env_id], dtype=bool)
-            np.savez(
-                episode_dir / "rewards.npz",
-                per_step_reward=rewards_arr,
-                cumulative_reward=cumulative_arr,
-                success_at_step=success_arr,
+            save_episode_files(
+                episode_dir=episode_dir,
+                episode_metadata=episode_metadata,
+                per_step_reward=per_step_rewards[env_id],
+                per_step_success=per_step_success[env_id],
             )
 
         logger.info(
