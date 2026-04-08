@@ -134,22 +134,22 @@ We provide two activation collection scripts. **V2 is recommended** — it colle
 
 ## Downloading Pre-Collected Activations
 
-Pre-collected activation datasets are available on HuggingFace. Download them to local directories that match the expected folder names:
+Pre-collected activation datasets are available on HuggingFace. Download them to local directories using this naming convention: `pi05-metaworld-activations-v{version}-{num_envs}env`.
 
 ```bash
 # V2 activations (recommended) — 126 GB, 15 envs per task
-hf download brandonyang/pi05-metaworld-activations-v2 --repo-type dataset --local-dir pi05-metaworld-activations-v2
+hf download brandonyang/pi05-metaworld-activations-v2 --repo-type dataset --local-dir pi05-metaworld-activations-v2-15env
 
 # V1 activations (15 envs per task) — 357 GB
-hf download brandonyang/ml45-activations-15 --repo-type dataset --local-dir ml45-activations-15
+hf download brandonyang/ml45-activations-15 --repo-type dataset --local-dir pi05-metaworld-activations-v1-15env
 
 # V1 activations (2 envs per task) — 20 GB
-hf download brandonyang/ml45-activations --repo-type dataset --local-dir ml45-activations
+hf download brandonyang/ml45-activations --repo-type dataset --local-dir pi05-metaworld-activations-v1-2env
 ```
 
 > **Note:** The V2 dataset is uploaded as per-task `.tar` files. After downloading, extract them:
 > ```bash
-> cd pi05-metaworld-activations-v2
+> cd pi05-metaworld-activations-v2-15env
 > for f in *.tar; do tar xf "$f"; done
 > ```
 
