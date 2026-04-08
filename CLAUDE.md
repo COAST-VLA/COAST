@@ -49,6 +49,8 @@ MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
 ```
 
+See `examples/metaworld/README.md` for the metaworld-specific dataset generation, training, and activation collection workflows.
+
 ### Testing
 ```bash
 # Run all non-manual tests (CI default)

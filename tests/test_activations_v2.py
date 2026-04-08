@@ -1,5 +1,5 @@
 """
-Tests for V2 collected activation data from scripts/collect_activations_v2.py.
+Tests for V2 collected activation data from examples/metaworld/collect_activations_v2.py.
 
 Run after collecting activations:
     ACTIVATIONS_V2_DIR=activations_v2/5000/reach-v3 uv run pytest tests/test_activations_v2.py -v
