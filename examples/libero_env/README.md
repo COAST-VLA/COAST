@@ -80,7 +80,7 @@ The results file is updated after each task so partial progress is preserved if 
 For mech-interp work you can have the policy server save per-step intermediate
 activations to disk while a libero rollout runs. This uses a separate
 "collection-mode" policy server that wraps the policy in `CollectingPolicy`
-and writes the same on-disk format as `scripts/collect_activations.py`
+and writes the same on-disk format as `examples/metaworld/collect_activations.py`
 (metaworld's collector). Activations live entirely on the **server's**
 filesystem — the libero client never touches them, so the client and server
 can be on different machines.

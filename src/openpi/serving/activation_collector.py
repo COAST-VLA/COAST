@@ -30,7 +30,7 @@ def save_step_activations(
 
     Slices the env_id-th example out of the batch dimension of each intermediate
     array, then writes one .npz per activation kind plus metadata.json. The
-    output schema must stay byte-identical to scripts/collect_activations.py
+    output schema must stay byte-identical to examples/metaworld/collect_activations.py
     so existing analysis tooling keeps working.
     """
     step_dir.mkdir(parents=True, exist_ok=True)

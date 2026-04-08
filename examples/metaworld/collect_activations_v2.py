@@ -1,12 +1,19 @@
 """
-Collect intermediate activations from pi0.5 during MetaWorld evaluation rollouts.
+Collect intermediate activations (v2) from pi0.5 during MetaWorld evaluation rollouts.
+
+V2 improvements over v1:
+- Selective denoising step collection (steps 0, 4, 9 only)
+- Attention weight capture at specified layers
+- adaRMS gate capture for all 18 expert layers
+- Enhanced metadata (proprio_state, object_positions, predicted_actions)
+- Global adaRMS conditioning saved once per checkpoint
 
 Uses PyTorch inference with register_forward_hook for per-layer activation extraction.
 Loads policy in-process (no WebSocket server).
 
 Usage:
     export CUDA_VISIBLE_DEVICES=1
-    MUJOCO_GL=egl uv run scripts/collect_activations.py \
+    MUJOCO_GL=egl uv run examples/metaworld/collect_activations_v2.py \
         --policy.config=pi05_metaworld \
         --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
         --tasks reach-v3 --num_envs 2
@@ -14,6 +21,7 @@ Usage:
 
 import collections
 import dataclasses
+import json
 import logging
 import pathlib
 import subprocess
@@ -27,8 +35,6 @@ from tqdm import tqdm
 import tyro
 
 from openpi.policies import policy_config as _policy_config
-from openpi.serving.activation_collector import save_episode_files
-from openpi.serving.activation_collector import save_step_activations
 from openpi.training import config as _config
 
 logger = logging.getLogger(__name__)
@@ -152,6 +158,12 @@ ML45_TEST = [
     "hand-insert-v3",
 ]
 
+# V2 collection parameters (must match model method defaults)
+COLLECT_DENOISE_STEPS = (0, 4, 9)
+RESIDUAL_LAYERS = (5, 11)
+MLP_LAYERS = (11,)
+ATTENTION_LAYERS = (5, 11)
+
 
 class MultiCameraWrapper(gym.Wrapper):
     """Wrapper that renders multiple cameras and includes images in info dict."""
@@ -203,7 +215,7 @@ class Args:
     # Number of steps between re-planning.
     replan_steps: int = 10
     # Output directory for activations.
-    output_dir: str = "activations"
+    output_dir: str = "activations_v2"
 
     width: int = 224
     height: int = 224
@@ -214,7 +226,52 @@ class Args:
     gpus: list[int] = dataclasses.field(default_factory=list)
 
 
-def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Path):
+def save_step_activations_v2(
+    step_dir: pathlib.Path,
+    intermediates: dict,
+    env_id: int,
+    step_metadata: dict,
+):
+    """Save per-env, per-step activation data (v2 format).
+
+    Intermediates shapes (before env slicing):
+    - all_x_t: (3, batch, action_horizon, action_dim)
+    - all_v_t: (3, batch, action_horizon, action_dim)
+    - all_suffix_residual: (3, 2, batch, action_horizon, 1024)
+    - all_suffix_mlp_hidden: (3, 1, batch, action_horizon, 4096)
+    - all_attention_weights: (3, 2, batch, 8, action_horizon, total_seq_len)
+    - all_adarms_gates: (3, 18, 2, batch, action_horizon, 1024)
+    """
+    step_dir.mkdir(parents=True, exist_ok=True)
+
+    # Slice out this env's data from the batch dimension
+    # all_x_t: (3, batch, 32, 32) -> (3, 32, 32)
+    all_x_t = intermediates["all_x_t"][:, env_id]
+    all_v_t = intermediates["all_v_t"][:, env_id]
+
+    # all_suffix_residual: (3, 2, batch, seq, 1024) -> (3, 2, 32, 1024)
+    all_suffix_residual = intermediates["all_suffix_residual"][:, :, env_id]
+
+    # all_suffix_mlp_hidden: (3, 1, batch, seq, 4096) -> (3, 1, 32, 4096)
+    all_suffix_mlp_hidden = intermediates["all_suffix_mlp_hidden"][:, :, env_id]
+
+    # all_attention_weights: (3, 2, batch, 8, seq, total_seq) -> (3, 2, 8, 32, total_seq)
+    all_attention_weights = intermediates["all_attention_weights"][:, :, env_id]
+
+    # all_adarms_gates: (3, 18, 2, batch, seq, 1024) -> (3, 18, 2, 32, 1024)
+    all_adarms_gates = intermediates["all_adarms_gates"][:, :, :, env_id]
+
+    np.savez(step_dir / "denoising.npz", all_x_t=all_x_t, all_v_t=all_v_t)
+    np.savez(step_dir / "suffix_residual.npz", all_suffix_residual=all_suffix_residual)
+    np.savez(step_dir / "suffix_mlp_hidden.npz", all_suffix_mlp_hidden=all_suffix_mlp_hidden)
+    np.savez(step_dir / "attention_weights.npz", all_attention_weights=all_attention_weights)
+    np.savez(step_dir / "adarms_gates.npz", all_adarms_gates=all_adarms_gates)
+
+    with open(step_dir / "metadata.json", "w") as f:
+        json.dump(step_metadata, f, indent=2)
+
+
+def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Path, adarms_cond_saved: set):
     """Collect activations for a single task."""
     logger.info(f"Collecting activations for {task_name}")
     prompt = TASK_TO_PROMPT[task_name]
@@ -256,6 +313,9 @@ def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Pa
         pbar = tqdm(range(args.max_steps), desc=task_name)
         for step in pbar:
             if not action_plan:
+                # Keep full observation for metadata extraction
+                full_obs = obs.copy()
+
                 # Build observation dict matching the eval pipeline
                 obs_dict = {
                     "observation/image": camera_views["corner4"],
@@ -264,14 +324,32 @@ def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Pa
                     "prompt": [prompt] * num_envs,
                 }
 
-                result, intermediates = policy.infer_with_intermediates(obs_dict)
+                result, intermediates = policy.infer_with_intermediates_v2(obs_dict)
                 action_chunk = np.clip(result["actions"], -1.0, 1.0).astype(np.float32)
+
+                # Save adaRMS conditioning globally ONCE (not per step)
+                if "adarms_cond_saved" not in dir() or not adarms_cond_saved:
+                    cond_dir = base_output_dir
+                    cond_dir.mkdir(parents=True, exist_ok=True)
+                    if "global" not in adarms_cond_saved:
+                        np.savez(
+                            cond_dir / "adarms_cond_global.npz",
+                            adarms_cond_global=intermediates["adarms_cond_global"],
+                        )
+                        adarms_cond_saved.add("global")
+                        logger.info(f"Saved global adaRMS conditioning to {cond_dir / 'adarms_cond_global.npz'}")
 
                 # Save per-env activations for this inference step
                 reward_since_last = cumulative_reward - reward_at_last_inference
                 for env_id in range(num_envs):
                     episode_dir = task_output_dir / f"episode_000_env_{env_id:03d}"
                     step_dir = episode_dir / f"step_{step:04d}"
+
+                    # Enhanced metadata with proprio_state, object_positions, predicted_actions
+                    proprio_state = full_obs[env_id, :4].tolist()  # gripper xyz + angle
+                    object_positions = full_obs[env_id, 4:7].tolist()  # object xyz
+                    predicted_actions = action_chunk[env_id, 0, :].tolist()  # first action in chunk (4D)
+
                     step_metadata = {
                         "task_name": task_name,
                         "episode_id": 0,
@@ -282,8 +360,11 @@ def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Pa
                         "cumulative_reward": float(cumulative_reward[env_id]),
                         "success_so_far": bool(success[env_id]),
                         "reward_since_last_inference": float(reward_since_last[env_id]),
+                        "proprio_state": proprio_state,
+                        "object_positions": object_positions,
+                        "predicted_actions": predicted_actions,
                     }
-                    save_step_activations(step_dir, intermediates, env_id, step_metadata)
+                    save_step_activations_v2(step_dir, intermediates, env_id, step_metadata)
 
                 reward_at_last_inference = cumulative_reward.copy()
                 inference_step += 1
@@ -312,6 +393,7 @@ def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Pa
         total_env_steps = len(per_step_rewards[0])
         for env_id in range(num_envs):
             episode_dir = task_output_dir / f"episode_000_env_{env_id:03d}"
+            episode_dir.mkdir(parents=True, exist_ok=True)
 
             episode_metadata = {
                 "task_name": task_name,
@@ -325,12 +407,25 @@ def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Pa
                 "prompt": prompt,
                 "checkpoint_dir": args.policy.dir,
                 "config_name": args.policy.config,
+                # V2 enhanced episode metadata
+                "collection_version": "v2",
+                "collected_denoise_steps": list(COLLECT_DENOISE_STEPS),
+                "collected_residual_layers": list(RESIDUAL_LAYERS),
+                "collected_mlp_layers": list(MLP_LAYERS),
+                "collected_attention_layers": list(ATTENTION_LAYERS),
             }
-            save_episode_files(
-                episode_dir=episode_dir,
-                episode_metadata=episode_metadata,
-                per_step_reward=per_step_rewards[env_id],
-                per_step_success=per_step_success[env_id],
+            with open(episode_dir / "metadata.json", "w") as f:
+                json.dump(episode_metadata, f, indent=2)
+
+            # Reward trajectory
+            rewards_arr = np.array(per_step_rewards[env_id], dtype=np.float32)
+            cumulative_arr = np.cumsum(rewards_arr).astype(np.float32)
+            success_arr = np.array(per_step_success[env_id], dtype=bool)
+            np.savez(
+                episode_dir / "rewards.npz",
+                per_step_reward=rewards_arr,
+                cumulative_reward=cumulative_arr,
+                success_at_step=success_arr,
             )
 
         logger.info(
@@ -343,7 +438,7 @@ def collect_task(policy, task_name: str, args: Args, base_output_dir: pathlib.Pa
 
 def run_single_gpu(args: Args) -> None:
     """Run collection on a single GPU (current process)."""
-    logger.info("Single-GPU mode")
+    logger.info("Single-GPU mode (v2)")
 
     # Ensure PyTorch checkpoint exists before loading policy.
     from openpi.models_pytorch.convert import ensure_pytorch_checkpoint
@@ -369,11 +464,14 @@ def run_single_gpu(args: Args) -> None:
     checkpoint_step = policy_dir.name
     base_output_dir = pathlib.Path(args.output_dir) / checkpoint_step
 
+    # Track whether we've saved the global adaRMS conditioning
+    adarms_cond_saved = set()
+
     for task_name in tasks:
         if task_name not in TASK_TO_PROMPT:
             logger.warning(f"Unknown task: {task_name}, skipping")
             continue
-        collect_task(policy, task_name, args, base_output_dir)
+        collect_task(policy, task_name, args, base_output_dir, adarms_cond_saved)
 
     logger.info(f"All activations saved to {base_output_dir}")
 
