@@ -91,3 +91,53 @@ Common flags (in addition to the policy/server/replan flags from `main.py`):
 
 Per-task videos are written to `examples/robocasa_env/output/<task_set>-<split>/<env_name>/episode_<idx>.mp4`, and an aggregated `results.json` (with per-task and mean success rates) is written to `examples/robocasa_env/output/<task_set>-<split>/results.json`. The summary file is updated incrementally after each task so progress is preserved on early exit.
 
+## Activation Collection
+
+For mech-interp work you can have the policy server save per-step intermediate
+activations to disk while a robocasa rollout runs. This uses the same
+"collection-mode" policy server as the libero example: it wraps the policy in
+`CollectingPolicy` and writes the same on-disk format as
+`examples/metaworld/collect_activations.py`. Activations live entirely on the
+**server's** filesystem — the robocasa client never touches them, so the
+client and server can be on different machines.
+
+Start the collection-mode server from the repo root in one terminal:
+
+```bash
+# Terminal 1 (main openpi venv) — server pinned to GPU 0
+export CUDA_VISIBLE_DEVICES=0
+uv run scripts/serve_policy.py --pytorch --collect_activations \
+    --output-dir ./activations \
+    policy:checkpoint --policy.config=pi05_robocasa \
+    --policy.dir=/path/to/your/robocasa/checkpoint
+```
+
+Then run a robocasa rollout with `--collect` from this directory:
+
+```bash
+# Terminal 2 (robocasa_env venv)
+cd examples/robocasa_env
+MUJOCO_GL=egl uv run python main.py --env_name CloseBlenderLid --collect
+# or for a whole task set:
+MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen --collect
+```
+
+Notes:
+- Collection mode requires `--pytorch` on the server. `infer_with_intermediates`
+  is implemented for the PyTorch backend only.
+- A collection-mode server **rejects** plain inference requests. If you want to
+  also run regular eval, start a separate non-collection server on a different
+  port.
+- The server's `--output-dir` is on the **server's** filesystem. With
+  `--output-dir ./activations`, files land at
+  `./activations/<checkpoint_step>/<env_name>/episode_NNN_env_000/step_NNNN/`
+  relative to wherever the server was launched from.
+- The robocasa client uses `env_name` (e.g. `CloseBlenderLid`) as the
+  `task_name` in the collection metadata. The `task_id` field is fixed at 0
+  since each robocasa env is its own standalone task. The `episode_id` cycles
+  through `0..num_episodes-1` per env.
+- See `examples/libero_env/README.md` (the **Protocol** section under
+  Activation Collection) for the full wire-level spec of the `__collect__`
+  and `__finalize_episode__` payloads. The same `openpi_client.collection_session.CollectionSession`
+  helper handles the bookkeeping for libero, robocasa, and any future client.
+

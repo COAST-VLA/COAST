@@ -23,13 +23,14 @@ import os
 import gymnasium as gym
 import imageio.v3 as iio
 import numpy as np
+import robocasa  # noqa: F401
+import tyro
 from openpi_client import image_tools
 from openpi_client import websocket_client_policy as _websocket_client_policy
-import robocasa  # noqa: F401
+from openpi_client.collection_session import CollectionSession
 from robocasa.utils.dataset_registry_utils import get_task_horizon
 from robocasa.utils.env_utils import convert_action
 from tqdm import tqdm
-import tyro
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,10 @@ class Args:
 
     fps: int = 24
     seed: int = 7
+
+    # If True, attach activation-collection metadata to every infer call so the
+    # server (started with --collect_activations) saves intermediates to its disk.
+    collect: bool = False
 
 
 def tile_frames(frames: list[np.ndarray]) -> np.ndarray:
@@ -108,20 +113,30 @@ def build_state(obs: dict) -> np.ndarray:
 
 
 def eval_task(
-    env_name: str, policy: _websocket_client_policy.WebsocketClientPolicy, args: Args, output_dir: str
+    env_name: str,
+    policy: _websocket_client_policy.WebsocketClientPolicy,
+    args: Args,
+    output_dir: str,
+    collect_session: CollectionSession | None = None,
 ) -> dict[str, float]:
     """Evaluate a single env over args.num_episodes episodes and return per-task stats.
 
     The args object only needs to provide: split, num_episodes, max_steps,
     replan_steps, resize_size, render_cameras, fps. Both main.py's Args and
     eval_all.py's Args satisfy this.
+
+    If `collect_session` is provided, every inference call has __collect__
+    metadata attached and the episode boundaries are reported to the session,
+    so a server started with --collect_activations writes activations to disk.
     """
     task_output_dir = os.path.join(output_dir, env_name)
     os.makedirs(task_output_dir, exist_ok=True)
 
     env = make_env(env_name=env_name, split=args.split, seed=args.seed)
     task_horizon = get_task_horizon(env_name)
-    max_steps = args.max_steps if args.max_steps is not None else int(task_horizon * 1.5)
+    max_steps = (
+        args.max_steps if args.max_steps is not None else int(task_horizon * 1.5)
+    )
 
     successes: list[bool] = []
     for episode in range(args.num_episodes):
@@ -129,6 +144,14 @@ def eval_task(
         task_lang = obs["annotation.human.task_description"]
         action_plan = collections.deque()
         success = False
+
+        if collect_session is not None:
+            collect_session.start_episode(
+                task_name=env_name,
+                task_id=0,
+                episode_id=episode,
+                prompt=str(task_lang),
+            )
 
         video_path = os.path.join(task_output_dir, f"episode_{episode:03d}.mp4")
         with iio.imopen(video_path, "w", plugin="pyav") as video:
@@ -139,28 +162,40 @@ def eval_task(
                 desc=f"[{env_name}] Episode {episode + 1}/{args.num_episodes}",
                 leave=False,
             )
-            for _step in pbar:
+            for step in pbar:
                 # Tile multiple cameras of the single env into a grid frame.
-                frames = [image_tools.convert_to_uint8(obs[CAMERA_KEYS[cam]]) for cam in args.render_cameras]
+                frames = [
+                    image_tools.convert_to_uint8(obs[CAMERA_KEYS[cam]])
+                    for cam in args.render_cameras
+                ]
                 video.write_frame(tile_frames(frames))
 
                 if not action_plan:
                     img = image_tools.convert_to_uint8(
                         image_tools.resize_with_pad(
-                            obs[CAMERA_KEYS["agentview_left"]], args.resize_size, args.resize_size
+                            obs[CAMERA_KEYS["agentview_left"]],
+                            args.resize_size,
+                            args.resize_size,
                         )
                     )
                     wrist_img = image_tools.convert_to_uint8(
-                        image_tools.resize_with_pad(obs[CAMERA_KEYS["eye_in_hand"]], args.resize_size, args.resize_size)
+                        image_tools.resize_with_pad(
+                            obs[CAMERA_KEYS["eye_in_hand"]],
+                            args.resize_size,
+                            args.resize_size,
+                        )
                     )
-                    result = policy.infer(
-                        {
-                            "observation/image": img,
-                            "observation/wrist_image": wrist_img,
-                            "observation/state": build_state(obs),
-                            "prompt": task_lang,
-                        }
-                    )
+                    element = {
+                        "observation/image": img,
+                        "observation/wrist_image": wrist_img,
+                        "observation/state": build_state(obs),
+                        "prompt": task_lang,
+                    }
+                    if collect_session is not None:
+                        element["__collect__"] = collect_session.make_collect_metadata(
+                            step
+                        )
+                    result = policy.infer(element)
                     action_chunk = result["actions"]  # (action_horizon, action_dim=12)
                     assert (
                         action_chunk.ndim == 2
@@ -175,13 +210,21 @@ def eval_task(
                 obs, reward, terminated, truncated, info = env.step(action)
                 success = bool(info.get("success", False))
 
+                if collect_session is not None:
+                    collect_session.record_step(step, float(reward), done=success)
+
                 pbar.set_postfix(success=str(success))
 
                 if success:
                     break
 
+        if collect_session is not None:
+            collect_session.finalize_episode()
+
         successes.append(success)
-        logger.info(f"[{env_name}] Episode {episode + 1}/{args.num_episodes}: success={success}, video={video_path}")
+        logger.info(
+            f"[{env_name}] Episode {episode + 1}/{args.num_episodes}: success={success}, video={video_path}"
+        )
 
     env.close()
 
@@ -195,10 +238,16 @@ def main(args: Args) -> None:
     policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
     logger.info(f"Server metadata: {policy.get_server_metadata()}")
 
-    output_dir = os.path.join(os.path.dirname(__file__), "output", f"single-{args.split}")
+    output_dir = os.path.join(
+        os.path.dirname(__file__), "output", f"single-{args.split}"
+    )
     os.makedirs(output_dir, exist_ok=True)
 
-    result = eval_task(args.env_name, policy, args, output_dir)
+    collect_session = CollectionSession(policy) if args.collect else None
+
+    result = eval_task(
+        args.env_name, policy, args, output_dir, collect_session=collect_session
+    )
     logger.info(
         f"[{args.env_name}/{args.split}] success_rate={result['success_rate']:.2f} "
         f"({int(result['success_rate'] * result['num_episodes'])}/{int(result['num_episodes'])})"

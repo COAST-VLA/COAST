@@ -21,8 +21,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # libero is installed editable from third_party/libero so the libero_env
-          # step needs the submodule cloned.
+          # libero / robocasa / robosuite are installed editable from third_party/
+          # so the libero_env and robocasa_env steps need the submodules cloned.
           submodules: recursive
 
       - name: Install system dependencies
@@ -49,3 +49,13 @@ jobs:
       - name: Run libero_env tests
         working-directory: examples/libero_env
         run: uv run pytest -v
+
+      - name: Sync robocasa_env venv
+        working-directory: examples/robocasa_env
+        run: uv sync
+
+      - name: Run robocasa_env tests
+        working-directory: examples/robocasa_env
+        # The TestRobocasaEnv class is marked manual because it needs the
+        # ~10 GB kitchen assets download, which is impractical for CI.
+        run: uv run pytest --strict-markers -m "not manual" -v
