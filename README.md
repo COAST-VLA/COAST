@@ -11,14 +11,14 @@ GIT_LFS_SKIP_SMUDGE=1 uv sync
 GIT_LFS_SKIP_SMUDGE=1 uv pip install -e .
 ```
 
-The base install above is everything `examples/metaworld/` needs. `examples/libero/` and `examples/robocasa_env/` ship their own venvs because their dependencies conflict with the parent openpi env — see the per-example READMEs for setup.
+The base install above is everything `examples/metaworld/` needs. `examples/libero_env/` and `examples/robocasa_env/` ship their own venvs because their dependencies conflict with the parent openpi env — see the per-example READMEs for setup.
 
 ## Examples
 
 | Environment | README | Notes |
 |---|---|---|
 | **MetaWorld** | [`examples/metaworld/README.md`](examples/metaworld/README.md) | 50 manipulation tasks (ML45 split). Shares the parent openpi venv. Includes in-process activation collection (V1 + V2) for mechanistic interpretability, plus the ML45 evaluation results table. |
-| **LIBERO** | [`examples/libero/README.md`](examples/libero/README.md) | Original Docker-based LIBERO benchmark. Has its own Python 3.8 venv (`examples/libero/.venv`). |
+| **LIBERO** | [`examples/libero_env/README.md`](examples/libero_env/README.md) | WebSocket client/server LIBERO benchmark. Has its own Python 3.8 venv (`examples/libero_env/.venv`). |
 | **Robocasa** | [`examples/robocasa_env/README.md`](examples/robocasa_env/README.md) | RoboCasa kitchen tasks. Has its own venv (`examples/robocasa_env/.venv`) because robosuite/robocasa conflict with the parent venv. Uses a client/server WebSocket eval pattern. |
 
 ## Repo Layout
@@ -109,7 +109,7 @@ We also provide "expert" checkpoints for various robot platforms and tasks. Thes
 | $\pi_0$-ALOHA-towel      | Inference   | $\pi_0$ model fine-tuned on internal [ALOHA](https://tonyzhaozh.github.io/aloha/) data: can fold diverse towels 0-shot on ALOHA robot platforms                                                          | `gs://openpi-assets/checkpoints/pi0_aloha_towel`      |
 | $\pi_0$-ALOHA-tupperware | Inference   | $\pi_0$ model fine-tuned on internal [ALOHA](https://tonyzhaozh.github.io/aloha/) data: can unpack food from a tupperware container                                                                                                             | `gs://openpi-assets/checkpoints/pi0_aloha_tupperware` |
 | $\pi_0$-ALOHA-pen-uncap  | Inference   | $\pi_0$ model fine-tuned on public [ALOHA](https://dit-policy.github.io/) data: can uncap a pen                                                                                                          | `gs://openpi-assets/checkpoints/pi0_aloha_pen_uncap`  |
-| $\pi_{0.5}$-LIBERO      | Inference   | $\pi_{0.5}$ model fine-tuned for the [LIBERO](https://libero-project.github.io/datasets) benchmark: gets state-of-the-art performance (see [LIBERO README](examples/libero/README.md)) | `gs://openpi-assets/checkpoints/pi05_libero`      |
+| $\pi_{0.5}$-LIBERO      | Inference   | $\pi_{0.5}$ model fine-tuned for the [LIBERO](https://libero-project.github.io/datasets) benchmark: gets state-of-the-art performance (see [LIBERO README](examples/libero_env/README.md)) | `gs://openpi-assets/checkpoints/pi05_libero`      |
 | $\pi_{0.5}$-DROID      | Inference / Fine-Tuning | $\pi_{0.5}$ model fine-tuned on the [DROID dataset](https://droid-dataset.github.io/) with [knowledge insulation](https://www.physicalintelligence.company/research/knowledge_insulation): fast inference and good language-following | `gs://openpi-assets/checkpoints/pi05_droid`      |
 
 
@@ -162,10 +162,10 @@ We will fine-tune the $\pi_{0.5}$ model on the [LIBERO dataset](https://libero-p
 
 ### 1. Convert your data to a LeRobot dataset
 
-We provide a minimal example script for converting LIBERO data to a LeRobot dataset in [`examples/libero/convert_libero_data_to_lerobot.py`](examples/libero/convert_libero_data_to_lerobot.py). You can easily modify it to convert your own data! You can download the raw LIBERO dataset from [here](https://huggingface.co/datasets/openvla/modified_libero_rlds), and run the script with:
+We provide a minimal example script for converting LIBERO data to a LeRobot dataset in [`scripts/convert_libero_data_to_lerobot.py`](scripts/convert_libero_data_to_lerobot.py). You can easily modify it to convert your own data! You can download the raw LIBERO dataset from [here](https://huggingface.co/datasets/openvla/modified_libero_rlds), and run the script with:
 
 ```bash
-uv run examples/libero/convert_libero_data_to_lerobot.py --data_dir /path/to/your/libero/data
+uv run scripts/convert_libero_data_to_lerobot.py --data_dir /path/to/your/libero/data
 ```
 
 **Note:** If you just want to fine-tune on LIBERO, you can skip this step, because our LIBERO fine-tuning configs point to a pre-converted LIBERO dataset. This step is merely an example that you can adapt to your own data.
@@ -206,7 +206,7 @@ uv run scripts/serve_policy.py policy:checkpoint --policy.config=pi05_libero --p
 
 This will spin up a server that listens on port 8000 and waits for observations to be sent to it. We can then run an evaluation script (or robot runtime) that queries the server.
 
-For running the LIBERO eval in particular, we provide (and recommend using) a Dockerized workflow that handles both the policy server and the evaluation script together. See the [LIBERO README](examples/libero/README.md) for more details.
+For running the LIBERO eval in particular, use the separate-env WebSocket workflow in [examples/libero_env/README.md](examples/libero_env/README.md). It keeps LIBERO's Python 3.8 deps isolated from the main openpi environment while reusing the same policy server.
 
 If you want to embed a policy server call in your own robot runtime, we have a minimal example of how to do so in the [remote inference docs](docs/remote_inference.md).
 
