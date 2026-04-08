@@ -134,28 +134,28 @@ We provide two activation collection scripts. **V2 is recommended** — it colle
 
 ## Downloading Pre-Collected Activations
 
-Pre-collected activation datasets are available on HuggingFace. Download them to local directories that match the expected folder names:
+Pre-collected activation datasets are available on HuggingFace. Download them to local directories using this naming convention: `pi05-metaworld-activations-v{version}-{num_envs}env`.
 
 ```bash
 # V2 activations (recommended) — 126 GB, 15 envs per task
-hf download brandonyang/pi05-metaworld-activations-v2 --repo-type dataset --local-dir pi05-metaworld-activations-v2
+hf download brandonyang/pi05-metaworld-activations-v2-15env --repo-type dataset --local-dir pi05-metaworld-activations-v2-15env
 
 # V1 activations (15 envs per task) — 357 GB
-hf download brandonyang/ml45-activations-15 --repo-type dataset --local-dir ml45-activations-15
+hf download brandonyang/pi05-metaworld-activations-v1-15env --repo-type dataset --local-dir pi05-metaworld-activations-v1-15env
 
 # V1 activations (2 envs per task) — 20 GB
-hf download brandonyang/ml45-activations --repo-type dataset --local-dir ml45-activations
+hf download brandonyang/pi05-metaworld-activations-v1-2env --repo-type dataset --local-dir pi05-metaworld-activations-v1-2env
 ```
 
 > **Note:** The V2 dataset is uploaded as per-task `.tar` files. After downloading, extract them:
 > ```bash
-> cd pi05-metaworld-activations-v2
+> cd pi05-metaworld-activations-v2-15env
 > for f in *.tar; do tar xf "$f"; done
 > ```
 
 ## V2 Collection (Recommended)
 
-Dataset: [brandonyang/pi05-metaworld-activations-v2](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v2)
+Dataset: [brandonyang/pi05-metaworld-activations-v2-15env](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v2-15env)
 
 ```bash
 # Single task
@@ -281,8 +281,8 @@ ACTIVATIONS_V2_BASE=activations_v2/5000 \
 ## V1 Collection (Original)
 
 Datasets:
-- [brandonyang/ml45-activations](https://huggingface.co/datasets/brandonyang/ml45-activations) — 2 envs per task
-- [brandonyang/ml45-activations-15](https://huggingface.co/datasets/brandonyang/ml45-activations-15) — 15 envs per task
+- [brandonyang/pi05-metaworld-activations-v1-2env](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v1-2env) — 2 envs per task
+- [brandonyang/pi05-metaworld-activations-v1-15env](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v1-15env) — 15 envs per task
 
 ```bash
 # Single task
