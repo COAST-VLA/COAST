@@ -1,5 +1,5 @@
 """
-MUJOCO_GL=egl uv run scripts/generate_metaworld_dataset.py
+MUJOCO_GL=egl uv run examples/metaworld/generate_dataset.py
 """
 
 import dataclasses

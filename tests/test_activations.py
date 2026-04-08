@@ -1,5 +1,5 @@
 """
-Tests for collected activation data from scripts/collect_activations.py.
+Tests for collected activation data from examples/metaworld/collect_activations.py.
 
 Run after collecting activations:
     ACTIVATIONS_DIR=activations/5000/reach-v3 uv run pytest tests/test_activations.py -v
