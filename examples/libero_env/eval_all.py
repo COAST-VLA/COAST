@@ -17,9 +17,9 @@ from typing import Dict, List, Optional
 import numpy as np
 import tyro
 from openpi_client import websocket_client_policy as _websocket_client_policy
+from openpi_client.collection_session import CollectionSession
 from tqdm import tqdm
 
-from collection_session import CollectionSession
 from main import eval_task, get_task_suite
 
 logger = logging.getLogger(__name__)

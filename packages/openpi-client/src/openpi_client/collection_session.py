@@ -1,13 +1,22 @@
-"""Per-episode bookkeeping for activation collection from a libero rollout.
+"""Per-episode bookkeeping helper for the openpi activation-collection protocol.
 
-This is the only LIBERO-side component that knows about the activation
-collection protocol. It tracks per-episode state (cumulative reward, per-step
-rewards/successes, inference_step counter) and shapes the metadata payloads
-that get attached to each WebSocket request as `__collect__` /
-`__finalize_episode__` magic keys. The server's CollectingPolicy uses those
-keys to dispatch and write activations to its own filesystem.
+This is an env-agnostic client-side helper. Drop it into any rollout loop that
+talks to an openpi policy server started with `--collect_activations`. It
+tracks per-episode state (cumulative reward, per-step rewards/successes,
+inference_step counter) and shapes the metadata payloads that get attached to
+each WebSocket request as `__collect__` / `__finalize_episode__` magic keys.
+The server's CollectingPolicy (in openpi.serving.activation_collector) pops
+those keys, runs `infer_with_intermediates`, and writes activations to its
+own filesystem.
+
+This helper has zero env-specific imports — it only depends on the duck-typed
+`policy.infer(dict) -> dict` interface (i.e. WebsocketClientPolicy or anything
+compatible). The libero, robocasa, and droid example clients can all use it
+unchanged; future real-robot clients can too.
 
 Usage from inside an eval loop:
+
+    from openpi_client.collection_session import CollectionSession
 
     session = CollectionSession(client)
     session.start_episode(task_name, task_id, episode_id, prompt)
@@ -84,9 +93,7 @@ class CollectionSession:
             "prompt": self._prompt,
             "cumulative_reward": float(self._cumulative_reward),
             "success_so_far": bool(self._success),
-            "reward_since_last_inference": float(
-                self._cumulative_reward - self._reward_at_last_inference
-            ),
+            "reward_since_last_inference": float(self._cumulative_reward - self._reward_at_last_inference),
         }
         self._inference_step += 1
         self._reward_at_last_inference = self._cumulative_reward

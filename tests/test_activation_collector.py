@@ -1,5 +1,4 @@
-"""Unit tests for src/openpi/serving/activation_collector.py and the matching
-client-side helper at examples/libero_env/collection_session.py.
+"""Unit tests for src/openpi/serving/activation_collector.py.
 
 These tests do not need a GPU or a real checkpoint. They cover:
 - save_step_activations / save_episode_files write the expected on-disk schema
@@ -10,42 +9,27 @@ These tests do not need a GPU or a real checkpoint. They cover:
     - __collect__: calls infer_with_intermediates, saves activations, returns actions
     - __finalize_episode__: writes episode files, returns ack
 - _batch_single_example handles 1-D state and adds the leading batch dim
-- CollectionSession state transitions (start_episode, make_collect_metadata,
-  record_step, finalize_episode payload shape)
+- End-to-end CollectionSession <-> CollectingPolicy round-trip with a stub
+  underlying policy
 
-CollectionSession lives under examples/libero_env/ which is excluded from the
-main workspace, but it has zero libero/robosuite imports, so we load it via
-importlib for testing.
+The dedicated CollectionSession state-tracking unit tests live in
+tests/client/test_collection_session.py (next to the other openpi-client
+unit tests). The end-to-end pipeline tests stay here because they exercise
+both the client helper and the server wrapper together.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import pathlib
-import sys
 
 import numpy as np
+from openpi_client.collection_session import CollectionSession
 import pytest
 
 from openpi.serving.activation_collector import CollectingPolicy
 from openpi.serving.activation_collector import save_episode_files
 from openpi.serving.activation_collector import save_step_activations
-
-
-def _load_collection_session_module():
-    """Load examples/libero_env/collection_session.py without going through the
-    libero workspace (which has its own venv)."""
-    repo_root = pathlib.Path(__file__).resolve().parents[1]
-    src_path = repo_root / "examples" / "libero_env" / "collection_session.py"
-    spec = importlib.util.spec_from_file_location("_libero_collection_session", src_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault(spec.name, module)
-    spec.loader.exec_module(module)
-    return module
-
 
 # ----------------------------------------------------------------------- helpers
 
@@ -355,162 +339,6 @@ class TestPathConstruction:
             wrapper._episode_dir(meta)  # noqa: SLF001
 
 
-# ----------------------------------------------- CollectionSession tests
-
-
-class _RecordingClient:
-    """Records every payload that .infer is called with. Returns a canned
-    action chunk so callers can iterate further if they want."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict] = []
-
-    def infer(self, payload: dict) -> dict:
-        # Deep-ish copy so subsequent mutations by the caller don't change history.
-        self.calls.append(json.loads(json.dumps(payload, default=str)))
-        return {"actions": np.zeros((10, 7), dtype=np.float32), "ack": True}
-
-
-@pytest.fixture
-def collection_session_module():
-    return _load_collection_session_module()
-
-
-class TestCollectionSessionStartEpisode:
-    def test_resets_state_for_new_episode(self, collection_session_module) -> None:
-        client = _RecordingClient()
-        session = collection_session_module.CollectionSession(client)
-
-        # First episode: do some work, then reset.
-        session.start_episode("task_a", task_id=1, episode_id=0, prompt="prompt-a")
-        session.make_collect_metadata(step=0)  # bumps inference_step
-        session.record_step(0, 0.5, done=False)  # accumulates reward
-
-        session.start_episode("task_b", task_id=2, episode_id=5, prompt="prompt-b")
-        # All counters should be reset.
-        meta = session.make_collect_metadata(step=0)
-        assert meta["task_name"] == "task_b"
-        assert meta["episode_id"] == 5
-        assert meta["env_id"] == 0
-        assert meta["inference_step"] == 0
-        assert meta["cumulative_reward"] == 0.0
-        assert meta["success_so_far"] is False
-        assert meta["reward_since_last_inference"] == 0.0
-        assert meta["prompt"] == "prompt-b"
-
-    def test_env_id_can_be_overridden(self, collection_session_module) -> None:
-        session = collection_session_module.CollectionSession(_RecordingClient())
-        session.start_episode("t", task_id=0, episode_id=0, prompt="p", env_id=7)
-        meta = session.make_collect_metadata(step=0)
-        assert meta["env_id"] == 7
-
-
-class TestMakeCollectMetadata:
-    def test_inference_step_increments_per_call(self, collection_session_module) -> None:
-        session = collection_session_module.CollectionSession(_RecordingClient())
-        session.start_episode("t", 0, 0, "p")
-        m0 = session.make_collect_metadata(step=0)
-        m1 = session.make_collect_metadata(step=5)
-        m2 = session.make_collect_metadata(step=10)
-        assert [m0["inference_step"], m1["inference_step"], m2["inference_step"]] == [0, 1, 2]
-        assert [m0["step"], m1["step"], m2["step"]] == [0, 5, 10]
-
-    def test_reward_since_last_inference_resets_after_each_call(self, collection_session_module) -> None:
-        session = collection_session_module.CollectionSession(_RecordingClient())
-        session.start_episode("t", 0, 0, "p")
-        # First inference: nothing recorded yet, delta is 0.
-        m0 = session.make_collect_metadata(step=0)
-        assert m0["cumulative_reward"] == 0.0
-        assert m0["reward_since_last_inference"] == 0.0
-
-        # Record some env steps then inference again.
-        session.record_step(0, 0.3, done=False)
-        session.record_step(1, 0.2, done=False)
-        m1 = session.make_collect_metadata(step=2)
-        assert m1["cumulative_reward"] == pytest.approx(0.5)
-        assert m1["reward_since_last_inference"] == pytest.approx(0.5)
-
-        # No new env steps -> next call's delta should be 0 again.
-        m2 = session.make_collect_metadata(step=3)
-        assert m2["cumulative_reward"] == pytest.approx(0.5)
-        assert m2["reward_since_last_inference"] == pytest.approx(0.0)
-
-
-class TestRecordStep:
-    def test_accumulates_rewards_and_tracks_first_success(self, collection_session_module) -> None:
-        client = _RecordingClient()
-        session = collection_session_module.CollectionSession(client)
-        session.start_episode("t", 0, 0, "p")
-        session.record_step(0, 0.0, done=False)
-        session.record_step(1, 0.0, done=False)
-        session.record_step(2, 1.0, done=True)  # success
-        session.record_step(3, 0.0, done=True)  # still done
-
-        session.finalize_episode()
-        finalize = client.calls[-1]["__finalize_episode__"]
-        assert finalize["per_step_reward"] == [0.0, 0.0, 1.0, 0.0]
-        assert finalize["per_step_success"] == [False, False, True, True]
-        assert finalize["episode_success"] is True
-        assert finalize["steps_to_success"] == 2  # first index where done=True
-        assert finalize["total_reward"] == pytest.approx(1.0)
-        assert finalize["total_env_steps"] == 4
-
-    def test_no_success_marks_steps_to_success_as_minus_one(self, collection_session_module) -> None:
-        client = _RecordingClient()
-        session = collection_session_module.CollectionSession(client)
-        session.start_episode("t", 0, 0, "p")
-        session.record_step(0, 0.1, done=False)
-        session.record_step(1, 0.2, done=False)
-        session.finalize_episode()
-        finalize = client.calls[-1]["__finalize_episode__"]
-        assert finalize["episode_success"] is False
-        assert finalize["steps_to_success"] == -1
-        assert finalize["total_reward"] == pytest.approx(0.3)
-
-
-class TestFinalizeEpisode:
-    def test_payload_shape_matches_server_expectations(self, collection_session_module) -> None:
-        client = _RecordingClient()
-        session = collection_session_module.CollectionSession(client)
-        session.start_episode("task_x", 0, 4, "prompt-x", env_id=0)
-
-        # Two inferences and three env steps.
-        session.make_collect_metadata(step=0)
-        session.record_step(0, 0.0, done=False)
-        session.record_step(1, 0.0, done=False)
-        session.make_collect_metadata(step=2)
-        session.record_step(2, 1.0, done=True)
-
-        session.finalize_episode()
-
-        assert len(client.calls) == 1
-        finalize = client.calls[-1]["__finalize_episode__"]
-        # Required fields.
-        for field in [
-            "task_name",
-            "episode_id",
-            "env_id",
-            "prompt",
-            "episode_success",
-            "total_reward",
-            "steps_to_success",
-            "total_env_steps",
-            "total_inference_steps",
-            "per_step_reward",
-            "per_step_success",
-        ]:
-            assert field in finalize, f"missing {field}"
-
-        assert finalize["task_name"] == "task_x"
-        assert finalize["episode_id"] == 4
-        assert finalize["env_id"] == 0
-        assert finalize["prompt"] == "prompt-x"
-        assert finalize["total_inference_steps"] == 2  # two make_collect_metadata calls
-        assert finalize["total_env_steps"] == 3
-        assert finalize["per_step_success"] == [False, False, True]
-        assert finalize["per_step_reward"] == [0.0, 0.0, 1.0]
-
-
 # ----------------------- end-to-end client+server pipeline tests
 
 
@@ -525,7 +353,6 @@ class TestEndToEndPipeline:
     def _drive_rollout(
         self,
         wrapper: CollectingPolicy,
-        session_module,
         task_name: str,
         episode_id: int,
         prompt: str,
@@ -534,7 +361,7 @@ class TestEndToEndPipeline:
         success_at_step: int | None,
     ) -> None:
         """Mimic eval_task: alternate make_collect_metadata + record_step + finalize_episode."""
-        session = session_module.CollectionSession(wrapper)
+        session = CollectionSession(wrapper)
         session.start_episode(task_name=task_name, task_id=0, episode_id=episode_id, prompt=prompt)
 
         env_step = 0
@@ -558,13 +385,10 @@ class TestEndToEndPipeline:
             del inf_idx
         session.finalize_episode()
 
-    def test_round_trip_writes_schema_compliant_files(
-        self, policy_setup, collection_session_module, tmp_path: pathlib.Path
-    ) -> None:
+    def test_round_trip_writes_schema_compliant_files(self, policy_setup, tmp_path: pathlib.Path) -> None:
         stub, wrapper = policy_setup
         self._drive_rollout(
             wrapper=wrapper,
-            session_module=collection_session_module,
             task_name="task_int",
             episode_id=0,
             prompt="do the integration thing",
@@ -646,13 +470,10 @@ class TestEndToEndPipeline:
         assert step_meta["step"] == 0
         assert step_meta["inference_step"] == 0
 
-    def test_failure_episode_writes_steps_to_success_minus_one(
-        self, policy_setup, collection_session_module, tmp_path: pathlib.Path
-    ) -> None:
+    def test_failure_episode_writes_steps_to_success_minus_one(self, policy_setup, tmp_path: pathlib.Path) -> None:
         _, wrapper = policy_setup
         self._drive_rollout(
             wrapper=wrapper,
-            session_module=collection_session_module,
             task_name="task_fail",
             episode_id=2,
             prompt="fail",

@@ -2,9 +2,11 @@
 
 Two side effects, both gated:
 
-1. **Make `examples/libero_env` importable** so test files can `import main`,
-   `import setup_libero_config`, `import collection_session` directly.
-   pytest does not add the parent of the tests/ folder to sys.path automatically.
+1. **Make `examples/libero_env` importable** so test files can `import main`
+   and `import setup_libero_config` directly. pytest does not add the parent
+   of the tests/ folder to sys.path automatically. (CollectionSession lives
+   in `openpi_client.collection_session` and imports normally via the libero
+   venv's openpi-client install.)
 
 2. **Bootstrap `~/.libero/config.yaml` if missing.** The `libero.libero` package
    has a top-level `input()` prompt at module load time when its config file
