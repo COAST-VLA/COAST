@@ -6,9 +6,9 @@ wandb/
 pi05_pretrain_human300/
 
 # Activation datasets (see HuggingFace for remote copies)
-ml45-activations/
-ml45-activations-15/
-pi05-metaworld-activations-v2/
+pi05-metaworld-activations-v1-2env/
+pi05-metaworld-activations-v1-15env/
+pi05-metaworld-activations-v2-15env/
 
 # Analysis outputs
 results/
