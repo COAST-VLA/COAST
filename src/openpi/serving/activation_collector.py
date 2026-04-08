@@ -142,11 +142,25 @@ class CollectingPolicy(_base_policy.BasePolicy):
 
     # ---------------------------------------------------------------- helpers
 
+    def _sanitize_task_name(self, task_name: Any) -> str:
+        task_name_str = str(task_name)
+        task_path = pathlib.PurePosixPath(task_name_str)
+        if task_path.is_absolute():
+            raise ValueError(f"Invalid task_name {task_name_str!r}: absolute paths are not allowed.")
+        if any(part in {"", ".", ".."} for part in task_path.parts):
+            raise ValueError(f"Invalid task_name {task_name_str!r}: path traversal segments are not allowed.")
+        if len(task_path.parts) != 1:
+            raise ValueError(f"Invalid task_name {task_name_str!r}: nested paths are not allowed.")
+        if "\\" in task_name_str:
+            raise ValueError(f"Invalid task_name {task_name_str!r}: path separators are not allowed.")
+        return task_name_str
+
     def _episode_dir(self, meta: dict) -> pathlib.Path:
+        task_name = self._sanitize_task_name(meta["task_name"])
         return (
             self._output_root
             / self._checkpoint_step
-            / str(meta["task_name"])
+            / task_name
             / "episode_{:03d}_env_{:03d}".format(int(meta["episode_id"]), int(meta["env_id"]))
         )
 

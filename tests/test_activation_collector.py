@@ -347,6 +347,13 @@ class TestPathConstruction:
         expected = tmp_path / "ckpt-step" / "my_task" / "episode_012_env_003"
         assert wrapper._episode_dir(meta) == expected  # noqa: SLF001
 
+    @pytest.mark.parametrize("task_name", ["/tmp/evil", "../evil", "nested/task", r"..\\evil"])
+    def test_episode_dir_rejects_unsafe_task_name(self, policy_setup, task_name: str) -> None:
+        _, wrapper = policy_setup
+        meta = {"task_name": task_name, "episode_id": 12, "env_id": 3}
+        with pytest.raises(ValueError, match="Invalid task_name"):
+            wrapper._episode_dir(meta)  # noqa: SLF001
+
 
 # ----------------------------------------------- CollectionSession tests
 
