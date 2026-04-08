@@ -23,7 +23,11 @@ uv run python -m robocasa.scripts.download_kitchen_assets   # Caution: Assets to
 ### Prepare the Checkpoint
 
 ```bash
-hf download robocasa/robocasa365_checkpoints --include "pi05_pretrain_human300/multitask_learning/75000/*"  --local-dir .
+hf download robocasa/robocasa365_checkpoints --include "pi05_pretrain_human300/multitask_learning/75000/*"  --local-dir checkpoints
+
+# Do some path surgery to match the expected structure of the policy server
+mkdir -p checkpoints/pi05_pretrain_human300/multitask_learning/75000/assets/robocasa
+mv checkpoints/pi05_pretrain_human300/multitask_learning/75000/assets/norm_stats.json checkpoints/pi05_pretrain_human300/multitask_learning/75000/assets/robocasa
 ```
 
 ### Start the Server
@@ -32,7 +36,7 @@ hf download robocasa/robocasa365_checkpoints --include "pi05_pretrain_human300/m
 export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py policy:checkpoint \
     --policy.config=pi05_robocasa \
-    --policy.dir=/home/brandony/openpi-metaworld/pi05_pretrain_human300/multitask_learning/75000
+    --policy.dir=checkpoints/pi05_pretrain_human300/multitask_learning/75000
 ```
 
 To use the PyTorch backend instead of JAX, add `--pytorch`. The first run converts the JAX checkpoint to `model.safetensors` (cached, so later runs are fast):
@@ -40,7 +44,7 @@ To use the PyTorch backend instead of JAX, add `--pytorch`. The first run conver
 ```bash
 uv run scripts/serve_policy.py --pytorch policy:checkpoint \
     --policy.config=pi05_robocasa \
-    --policy.dir=/home/brandony/openpi-metaworld/pi05_pretrain_human300/multitask_learning/75000
+    --policy.dir=checkpoints/pi05_pretrain_human300/multitask_learning/75000
 ```
 
 The client (`main.py` / `eval_all.py`) is unchanged — the WebSocket protocol is the same for both backends.
@@ -109,7 +113,7 @@ export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py --pytorch --collect_activations \
     --output-dir ./activations \
     policy:checkpoint --policy.config=pi05_robocasa \
-    --policy.dir=/path/to/your/robocasa/checkpoint
+    --policy.dir=checkpoints/pi05_pretrain_human300/multitask_learning/75000
 ```
 
 Then run a robocasa rollout with `--collect` from this directory:

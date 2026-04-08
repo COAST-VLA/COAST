@@ -11,7 +11,7 @@ from openpi.policies import policy_config as _policy_config
 from openpi.policies import robocasa_policy
 from openpi.training import config as _config
 
-CHECKPOINT_DIR = "/home/brandony/openpi-metaworld/pi05_pretrain_human300/multitask_learning/75000"
+CHECKPOINT_DIR = "checkpoints/pi05_pretrain_human300/multitask_learning/75000"
 
 
 def test_pi05_robocasa_config_registered():
