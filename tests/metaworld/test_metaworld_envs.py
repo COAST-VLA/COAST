@@ -17,7 +17,14 @@ import sys
 import numpy as np
 import pytest
 
-# Import from examples/metaworld/ scripts — sys.path must be set before these imports
+# Import from examples/metaworld/ scripts — sys.path must be set before these imports.
+# Both this file and tests/robocasa/test_robocasa_main.py do `from main import ...`
+# at module load time. Pytest collects them in the same process, so whichever loads
+# first caches sys.modules['main'] and the second one's `from main import` returns
+# the wrong (cached) module. Pop the cache before our own imports so the next
+# example dir on sys.path[0] takes effect.
+sys.modules.pop("main", None)
+sys.modules.pop("eval_all", None)
 _examples_dir = str(Path(__file__).parents[2] / "examples" / "metaworld")
 sys.path.insert(0, _examples_dir)
 

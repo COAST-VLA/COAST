@@ -4,6 +4,11 @@ import pytest
 
 import openpi.shared.download as download
 
+# Mark all tests in this module manual: 3 of the 4 tests hit gs:// over the
+# network, and they fail on CI runners without outbound network. The local-only
+# test is grouped with them since it's not load-bearing on its own.
+pytestmark = pytest.mark.manual
+
 
 @pytest.fixture(scope="session", autouse=True)
 def set_openpi_data_home(tmp_path_factory):

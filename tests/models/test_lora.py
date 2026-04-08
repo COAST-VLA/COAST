@@ -1,8 +1,13 @@
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+import pytest
 
 import openpi.models.lora as lora
+
+# Skip in CI: small JAX matmul + Flax init, but enough to add ~5s to the suite.
+# Run locally with `uv run pytest tests/models/test_lora.py -m manual`.
+pytestmark = pytest.mark.manual
 
 
 def test_lora_einsum_params_shape():

@@ -3,18 +3,19 @@ on:
   pull_request:
     branches:
       - "*"
-  schedule:
-    # Nightly at 2:00 AM UTC
-    - cron: "0 2 * * *"
   workflow_dispatch:
 
 jobs:
-  pr_tests:
-    name: MetaWorld + RoboCasa Tests (PR)
-    if: github.event_name == 'pull_request'
+  test:
+    name: Tests (CPU, not-manual)
     runs-on: ubuntu-latest
     env:
       GIT_LFS_SKIP_SMUDGE: true
+      # Force JAX onto CPU. The runner has no GPU, but conftest's auto-detect
+      # depends on pynvml; setting this explicitly avoids any ambiguity and
+      # also keeps `jax.device_count() == 1` so data-loader tests with small
+      # batch sizes don't try to shard across multiple devices.
+      JAX_PLATFORMS: cpu
     steps:
       - uses: actions/checkout@v4
 
@@ -32,34 +33,5 @@ jobs:
       - name: Install the project
         run: uv sync --all-extras --dev
 
-      - name: Run MetaWorld tests
-        run: uv run pytest tests/metaworld/ --strict-markers -m "not manual" -v
-
-      - name: Run RoboCasa tests
-        run: uv run pytest tests/robocasa/ tests/policies/test_robocasa_policy.py --strict-markers -m "not manual" -v
-
-  nightly_tests:
-    name: Full Test Suite (Nightly)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: openpi-verylarge
-    env:
-      GIT_LFS_SKIP_SMUDGE: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install FFmpeg dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg libavcodec-dev libavformat-dev libavutil-dev
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Set up Python
-        run: uv python install
-
-      - name: Install the project
-        run: uv sync --all-extras --dev
-
-      - name: Run all tests
+      - name: Run tests
         run: uv run pytest --strict-markers -m "not manual"

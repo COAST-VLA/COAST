@@ -57,6 +57,14 @@ sys.modules["robocasa.utils.dataset_registry"].TASK_SET_REGISTRY = {  # type: ig
     "pretrain50": ["CloseBlenderLid"],
 }
 
+# Pop any cached `main`/`eval_all` modules from a sibling test file (e.g.
+# tests/metaworld/test_metaworld_envs.py) before our own imports. Both files do
+# `from main import ...` at module load time, and pytest collects them in the
+# same process — so whichever loaded first wins sys.modules['main'] and the
+# second one's `from main import` returns the wrong cached module. Popping
+# forces a fresh load from sys.path[0], which we just set to robocasa_env.
+sys.modules.pop("main", None)
+sys.modules.pop("eval_all", None)
 _examples_dir = str(Path(__file__).parents[2] / "examples" / "robocasa_env")
 sys.path.insert(0, _examples_dir)
 
