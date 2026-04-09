@@ -94,9 +94,9 @@ class TestBuildCommand:
     def test_includes_main_py_and_python_executable(self) -> None:
         args = _default_args()
         cmd = eval_all._build_command(args, task_id=0, output_dir=self._TEST_OUTPUT_DIR)
-        assert cmd[0].endswith("python") or cmd[0].endswith(
-            "python3"
-        ), f"first element should be the Python executable, got {cmd[0]!r}"
+        assert cmd[0].endswith("python") or cmd[0].endswith("python3"), (
+            f"first element should be the Python executable, got {cmd[0]!r}"
+        )
         assert cmd[1] == "main.py"
 
     def test_required_main_flags_are_forwarded(self) -> None:
@@ -127,9 +127,9 @@ class TestBuildCommand:
         }
         for flag, value in expected_pairs.items():
             assert flag in cmd, f"missing {flag} in {cmd}"
-            assert (
-                cmd[cmd.index(flag) + 1] == value
-            ), f"{flag} followed by {cmd[cmd.index(flag) + 1]!r}, expected {value!r}"
+            assert cmd[cmd.index(flag) + 1] == value, (
+                f"{flag} followed by {cmd[cmd.index(flag) + 1]!r}, expected {value!r}"
+            )
 
     def test_task_id_is_the_only_thing_that_changes_across_calls(self) -> None:
         args = _default_args()

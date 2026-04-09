@@ -66,9 +66,9 @@ class TestArgs:
 
     def test_default_render_cameras_are_valid_camera_keys(self) -> None:
         for cam in Args().render_cameras:
-            assert (
-                cam in CAMERA_KEYS
-            ), f"Default render camera '{cam}' not in CAMERA_KEYS"
+            assert cam in CAMERA_KEYS, (
+                f"Default render camera '{cam}' not in CAMERA_KEYS"
+            )
 
     def test_is_dataclass(self) -> None:
         assert dataclasses.is_dataclass(Args)
@@ -200,9 +200,9 @@ class TestTileFrames:
         for i in range(n):
             r, c = divmod(i, cols)
             cell = grid[r * h : (r + 1) * h, c * w : (c + 1) * w]
-            assert (
-                cell[0, 0, 0] == i + 1
-            ), f"Frame {i} not at position (row={r}, col={c})"
+            assert cell[0, 0, 0] == i + 1, (
+                f"Frame {i} not at position (row={r}, col={c})"
+            )
 
 
 # ── eval_task signature ───────────────────────────────────────────────────────
@@ -224,16 +224,15 @@ class TestEvalTaskSignature:
         """
         sig = inspect.signature(eval_task)
         params = list(sig.parameters)
-        assert (
-            params
-            == [
-                "env_name",
-                "policy",
-                "args",
-                "output_dir",
-                "collect_session",
-            ]
-        ), f"Expected (env_name, policy, args, output_dir, collect_session), got {params}"
+        assert params == [
+            "env_name",
+            "policy",
+            "args",
+            "output_dir",
+            "collect_session",
+        ], (
+            f"Expected (env_name, policy, args, output_dir, collect_session), got {params}"
+        )
         assert sig.parameters["collect_session"].default is None
 
     def test_args_field_compatibility(self) -> None:
@@ -296,13 +295,20 @@ class TestEvalAll:
         }
         field_names = {f.name for f in dataclasses.fields(eval_all.Args)}
         missing = required - field_names
-        assert (
-            not missing
-        ), f"eval_all.Args missing fields needed by eval_task: {missing}"
+        assert not missing, (
+            f"eval_all.Args missing fields needed by eval_task: {missing}"
+        )
 
-    def test_imports_eval_task_from_main(self) -> None:
-        """eval_all.py should reuse main.eval_task rather than duplicating it."""
-        assert eval_all.eval_task is eval_task
+    def test_does_not_import_eval_task_in_parent_process(self) -> None:
+        """After the parallel-subprocess migration, eval_all.py dispatches each
+        env to its own main.py subprocess and never calls eval_task in the
+        parent process. So eval_all must NOT have an ``eval_task`` attribute
+        bound at module level — that would imply the old in-process
+        architecture. main.eval_task itself still exists (subprocesses import
+        it), but eval_all's own module namespace should not."""
+        assert not hasattr(eval_all, "eval_task")
+        # Sanity: main.eval_task still exists and is the one subprocesses use.
+        assert callable(eval_task)
 
     def test_main_rejects_unknown_task_set(self) -> None:
         """Passing an unknown task_set must raise a clear ValueError before any
@@ -317,9 +323,9 @@ class TestEvalAll:
         from robocasa.utils.dataset_registry import TASK_SET_REGISTRY
 
         for name in ["atomic_seen", "composite_seen", "composite_unseen"]:
-            assert (
-                name in TASK_SET_REGISTRY
-            ), f"'{name}' missing from real TASK_SET_REGISTRY"
+            assert name in TASK_SET_REGISTRY, (
+                f"'{name}' missing from real TASK_SET_REGISTRY"
+            )
 
 
 # ── env smoke tests (manual: need ~10GB kitchen assets) ───────────────────────

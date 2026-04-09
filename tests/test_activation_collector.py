@@ -718,6 +718,6 @@ class TestParallelCollectionSessions:
             for step_dir in step_dirs:
                 with open(step_dir / "metadata.json") as f:
                     observed.append(json.load(f)["inference_step"])
-            assert observed == list(
-                range(inferences_per_client)
-            ), f"task {task_idx}: expected inference_step counter {list(range(inferences_per_client))}, got {observed}"
+            assert observed == list(range(inferences_per_client)), (
+                f"task {task_idx}: expected inference_step counter {list(range(inferences_per_client))}, got {observed}"
+            )

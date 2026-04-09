@@ -237,9 +237,9 @@ def eval_task(env_name: str, policy, args: Args, output_dir: str) -> dict[str, f
                     action_chunk = np.clip(result["actions"], -1.0, 1.0).astype(
                         np.float32
                     )  # (num_envs, action_horizon, action_dim)
-                    assert (
-                        action_chunk.shape[1] >= args.replan_steps
-                    ), f"Model must output at least replan_steps actions, got {action_chunk.shape[1]} < {args.replan_steps}"
+                    assert action_chunk.shape[1] >= args.replan_steps, (
+                        f"Model must output at least replan_steps actions, got {action_chunk.shape[1]} < {args.replan_steps}"
+                    )
                     for t in range(args.replan_steps):
                         action_plan.append(action_chunk[:, t, :])
 

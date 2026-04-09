@@ -278,9 +278,9 @@ class TestStepMetadata:
                 meta = json.load(f)
             rewards.append(meta["cumulative_reward"])
         for i in range(1, len(rewards)):
-            assert (
-                rewards[i] >= rewards[i - 1] - 1e-6
-            ), f"Cumulative reward decreased: step {i - 1}={rewards[i - 1]}, step {i}={rewards[i]}"
+            assert rewards[i] >= rewards[i - 1] - 1e-6, (
+                f"Cumulative reward decreased: step {i - 1}={rewards[i - 1]}, step {i}={rewards[i]}"
+            )
 
 
 # --- Activation shape tests ---
