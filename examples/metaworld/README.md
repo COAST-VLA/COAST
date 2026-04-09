@@ -17,11 +17,9 @@ MUJOCO_GL=egl uv run examples/metaworld/generate_dataset.py \
     --num_episodes 2
 ```
 
-Use `--help` for common flags.
-
 You must be authenticated with `hf auth login` before running, since the script ends with `dataset.push_to_hub()`.
 
-We have pre-generated the ML45 dataset with 100 demonstrations per task at [`brandonyang/metaworld_ml45`](https://huggingface.co/datasets/brandonyang/metaworld_ml45).
+We have pre-generated the ML45 dataset with ~100 demonstrations per task at [`brandonyang/metaworld_ml45`](https://huggingface.co/datasets/brandonyang/metaworld_ml45).
 
 ## Training
 
@@ -38,7 +36,31 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_metaworld \
 
 The `pi05_metaworld` config is registered in `src/openpi/training/config.py`.
 
-We have released two checkpoints trained on `brandonyang/metaworld_ml45`:
+We have released two checkpoints trained with the following config:
+```python
+TrainConfig(
+    name="pi05_metaworld",
+    model=pi0_config.Pi0Config(pi05=True, action_horizon=32, discrete_state_input=False),
+    data=LeRobotMetaworldDataConfig(
+        repo_id="brandonyang/metaworld_ml45",
+        base_config=DataConfig(prompt_from_task=True),
+        extra_delta_transform=False,
+    ),
+    batch_size=128,  # 256,
+    lr_schedule=_optimizer.CosineDecaySchedule(
+        warmup_steps=1_000,
+        peak_lr=5e-5,
+        decay_steps=29_000,
+        decay_lr=5e-6,
+    ),
+    optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+    ema_decay=0.999,
+    weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+    pytorch_weight_path="/path/to/your/pytorch_weight_path",
+    num_train_steps=30_000,
+),
+```
+
 - [`brandonyang/openpi-metaworld-5000`](https://huggingface.co/brandonyang/openpi-metaworld-5000)
 - [`brandonyang/openpi-metaworld-25000`](https://huggingface.co/brandonyang/openpi-metaworld-25000)
 
@@ -69,12 +91,6 @@ uv run scripts/serve_policy.py --pytorch policy:checkpoint \
     --policy.dir=/path/to/checkpoint
 ```
 
-**Performance notes (PyTorch backend):**
-
-- **First inference call takes ~6 minutes** due to `torch.compile(mode="max-autotune")` benchmarking Triton kernels. This is a one-time cost per process launch.
-- After warmup, inference runs at ~3 calls/sec (comparable to JAX after JIT compilation).
-- GPU memory usage is ~70 GB during warmup, settling to ~10 GB for steady-state inference.
-
 ### Run Evaluation
 
 ### Single task
@@ -82,8 +98,6 @@ uv run scripts/serve_policy.py --pytorch policy:checkpoint \
 ```bash
 MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
 ```
-
-See common flags with `--help`. 
 
 ### All tasks (ML45 split)
 
@@ -96,57 +110,8 @@ MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
 
 ## Evaluation Results
 
-### ML45 Train Tasks — `pi05_metaworld_test/5000` (15 envs per task)
-
-**Mean success rate: 74.1%** (500/675 episodes)
-
-| Task | Success | Rate |
-|---|---|---|
-| button-press-topdown-v3 | 15/15 | 100% |
-| button-press-topdown-wall-v3 | 15/15 | 100% |
-| button-press-v3 | 15/15 | 100% |
-| button-press-wall-v3 | 15/15 | 100% |
-| coffee-button-v3 | 15/15 | 100% |
-| door-close-v3 | 15/15 | 100% |
-| drawer-close-v3 | 15/15 | 100% |
-| drawer-open-v3 | 15/15 | 100% |
-| faucet-open-v3 | 15/15 | 100% |
-| handle-press-side-v3 | 15/15 | 100% |
-| handle-press-v3 | 15/15 | 100% |
-| peg-unplug-side-v3 | 15/15 | 100% |
-| plate-slide-side-v3 | 15/15 | 100% |
-| plate-slide-v3 | 15/15 | 100% |
-| push-wall-v3 | 15/15 | 100% |
-| reach-wall-v3 | 15/15 | 100% |
-| window-close-v3 | 15/15 | 100% |
-| window-open-v3 | 15/15 | 100% |
-| coffee-pull-v3 | 14/15 | 93% |
-| door-open-v3 | 14/15 | 93% |
-| reach-v3 | 14/15 | 93% |
-| faucet-close-v3 | 12/15 | 80% |
-| pick-place-v3 | 12/15 | 80% |
-| plate-slide-back-side-v3 | 12/15 | 80% |
-| push-v3 | 12/15 | 80% |
-| shelf-place-v3 | 12/15 | 80% |
-| sweep-into-v3 | 12/15 | 80% |
-| sweep-v3 | 12/15 | 80% |
-| lever-pull-v3 | 11/15 | 73% |
-| push-back-v3 | 11/15 | 73% |
-| coffee-push-v3 | 10/15 | 67% |
-| pick-place-wall-v3 | 10/15 | 67% |
-| peg-insert-side-v3 | 9/15 | 60% |
-| stick-pull-v3 | 9/15 | 60% |
-| disassemble-v3 | 7/15 | 47% |
-| handle-pull-v3 | 7/15 | 47% |
-| plate-slide-back-v3 | 7/15 | 47% |
-| basketball-v3 | 5/15 | 33% |
-| hammer-v3 | 4/15 | 27% |
-| pick-out-of-hole-v3 | 4/15 | 27% |
-| soccer-v3 | 4/15 | 27% |
-| assembly-v3 | 3/15 | 20% |
-| handle-pull-side-v3 | 2/15 | 13% |
-| stick-push-v3 | 1/15 | 7% |
-| dial-turn-v3 | 0/15 | 0% |
+![Comparison](figures/compare_means_5000_vs_25000.png)
+![Comparison Per Task](figures/compare_per_task_5000_vs_25000.png)
 
 ## Collecting Activations for Mechanistic Interpretability
 
