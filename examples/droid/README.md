@@ -44,6 +44,72 @@ python3 scripts/main.py --remote_host=<server_ip> --remote_port=<server_port> --
 
 The script will ask you to enter a free-form language instruction for the robot to follow. Make sure to point the cameras at the scene you want the robot to interact with. You _do not_ need to carefully control camera angle, object positions, etc. The policy is fairly robust in our experience. Happy prompting!
 
+## Optional: Activation Collection
+
+For mech-interp work the droid client can also tell the policy server to save
+per-step intermediate activations to disk. This uses the same collection-mode
+server and on-disk format as `examples/libero_env` and `examples/metaworld` —
+see [`examples/libero_env/README.md`](../libero_env/README.md#activation-collection)
+for the wire-level protocol and the directory layout. Activations live entirely
+on the **server's** filesystem; the droid laptop never touches them.
+
+Start the collection-mode server on the GPU box (Step 1 above, but with extra
+flags):
+
+```bash
+# GPU box, main openpi venv
+export CUDA_VISIBLE_DEVICES=0
+uv run scripts/serve_policy.py --pytorch --collect_activations \
+    --output-dir ./activations \
+    policy:checkpoint --policy.config=pi05_droid \
+    --policy.dir="$HOME/.cache/openpi/openpi-assets/checkpoints/pi05_droid"
+```
+
+Then run the droid client (Step 2 above) with `--collect`:
+
+```bash
+# DROID control laptop
+python3 scripts/main.py --remote_host=<server_ip> --remote_port=<server_port> \
+    --external_camera="left" --collect
+```
+
+Each rollout becomes one episode under
+`<server_output_dir>/pi05_droid/<task_name>/episode_NNN_env_000/`. The
+`task_name` is derived from the language instruction you type at the prompt
+(e.g. `"Pick up the red block!"` → `pick-up-the-red-block`); pass
+`--task_name <slug>` to override and group multiple phrasings under one
+directory. Multiple rollouts of the same instruction in one session are
+indexed as `episode_000`, `episode_001`, … automatically.
+
+### Caveat: success is graded out-of-band
+
+`droid.RobotEnv.step()` does not return per-step rewards or done flags, so
+the rollout loop records `reward=0, done=False` for every env step. The
+final score comes from the prompt that appears after the rollout ends
+("Did the rollout succeed? (enter y for 100%, n for 0%), or a numeric value
+0-100"). The droid client takes that human grade and writes it into the
+last entry of `per_step_reward` so the cumulative reward stored in
+`rewards.npz` matches `total_reward` (preserves the schema invariant
+asserted by `tests/test_activations.py::test_rewards_cumulative_matches_total`).
+Scores ≥ 0.5 set `episode_success = True`; the exact float is preserved in
+`total_reward`. **Per-step credit assignment is not meaningful for droid
+activations** — only episode-level success/total_reward are.
+
+### Notes
+
+- Collection mode requires `--pytorch` on the server. `infer_with_intermediates`
+  is implemented for the PyTorch backend only.
+- Use the local cache path `$HOME/.cache/openpi/openpi-assets/checkpoints/pi05_droid`,
+  not the `gs://` URL — `--pytorch` + `gs://` has a known bug in
+  `ensure_pytorch_checkpoint`. To pre-populate the cache, run a normal
+  (non-collection) DROID inference first.
+- A collection-mode server **rejects** plain inference requests. If you want
+  to also run regular eval against the same checkpoint, start a separate
+  non-collection server on a different port.
+- Ctrl+C-interrupted rollouts are still finalized after you grade them at
+  the success prompt, so partial rollouts produce a complete episode
+  directory on disk.
+
 ## Troubleshooting
 
 | Issue | Solution |

@@ -5,17 +5,31 @@ import dataclasses
 import datetime
 import faulthandler
 import os
+import re
 import signal
 import time
 from moviepy.editor import ImageSequenceClip
 import numpy as np
 from openpi_client import image_tools
 from openpi_client import websocket_client_policy
+from openpi_client.collection_session import CollectionSession
 import pandas as pd
 from PIL import Image
 from droid.robot_env import RobotEnv
 import tqdm
 import tyro
+
+
+def _slugify_instruction(instruction: str) -> str:
+    """Turn a free-form user instruction into a filesystem-safe task_name slug.
+
+    e.g. "Pick up the red block!" -> "pick-up-the-red-block".
+    The collection-mode server's _sanitize_task_name rejects path separators
+    and traversal segments, so we strip everything that isn't [a-z0-9-].
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", instruction.strip().lower()).strip("-")
+    return slug or "unnamed"
+
 
 faulthandler.enable()
 
@@ -46,6 +60,16 @@ class Args:
     remote_port: int = (
         8000  # point this to the port of the policy server, default server port for openpi servers is 8000
     )
+
+    # Activation collection parameters
+    # If True, attach activation-collection metadata to every infer call so the
+    # server (started with --collect_activations on the GPU box) saves intermediates
+    # to its own disk. The droid client never touches the activation files.
+    collect: bool = False
+    # Optional override for the task_name used in the activation directory layout.
+    # If None, the slugified user instruction is used. Useful if you want multiple
+    # rollouts with slightly different phrasings to land under one task directory.
+    task_name: str | None = None
 
 
 # We are using Ctrl+C to optionally terminate rollouts early -- however, if we press Ctrl+C while the policy server is
@@ -83,6 +107,18 @@ def main(args: Args):
     # Connect to the policy server
     policy_client = websocket_client_policy.WebsocketClientPolicy(args.remote_host, args.remote_port)
 
+    # Optional activation-collection session. When --collect is set, the policy
+    # server must have been started with --collect_activations (and --pytorch);
+    # otherwise the server will reject the requests with a clear error.
+    collect_session = CollectionSession(policy_client) if args.collect else None
+    if collect_session is not None:
+        print(f"Server metadata: {policy_client.get_server_metadata()}")
+        print("Activation collection ENABLED — attaching __collect__ metadata to every infer call.")
+
+    # Per-task rollout counter so multiple rollouts of the same instruction land
+    # under episode_000_env_000, episode_001_env_000, ... within the same task dir.
+    episode_idx_by_task: dict[str, int] = {}
+
     df = pd.DataFrame(columns=["success", "duration", "video_filename"])
 
     while True:
@@ -91,6 +127,18 @@ def main(args: Args):
         # Rollout parameters
         actions_from_chunk_completed = 0
         pred_action_chunk = None
+
+        # Activation-collection bookkeeping for this rollout.
+        task_name = args.task_name if args.task_name is not None else _slugify_instruction(instruction)
+        episode_id = episode_idx_by_task.get(task_name, 0)
+        episode_idx_by_task[task_name] = episode_id + 1
+        if collect_session is not None:
+            collect_session.start_episode(
+                task_name=task_name,
+                task_id=0,
+                episode_id=episode_id,
+                prompt=instruction,
+            )
 
         # Prepare to save video of rollout
         timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H:%M:%S")
@@ -126,6 +174,11 @@ def main(args: Args):
                         "prompt": instruction,
                     }
 
+                    # Attach activation-collection metadata so the server knows where to
+                    # save the intermediates for this step. No-op when --collect is False.
+                    if collect_session is not None:
+                        request_data["__collect__"] = collect_session.make_collect_metadata(step=t_step)
+
                     # Wrap the server call in a context manager to prevent Ctrl+C from interrupting it
                     # Ctrl+C will be handled after the server call is complete
                     with prevent_keyboard_interrupt():
@@ -149,6 +202,15 @@ def main(args: Args):
                 action = np.clip(action, -1, 1)
 
                 env.step(action)
+
+                # Record the env step for activation collection. droid does not surface
+                # per-step rewards or done flags from env.step, so we record zeros and
+                # let set_episode_outcome below assign the human-graded score to the
+                # final per-step entry. set_episode_outcome adjusts per_step_reward[-1]
+                # so the cumulative sum still equals total_reward (preserves the
+                # rewards.npz schema invariant in tests/test_activations.py).
+                if collect_session is not None:
+                    collect_session.record_step(t_step, 0.0, done=False)
 
                 # Sleep to match DROID data collection frequency
                 elapsed_time = time.time() - start_time
@@ -174,6 +236,13 @@ def main(args: Args):
             success = float(success) / 100
             if not (0 <= success <= 1):
                 print(f"Success must be a number in [0, 100] but got: {success * 100}")
+
+        # Finalize the activation-collection episode using the human-graded score.
+        # We treat scores >= 0.5 as a successful episode for the boolean flag; the
+        # exact float score is preserved in total_reward and per_step_reward[-1].
+        if collect_session is not None:
+            collect_session.set_episode_outcome(success=success >= 0.5, total_reward=float(success))
+            collect_session.finalize_episode()
 
         df = df.append(
             {
