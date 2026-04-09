@@ -22,13 +22,15 @@ import json
 import logging
 import os
 
-from main import eval_task
 import numpy as np
-from openpi_client import websocket_client_policy as _websocket_client_policy
 import robocasa  # noqa: F401
+import tyro
+from openpi_client import websocket_client_policy as _websocket_client_policy
+from openpi_client.collection_session import CollectionSession
 from robocasa.utils.dataset_registry import TASK_SET_REGISTRY
 from tqdm import tqdm
-import tyro
+
+from main import eval_task
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +62,16 @@ class Args:
     fps: int = 24
     seed: int = 7
 
+    # If True, attach activation-collection metadata to every infer call so the
+    # server (started with --collect_activations) saves intermediates to its disk.
+    collect: bool = False
+
 
 def main(args: Args) -> None:
     if args.task_set not in TASK_SET_REGISTRY:
-        raise ValueError(f"Unknown task_set '{args.task_set}'. Available: {sorted(TASK_SET_REGISTRY.keys())}")
+        raise ValueError(
+            f"Unknown task_set '{args.task_set}'. Available: {sorted(TASK_SET_REGISTRY.keys())}"
+        )
     env_names = TASK_SET_REGISTRY[args.task_set]
 
     np.random.seed(args.seed)
@@ -71,16 +79,24 @@ def main(args: Args) -> None:
     policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
     logger.info(f"Server metadata: {policy.get_server_metadata()}")
 
-    output_dir = os.path.join(os.path.dirname(__file__), "output", f"{args.task_set}-{args.split}")
+    output_dir = os.path.join(
+        os.path.dirname(__file__), "output", f"{args.task_set}-{args.split}"
+    )
     os.makedirs(output_dir, exist_ok=True)
 
-    logger.info(f"Evaluating {len(env_names)} tasks from {args.task_set} (split={args.split})")
+    logger.info(
+        f"Evaluating {len(env_names)} tasks from {args.task_set} (split={args.split})"
+    )
+
+    collect_session = CollectionSession(policy) if args.collect else None
 
     results: dict[str, float] = {}
     results_path = os.path.join(output_dir, "results.json")
 
     for env_name in tqdm(env_names, desc=f"{args.task_set}/{args.split}"):
-        task_result = eval_task(env_name, policy, args, output_dir)
+        task_result = eval_task(
+            env_name, policy, args, output_dir, collect_session=collect_session
+        )
         results[env_name] = task_result["success_rate"]
         logger.info(f"[{env_name}] success_rate={results[env_name]:.2f}")
 
@@ -100,7 +116,9 @@ def main(args: Args) -> None:
 
     logger.info(f"Results saved to {results_path}")
     logger.info("=" * 60)
-    logger.info(f"[{args.task_set}/{args.split}] mean success rate: {mean_success:.2f} ({mean_success:.0%})")
+    logger.info(
+        f"[{args.task_set}/{args.split}] mean success rate: {mean_success:.2f} ({mean_success:.0%})"
+    )
     for env_name, rate in sorted(results.items(), key=lambda x: x[1], reverse=True):
         logger.info(f"  {env_name:<40s} {rate:.2f}")
 

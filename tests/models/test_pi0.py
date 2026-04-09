@@ -1,7 +1,13 @@
 import flax.nnx as nnx
 import jax
+import pytest
 
 import openpi.models.pi0_config as _pi0_config
+
+# Skip in CI: these construct abstract Pi0 model graphs (no real weights, but
+# the JAX/Flax module init still takes a few seconds each). Run locally with
+# `uv run pytest tests/models/test_pi0.py -m manual`.
+pytestmark = pytest.mark.manual
 
 
 def _get_frozen_state(config: _pi0_config.Pi0Config) -> nnx.State:

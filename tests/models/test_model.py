@@ -9,6 +9,7 @@ from openpi.shared import download
 from openpi.shared import nnx_utils
 
 
+@pytest.mark.manual
 def test_pi0_model():
     key = jax.random.key(0)
     config = pi0_config.Pi0Config()
@@ -24,6 +25,7 @@ def test_pi0_model():
     assert actions.shape == (batch_size, model.action_horizon, model.action_dim)
 
 
+@pytest.mark.manual
 def test_pi0_lora_model():
     key = jax.random.key(0)
     config = pi0_config.Pi0Config(paligemma_variant="gemma_2b_lora")
@@ -39,6 +41,7 @@ def test_pi0_lora_model():
     assert actions.shape == (batch_size, model.action_horizon, model.action_dim)
 
 
+@pytest.mark.manual
 def test_pi0_fast_model():
     key = jax.random.key(0)
     config = pi0_fast.Pi0FASTConfig()
@@ -54,6 +57,7 @@ def test_pi0_fast_model():
     assert actions.shape == (batch_size, 256)
 
 
+@pytest.mark.manual
 def test_pi0_fast_lora_model():
     key = jax.random.key(0)
     config = pi0_fast.Pi0FASTConfig(paligemma_variant="gemma_2b_lora")

@@ -93,8 +93,10 @@ class LiberoOutputs(transforms.DataTransformFn):
     """
 
     def __call__(self, data: dict) -> dict:
-        # Only return the first N actions -- since we padded actions above to fit the model action
-        # dimension, we need to now parse out the correct number of actions in the return dict.
-        # For Libero, we only return the first 7 actions (since the rest is padding).
+        # Only return the first N action dims -- since we padded actions above to fit the model
+        # action dimension, we need to now parse out the correct number of actions in the return dict.
+        # For Libero, we only return the first 7 action dims (since the rest is padding).
         # For your own dataset, replace `7` with the action dimension of your dataset.
-        return {"actions": np.asarray(data["actions"][:, :7])}
+        # Use ellipsis indexing so this works for both unbatched (action_horizon, action_dim) and
+        # batched (batch, action_horizon, action_dim) outputs.
+        return {"actions": np.asarray(data["actions"][..., :7])}

@@ -152,7 +152,7 @@ MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
 
 We provide two activation collection scripts. **V2 is recommended** — it collects richer data (attention weights, adaRMS gates, proprioceptive state) in 65% less storage.
 
-Unlike `examples/libero/` and `examples/robocasa_env/`, metaworld activation collection runs **in-process**: the collection scripts load the policy and the env in the same Python process.
+Unlike `examples/libero_env/` and `examples/robocasa_env/`, metaworld activation collection runs **in-process**: the collection scripts load the policy and the env in the same Python process.
 
 ### Downloading Pre-Collected Activations
 

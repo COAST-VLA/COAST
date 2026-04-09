@@ -18,5 +18,16 @@ openpi-client = { path = "../../packages/openpi-client", editable = true }
 
 [dependency-groups]
 dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.9",
     "tyro>=1.0.12",
+]
+
+[tool.ruff.lint]
+select = ["I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "manual: requires the robocasa kitchen assets (~10GB) to be downloaded; not run in CI",
 ]

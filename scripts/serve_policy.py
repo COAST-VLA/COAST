@@ -8,6 +8,7 @@ uv run scripts/serve_policy.py policy:checkpoint \
 import dataclasses
 import enum
 import logging
+import pathlib
 import socket
 
 import tyro
@@ -15,6 +16,7 @@ import tyro
 from openpi.policies import policy as _policy
 from openpi.policies import policy_config as _policy_config
 from openpi.serving import websocket_policy_server
+from openpi.serving.activation_collector import CollectingPolicy
 from openpi.training import config as _config
 
 
@@ -60,6 +62,15 @@ class Args:
 
     # Use PyTorch backend for inference. Auto-converts the JAX checkpoint if needed.
     pytorch: bool = False
+
+    # Enable activation-collection mode. The server wraps the policy in CollectingPolicy
+    # and rejects any client request that doesn't include the __collect__ or __finalize_episode__
+    # magic key. Requires --pytorch (infer_with_intermediates is PyTorch-only).
+    collect_activations: bool = False
+    # Server-side root directory for collected activations. Activations are written to
+    # <output_dir>/<checkpoint_step>/<task_name>/episode_NNN_env_NNN/step_NNNN/. Only
+    # used when --collect_activations is set.
+    output_dir: str = "activations"
 
     # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
     policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
@@ -111,7 +122,31 @@ def create_policy(args: Args) -> _policy.Policy:
 
 
 def main(args: Args) -> None:
+    if args.collect_activations:
+        if not args.pytorch:
+            raise ValueError("--collect_activations requires --pytorch (infer_with_intermediates is PyTorch-only).")
+        if not isinstance(args.policy, Checkpoint):
+            raise ValueError("--collect_activations requires --policy=checkpoint (default policies are not supported).")
+
     policy = create_policy(args)
+
+    if args.collect_activations:
+        assert isinstance(args.policy, Checkpoint)  # narrowed above
+        checkpoint_step = pathlib.Path(args.policy.dir).name
+        output_root = pathlib.Path(args.output_dir).resolve()
+        logging.info(
+            "Activation collection enabled (checkpoint_step=%s, output_root=%s)",
+            checkpoint_step,
+            output_root,
+        )
+        policy = CollectingPolicy(
+            policy=policy,
+            output_root=output_root,
+            checkpoint_step=checkpoint_step,
+            policy_dir=args.policy.dir,
+            config_name=args.policy.config,
+        )
+
     policy_metadata = policy.metadata
 
     # Record the policy's behavior.

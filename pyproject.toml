@@ -76,6 +76,7 @@ dlimp = { git = "https://github.com/kvablack/dlimp", rev = "ad72ce3a9b414db2185b
 members = ["packages/*"]
 exclude = [
     "examples/robocasa_env",
+    "examples/libero_env",
 ]
 
 [tool.ruff]

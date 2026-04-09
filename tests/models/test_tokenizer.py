@@ -1,6 +1,12 @@
 import numpy as np
+import pytest
 
 from openpi.models import tokenizer as _tokenizer
+
+# Skip in CI: loads the Paligemma tokenizer (fetches the SentencePiece model
+# from disk/cache on first run) and runs FAST tokenization. Adds a few seconds
+# to the suite. Run locally with `uv run pytest tests/models/test_tokenizer.py -m manual`.
+pytestmark = pytest.mark.manual
 
 
 def test_tokenize():

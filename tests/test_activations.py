@@ -153,25 +153,61 @@ class TestStepMetadata:
 
 
 # --- Activation shape tests ---
+#
+# Some dims are fixed by the model architecture (10 denoising steps,
+# 4 sampled layers, 1024 hidden, 4096 mlp hidden, 32 action_dim). The
+# `action_horizon` dim varies by training config (10 for pi05_libero, 32
+# for pi05_metaworld), so we look it up from the policy config registry
+# keyed by `config_name` in the episode metadata.json. This is the
+# *contract* — deriving it from the data file under test would be circular
+# and would silently pass if collection wrote a globally-wrong horizon
+# (e.g. policy loaded with the wrong config, or a writer slice bug that
+# affects all files in the same way).
+
+
+@pytest.fixture
+def expected_action_horizon(first_episode):
+    """Action horizon from the policy config registered for this episode's
+    `config_name`. Source of truth is `openpi.training.config`, NOT the
+    activation file under test.
+    """
+    from openpi.training import config as _config
+
+    with open(first_episode / "metadata.json") as f:
+        episode_meta = json.load(f)
+    config_name = episode_meta.get("config_name")
+    if not config_name:
+        pytest.skip(f"episode metadata.json has no 'config_name' field at {first_episode}")
+    try:
+        train_config = _config.get_config(config_name)
+    except (ValueError, KeyError) as exc:
+        pytest.skip(f"config_name {config_name!r} not registered in openpi.training.config: {exc}")
+    if not hasattr(train_config.model, "action_horizon"):
+        pytest.skip(f"config {config_name!r} model has no action_horizon attribute")
+    return int(train_config.model.action_horizon)
 
 
 class TestActivationShapes:
-    def test_denoising_shapes(self, first_step):
+    def test_denoising_shapes(self, first_step, expected_action_horizon):
         data = np.load(first_step / "denoising.npz")
-        assert data["all_x_t"].shape == (10, 32, 32)
-        assert data["all_v_t"].shape == (10, 32, 32)
+        # (denoising_steps, action_horizon, action_dim)
+        assert data["all_x_t"].shape == (10, expected_action_horizon, 32)
+        # all_v_t must match all_x_t exactly (paired flow-matching outputs)
+        assert data["all_v_t"].shape == data["all_x_t"].shape
 
     def test_adarms_cond_shape(self, first_step):
         data = np.load(first_step / "adarms_cond.npz")
         assert data["all_adarms_cond"].shape == (10, 1024)
 
-    def test_suffix_residual_shape(self, first_step):
+    def test_suffix_residual_shape(self, first_step, expected_action_horizon):
         data = np.load(first_step / "suffix_residual.npz")
-        assert data["all_suffix_residual"].shape == (10, 4, 32, 1024)
+        # (denoising_steps, num_layers, action_horizon, hidden_dim)
+        assert data["all_suffix_residual"].shape == (10, 4, expected_action_horizon, 1024)
 
-    def test_suffix_mlp_hidden_shape(self, first_step):
+    def test_suffix_mlp_hidden_shape(self, first_step, expected_action_horizon):
         data = np.load(first_step / "suffix_mlp_hidden.npz")
-        assert data["all_suffix_mlp_hidden"].shape == (10, 4, 32, 4096)
+        # (denoising_steps, num_layers, action_horizon, mlp_hidden_dim)
+        assert data["all_suffix_mlp_hidden"].shape == (10, 4, expected_action_horizon, 4096)
 
     def test_all_float32(self, first_step):
         for fname in ["denoising.npz", "adarms_cond.npz", "suffix_residual.npz", "suffix_mlp_hidden.npz"]:
