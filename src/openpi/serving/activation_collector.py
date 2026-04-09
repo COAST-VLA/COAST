@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
+import threading
 from typing import Any
 
 import numpy as np
@@ -105,6 +106,9 @@ class CollectingPolicy(_base_policy.BasePolicy):
         self._checkpoint_step = checkpoint_step
         self._policy_dir = policy_dir
         self._config_name = config_name
+        # Serializes calls into the model's hook-based intermediate collection
+        # path. See _handle_collect_infer for the rationale.
+        self._intermediates_lock = threading.Lock()
 
     @property
     def metadata(self) -> dict:
@@ -188,7 +192,14 @@ class CollectingPolicy(_base_policy.BasePolicy):
                 f"{tuple(state_arr.shape)}. Send one inference call per env."
             )
 
-        result, intermediates = self._policy.infer_with_intermediates(batched_obs)
+        # Serialize calls into infer_with_intermediates: the underlying
+        # sample_actions_with_intermediates_v2 registers forward hooks on shared
+        # module instances, so two in-flight calls would pollute each other's
+        # capture dicts. The current single-threaded asyncio server already
+        # serializes calls implicitly, but this lock makes the invariant explicit
+        # and defends against future executor-based optimizations.
+        with self._intermediates_lock:
+            result, intermediates = self._policy.infer_with_intermediates(batched_obs)
 
         step_dir = self._step_dir(collect_meta)
         save_step_activations(
