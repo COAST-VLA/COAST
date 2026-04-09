@@ -26,6 +26,24 @@ uv run python setup_libero_config.py
 
 If EGL gives you MuJoCo rendering issues, rerun the client commands below with `MUJOCO_GL=glx` instead of `MUJOCO_GL=egl`.
 
+## Training
+
+Compute normalization stats once before the first training run, then launch training. Both commands run from the repo root:
+```bash
+uv run scripts/compute_norm_stats.py --config-name pi05_libero
+
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_libero \
+    --exp-name pi05_libero_test \
+    --overwrite \
+    --num_train_steps 30_000
+```
+
+The `pi05_libero` config is registered in `src/openpi/training/config.py`.
+
+We have released two checkpoints trained on the default `physical-intelligence/libero` dataset.
+- [`brandonyang/openpi-libero-2000`](https://huggingface.co/brandonyang/openpi-libero-2000)
+- [`brandonyang/openpi-libero-3000`](https://huggingface.co/brandonyang/openpi-libero-3000)
+
 ## Serving the LIBERO Policy
 
 Start the policy server from the repo root in a separate terminal:
