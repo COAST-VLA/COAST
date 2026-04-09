@@ -122,8 +122,8 @@ examples/libero_env/output/<task_suite_name>/
 
 #### Evaluation Results with Released Checkpoints
 
-![Comparison of Mean Performance](figures/compare_means_2000_vs_3000.png)
-![Comparison](figures/compare_per_task_2000_vs_3000.png)
+![Comparison of Mean Performance](figures/compare_means_2000_vs_3000_vs_9000.png)
+![Comparison](figures/compare_per_task_2000_vs_3000_vs_9000.png)
 
 ## Activation Collection
 
