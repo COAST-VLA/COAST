@@ -13,4 +13,7 @@ repos:
       # Run the linter.
       - id: ruff
         args: [--fix]
+        exclude: ^examples/(robocasa_env|libero_env)/
       - id: ruff-format
+        exclude: ^examples/(robocasa_env|libero_env)/
+        
