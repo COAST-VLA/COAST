@@ -742,6 +742,7 @@ _CONFIGS = [
                 prompt_from_task=True,
             ),
         ),
+        fsdp_devices=4,
     ),
     #
     # Fine-tuning Libero configs.
@@ -895,6 +896,7 @@ _CONFIGS = [
             assets=AssetsConfig(asset_id="robocasa"),
             base_config=DataConfig(prompt_from_task=True),
         ),
+        fsdp_devices=4,
     ),
     #
     # Fine-tuning Aloha configs.

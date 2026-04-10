@@ -104,3 +104,9 @@ uv run scripts/train.py pi05_droid_finetune --exp-name=my_experiment --overwrite
 
 Once trained, you can follow the instructions in [`examples/droid/README.md`](examples/droid/README.md) to serve the policy and run it on the robot.
 
+For Client side running script in alienware desktop:
+
+```
+python scripts/main_activation_client.py --task_name PickUpPineapple --collect --external_camera="left" --remote_host "localhost" --remote_port 8000 --do_reset
+```
+

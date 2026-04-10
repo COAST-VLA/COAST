@@ -123,7 +123,7 @@ Then run a robocasa rollout with `--collect` from this directory:
 cd examples/robocasa_env
 MUJOCO_GL=egl uv run python main.py --env_name CloseBlenderLid --collect
 # or for a whole task set:
-MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen --collect
+
 ```
 
 Notes:

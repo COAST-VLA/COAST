@@ -156,11 +156,13 @@ class CollectingPolicy(_base_policy.BasePolicy):
 
     def _episode_dir(self, meta: dict) -> pathlib.Path:
         task_name = self._sanitize_task_name(meta["task_name"])
+        timestamp = meta.get("timestamp", "")
+        suffix = f"_{timestamp}" if timestamp else ""
         return (
             self._output_root
             / self._checkpoint_step
             / task_name
-            / "episode_{:03d}_env_{:03d}".format(int(meta["episode_id"]), int(meta["env_id"]))
+            / "episode_{:03d}_env_{:03d}{}".format(int(meta["episode_id"]), int(meta["env_id"]), suffix)
         )
 
     def _step_dir(self, meta: dict) -> pathlib.Path:

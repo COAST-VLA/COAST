@@ -28,7 +28,18 @@ import tyro
 from openpi_client import websocket_client_policy as _websocket_client_policy
 from openpi_client.collection_session import CollectionSession
 from robocasa.utils.dataset_registry import TASK_SET_REGISTRY
+from robocasa.utils.dataset_registry_utils import get_task_horizon
 from tqdm import tqdm
+
+TASK_SET_REGISTRY["custom"] = [
+    "CloseFridge",
+    "CoffeeSetupMug",
+    "OpenDrawer",
+    "OpenStandMixerHead",
+    "PickPlaceCounterToCabinet",
+    "PickPlaceCounterToStove",
+    "TurnOnElectricKettle",
+]
 
 from main import eval_task
 
@@ -94,8 +105,9 @@ def main(args: Args) -> None:
     results_path = os.path.join(output_dir, "results.json")
 
     for env_name in tqdm(env_names, desc=f"{args.task_set}/{args.split}"):
+        task_args = dataclasses.replace(args, max_steps=get_task_horizon(env_name))
         task_result = eval_task(
-            env_name, policy, args, output_dir, collect_session=collect_session
+            env_name, policy, task_args, output_dir, collect_session=collect_session
         )
         results[env_name] = task_result["success_rate"]
         logger.info(f"[{env_name}] success_rate={results[env_name]:.2f}")
