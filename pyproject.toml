@@ -82,7 +82,7 @@ exclude = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["docker", "third_party", "src/openpi/models_pytorch/transformers_replace/*", "scripts/analysis/*"]
+extend-exclude = [".claude", "docker", "third_party", "src/openpi/models_pytorch/transformers_replace/*", "scripts/analysis/*"]
 
 [tool.ruff.lint]
 # https://docs.astral.sh/ruff/rules/

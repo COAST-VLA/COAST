@@ -4,7 +4,7 @@ LIBERO needs its own Python 3.8 environment, so this example follows the same se
 
 Unlike the old `examples/libero` setup, this version is organized like the newer env examples:
 - `main.py` evaluates one LIBERO task.
-- `eval_all.py` evaluates every task in one LIBERO suite.
+- `eval_all.py` evaluates every task in one LIBERO suite, launching one subprocess per task_id for parallel execution.
 
 ## Installation
 
@@ -26,7 +26,52 @@ uv run python setup_libero_config.py
 
 If EGL gives you MuJoCo rendering issues, rerun the client commands below with `MUJOCO_GL=glx` instead of `MUJOCO_GL=egl`.
 
-## Serving the LIBERO Policy
+## Training
+
+Compute normalization stats once before the first training run, then launch training. Both commands run from the repo root:
+```bash
+uv run scripts/compute_norm_stats.py --config-name pi05_libero
+
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_libero \
+    --exp-name pi05_libero_test \
+    --overwrite \
+    --num_train_steps 30_000
+```
+
+The `pi05_libero` config is registered in `src/openpi/training/config.py`.
+
+We have released checkpoints trained with the following config:
+```python
+TrainConfig(
+    name="pi05_libero",
+    model=pi0_config.Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False),
+    data=LeRobotLiberoDataConfig(
+        repo_id="physical-intelligence/libero",
+        base_config=DataConfig(prompt_from_task=True),
+        extra_delta_transform=False,
+    ),
+    batch_size=256,
+    fsdp_devices=4,
+    lr_schedule=_optimizer.CosineDecaySchedule(
+        warmup_steps=10_000,
+        peak_lr=5e-5,
+        decay_steps=1_000_000,
+        decay_lr=5e-5,
+    ),
+    optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+    ema_decay=0.999,
+    weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+    num_train_steps=30_000,
+)
+```
+
+- [`brandonyang/openpi-libero-2000`](https://huggingface.co/brandonyang/openpi-libero-2000)
+- [`brandonyang/openpi-libero-3000`](https://huggingface.co/brandonyang/openpi-libero-3000)
+- [`brandonyang/openpi-libero-9000`](https://huggingface.co/brandonyang/openpi-libero-9000)
+
+## Evaluation
+
+### Serving the LIBERO Policy
 
 Start the policy server from the repo root in a separate terminal:
 
@@ -39,43 +84,54 @@ To serve a specific checkpoint instead of the default one:
 ```bash
 uv run scripts/serve_policy.py policy:checkpoint \
   --policy.config=pi05_libero \
-  --policy.dir="$HOME/.cache/openpi/openpi-assets/checkpoints/pi05_libero"
+  --policy.dir=path/to/checkpoint
 ```
 
-## Run Evaluation
+### Run Evaluation
 
-### Single task
+#### Single task
 
 ```bash
 cd examples/libero_env
 MUJOCO_GL=egl uv run python main.py --task_suite_name libero_spatial --task_id 0
 ```
 
-Common flags:
-- `--task_suite_name` — one of `libero_spatial`, `libero_object`, `libero_goal`, `libero_10`, `libero_90`.
-- `--task_id` — task index within the suite.
-- `--num_episodes` — number of fixed initial states to evaluate.
-- `--max_steps` — optional override for the suite default horizon.
-- `--num_steps_wait` — number of no-op settling steps before the policy starts acting.
-- `--replan_steps` — number of planned actions to execute before re-querying the server.
-- `--render_cameras` — cameras tiled into the saved video. Defaults to `agentview` and `eye_in_hand`.
+#### Full suite
 
-Videos are written to `examples/libero_env/output/single-<task_suite_name>/<task_id>-<task_name>/episode_<idx>.mp4`.
-
-### Full suite
+`eval_all.py` runs every task in one LIBERO suite by launching one `main.py` subprocess per task_id. Each subprocess has its own MuJoCo/EGL context (the thing that prevents in-process parallelism), so tasks can run concurrently without stepping on each other.
 
 ```bash
 cd examples/libero_env
 MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_spatial
+
+# With more episodes per task and a concurrency cap:
+MUJOCO_GL=egl uv run python eval_all.py \
+    --task_suite_name libero_10 --num_episodes 15 --num_workers 5
+
+# For sequential execution (with inline stack traces on crash):
+MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_spatial --num_workers 1
 ```
 
-Common flags are the same as `main.py`, except `eval_all.py` runs every task in the selected suite and writes:
-- Per-task videos to `examples/libero_env/output/<task_suite_name>/<task_id>-<task_name>/episode_<idx>.mp4`
-- Aggregate results to `examples/libero_env/output/<task_suite_name>/results.json`
+A full run produces a single directory containing everything:
+```
+examples/libero_env/output/<task_suite_name>/
+├── results.json                             # aggregated, incrementally saved
+├── parallel_logs/task_NN.log                # per-subprocess stdout + stderr
+└── <task_id:02d>-<task_name>/episode_NNN.mp4
+```
 
-The results file is updated after each task so partial progress is preserved if a long run stops early.
+#### Evaluation Results with Released Checkpoints
+
+![Comparison of Mean Performance](figures/compare_means_2000_vs_3000_vs_9000.png)
+![Comparison](figures/compare_per_task_2000_vs_3000_vs_9000.png)
 
 ## Activation Collection
+
+### Downloading Pre-Collected Activations
+
+```bash
+hf download brandonyang/pi05-libero-activations-v1-2000-15env --repo-type dataset --local-dir pi05_libero_activations-v1-2000-15env
+```
 
 For mech-interp work you can have the policy server save per-step intermediate
 activations to disk while a libero rollout runs. This uses a separate
@@ -93,7 +149,7 @@ export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py --pytorch --collect_activations \
     --output-dir ./activations \
     policy:checkpoint --policy.config=pi05_libero \
-    --policy.dir="$HOME/.cache/openpi/openpi-assets/checkpoints/pi05_libero"
+    --policy.dir=/path/to/checkpoint
 ```
 
 Then run a libero rollout with `--collect` from this directory:
@@ -101,7 +157,9 @@ Then run a libero rollout with `--collect` from this directory:
 ```bash
 # Terminal 2 (libero_env venv)
 cd examples/libero_env
-MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_spatial --collect
+# Full suite in parallel (each subprocess has a distinct task_name → distinct output dir on the server):
+MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_spatial --collect --num_workers 5
+
 # or for a single task:
 MUJOCO_GL=egl uv run python main.py --task_suite_name libero_spatial --task_id 0 --collect
 ```
@@ -109,11 +167,6 @@ MUJOCO_GL=egl uv run python main.py --task_suite_name libero_spatial --task_id 0
 Notes:
 - Collection mode requires `--pytorch` on the server. `infer_with_intermediates`
   is implemented for the PyTorch backend only.
-- Use the local cache path `$HOME/.cache/openpi/openpi-assets/checkpoints/pi05_libero`,
-  not the `gs://` URL — `--pytorch` + `gs://` has a known bug in
-  `ensure_pytorch_checkpoint`. To pre-populate the cache, run plain
-  `eval_all.py` once against a non-collection server, or run:
-  `uv run python -c "from openpi.shared import download; print(download.maybe_download('gs://openpi-assets/checkpoints/pi05_libero'))"`.
 - A collection-mode server **rejects** plain inference requests. If you want to
   also run regular eval, start a separate non-collection server on a different
   port.

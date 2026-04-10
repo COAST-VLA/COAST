@@ -4,7 +4,7 @@ Evaluate a single LIBERO task using a policy server.
 Single task:
     MUJOCO_GL=egl uv run python main.py --task_suite_name libero_spatial --task_id 0
 
-All tasks in a suite:
+All tasks in a suite (parallel subprocesses, one per task_id):
     MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_spatial
 
 Like RoboCasa, this example evaluates one env at a time and tiles multiple camera
@@ -20,7 +20,7 @@ import math
 import os
 import pathlib
 import re
-from typing import Deque, Dict, List, Optional
+from typing import Deque, Dict, List, Literal, Optional
 
 import imageio.v2 as iio
 import numpy as np
@@ -55,7 +55,12 @@ class Args:
     port: int = 8000
 
     # LIBERO suite name.
-    task_suite_name: str = "libero_spatial"
+    task_suite_name: Literal[
+        "libero_spatial",
+        "libero_object",
+        "libero_goal",
+        "libero_10",
+    ] = "libero_spatial"
     # Task index within the suite.
     task_id: int = 0
     # Number of episodes / initial states to evaluate.
@@ -81,6 +86,10 @@ class Args:
     # If True, attach activation-collection metadata to every infer call so the
     # server (started with --collect_activations) saves intermediates to its disk.
     collect: bool = False
+
+    # Override the per-task output directory (for videos / artifacts). If None,
+    # defaults to ``output/single-{task_suite_name}``.
+    output_dir: Optional[str] = None
 
 
 def tile_frames(frames: List[np.ndarray]) -> np.ndarray:
@@ -353,9 +362,14 @@ def main(args: Args) -> None:
     policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
     logger.info("Server metadata: %s", policy.get_server_metadata())
 
-    output_dir = os.path.join(
-        os.path.dirname(__file__), "output", "single-{}".format(args.task_suite_name)
-    )
+    if args.output_dir is not None:
+        output_dir = args.output_dir
+    else:
+        output_dir = os.path.join(
+            os.path.dirname(__file__),
+            "output",
+            "single-{}".format(args.task_suite_name),
+        )
     os.makedirs(output_dir, exist_ok=True)
 
     collect_session = CollectionSession(policy) if args.collect else None

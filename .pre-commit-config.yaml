@@ -8,9 +8,12 @@ repos:
       - id: uv-lock
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: v0.8.6
+    rev: v0.11.12
     hooks:
       # Run the linter.
       - id: ruff
         args: [--fix]
+        exclude: ^examples/(robocasa_env|libero_env)/
       - id: ruff-format
+        exclude: ^examples/(robocasa_env|libero_env)/
+        

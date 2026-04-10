@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import pathlib
+import threading
+import time
 
 import numpy as np
 from openpi_client.collection_session import CollectionSession
@@ -517,3 +519,205 @@ class TestEndToEndPipeline:
         assert ep_meta["total_reward"] == pytest.approx(0.0)
         rewards = np.load(episode_dir / "rewards.npz")
         assert not bool(np.any(rewards["success_at_step"]))
+
+
+# --------------------- parallel-clients (libero_env eval_all) regression tests
+
+
+class _ConcurrencyProbingStub:
+    """Underlying-policy stub that fails the test if two calls overlap.
+
+    The real PyTorch sample_actions_with_intermediates registers forward hooks
+    on shared module instances and writes into a local dict via closure. Two
+    concurrent calls would alias the hook target and cross-contaminate their
+    captures. CollectingPolicy._intermediates_lock must serialize calls to
+    protect this, even though the production asyncio server happens to also
+    serialize them implicitly.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._in_flight = 0
+        self.max_in_flight = 0
+        self.total_calls = 0
+        self.metadata = {"underlying": "probe"}
+
+    def infer_with_intermediates(self, obs: dict) -> tuple[dict, dict]:
+        with self._lock:
+            self._in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self._in_flight)
+        # Sleep long enough that unsynchronized callers would reliably interleave.
+        time.sleep(0.01)
+        with self._lock:
+            self._in_flight -= 1
+            self.total_calls += 1
+        batch_size = int(np.asarray(obs["observation/state"]).shape[0])
+        actions = np.zeros((batch_size, 10, 7), dtype=np.float32)
+        return (
+            {"actions": actions, "policy_timing": {"infer_ms": 10.0}},
+            _fake_intermediates(batch=batch_size),
+        )
+
+
+class TestParallelCollectionSessions:
+    """Regression tests for the libero_env/eval_all.py parallel-subprocess setup.
+
+    Production layout: one --collect_activations policy server, N libero
+    subprocesses each running a distinct task_id, each with its own
+    CollectionSession and its own WebSocket connection. The server must handle
+    interleaved __collect__ / __finalize_episode__ payloads from disjoint
+    task_names without corruption. We emulate the interleaving in-process with
+    N real threads hitting one shared CollectingPolicy — this covers everything
+    except the WebSocket transport, which is orthogonal to the collection
+    invariants.
+    """
+
+    def test_parallel_sessions_disjoint_tasks_no_contamination(self, tmp_path: pathlib.Path) -> None:
+        stub = _ConcurrencyProbingStub()
+        wrapper = CollectingPolicy(
+            policy=stub,
+            output_root=tmp_path,
+            checkpoint_step="ckpt",
+            policy_dir="/fake/policy/dir",
+            config_name="fake",
+        )
+
+        num_clients = 8
+        inferences_per_client = 3
+        steps_per_inference = 5
+
+        errors: list[BaseException] = []
+
+        def drive_client(task_idx: int) -> None:
+            try:
+                session = CollectionSession(wrapper)
+                session.start_episode(
+                    task_name=f"task_{task_idx:02d}",
+                    task_id=task_idx,
+                    episode_id=0,
+                    prompt=f"prompt for task {task_idx}",
+                )
+                env_step = 0
+                for _ in range(inferences_per_client):
+                    obs = {
+                        "observation/state": np.zeros(8, dtype=np.float32),
+                        "observation/image": np.zeros((224, 224, 3), dtype=np.uint8),
+                        "observation/wrist_image": np.zeros((224, 224, 3), dtype=np.uint8),
+                        "prompt": f"prompt for task {task_idx}",
+                        "__collect__": session.make_collect_metadata(env_step),
+                    }
+                    wrapper.infer(obs)
+                    for _ in range(steps_per_inference):
+                        session.record_step(env_step, 0.0, done=False)
+                        env_step += 1
+                session.finalize_episode()
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=drive_client, args=(i,)) for i in range(num_clients)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"worker threads raised: {errors}"
+
+        # 1. _intermediates_lock must serialize infer_with_intermediates. If this
+        #    fails, hook-based activation capture can cross-contaminate between
+        #    concurrent clients.
+        assert stub.max_in_flight == 1, (
+            f"CollectingPolicy._intermediates_lock did not serialize calls "
+            f"(max_in_flight={stub.max_in_flight}). Concurrent clients would "
+            f"corrupt each other's hook-captured activations."
+        )
+        assert stub.total_calls == num_clients * inferences_per_client
+
+        # 2. Every client's activations must land at its own disjoint path, and
+        #    every step's metadata must carry its own client's task_name/prompt.
+        #    This rules out path collisions and metadata cross-contamination.
+        for task_idx in range(num_clients):
+            episode_dir = tmp_path / "ckpt" / f"task_{task_idx:02d}" / "episode_000_env_000"
+            assert episode_dir.is_dir(), f"missing episode dir for task {task_idx}"
+
+            step_dirs = sorted(episode_dir.glob("step_*"))
+            assert [p.name for p in step_dirs] == [
+                "step_0000",
+                "step_0005",
+                "step_0010",
+            ], f"task {task_idx}: unexpected step dirs {[p.name for p in step_dirs]}"
+
+            for step_dir in step_dirs:
+                with open(step_dir / "metadata.json") as f:
+                    step_meta = json.load(f)
+                assert step_meta["task_name"] == f"task_{task_idx:02d}", (
+                    f"cross-contamination at {step_dir}: task_name="
+                    f"{step_meta['task_name']!r}, expected task_{task_idx:02d}"
+                )
+                assert step_meta["prompt"] == f"prompt for task {task_idx}"
+                assert step_meta["episode_id"] == 0
+                assert step_meta["env_id"] == 0
+
+            with open(episode_dir / "metadata.json") as f:
+                ep_meta = json.load(f)
+            assert ep_meta["task_name"] == f"task_{task_idx:02d}"
+            assert ep_meta["total_env_steps"] == inferences_per_client * steps_per_inference
+            assert ep_meta["total_inference_steps"] == inferences_per_client
+            assert ep_meta["prompt"] == f"prompt for task {task_idx}"
+
+    def test_parallel_inference_step_counters_are_per_session(self, tmp_path: pathlib.Path) -> None:
+        """Verifies CollectionSession's inference_step counter is per-instance.
+
+        Each libero subprocess has its own CollectionSession, so even when N
+        sessions run concurrently the inference_step counters must not share
+        state. This catches accidental class-level state in CollectionSession.
+        """
+        stub = _ConcurrencyProbingStub()
+        wrapper = CollectingPolicy(
+            policy=stub,
+            output_root=tmp_path,
+            checkpoint_step="ckpt",
+            policy_dir="/fake/policy/dir",
+            config_name="fake",
+        )
+
+        num_clients = 6
+        inferences_per_client = 4
+
+        def drive_client(task_idx: int) -> None:
+            session = CollectionSession(wrapper)
+            session.start_episode(
+                task_name=f"task_{task_idx:02d}",
+                task_id=task_idx,
+                episode_id=0,
+                prompt="p",
+            )
+            for inf_idx in range(inferences_per_client):
+                obs = {
+                    "observation/state": np.zeros(8, dtype=np.float32),
+                    "observation/image": np.zeros((224, 224, 3), dtype=np.uint8),
+                    "prompt": "p",
+                    "__collect__": session.make_collect_metadata(inf_idx * 5),
+                }
+                wrapper.infer(obs)
+                session.record_step(inf_idx * 5, 0.0, done=False)
+            session.finalize_episode()
+
+        threads = [threading.Thread(target=drive_client, args=(i,)) for i in range(num_clients)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Every client must have recorded inference_step=0,1,2,3 in its own
+        # step metadata. If CollectionSession leaked state between threads,
+        # the counters would skip or repeat values.
+        for task_idx in range(num_clients):
+            episode_dir = tmp_path / "ckpt" / f"task_{task_idx:02d}" / "episode_000_env_000"
+            step_dirs = sorted(episode_dir.glob("step_*"))
+            observed = []
+            for step_dir in step_dirs:
+                with open(step_dir / "metadata.json") as f:
+                    observed.append(json.load(f)["inference_step"])
+            assert observed == list(range(inferences_per_client)), (
+                f"task {task_idx}: expected inference_step counter {list(range(inferences_per_client))}, got {observed}"
+            )

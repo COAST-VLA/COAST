@@ -19,6 +19,7 @@ import dataclasses
 import logging
 import math
 import os
+from typing import Optional
 
 import gymnasium as gym
 import imageio.v3 as iio
@@ -73,6 +74,10 @@ class Args:
     # If True, attach activation-collection metadata to every infer call so the
     # server (started with --collect_activations) saves intermediates to its disk.
     collect: bool = False
+
+    # Override the top-level output directory (for videos / artifacts). If None,
+    # defaults to ``output/single-{split}``.
+    output_dir: Optional[str] = None
 
 
 def tile_frames(frames: list[np.ndarray]) -> np.ndarray:
@@ -197,12 +202,12 @@ def eval_task(
                         )
                     result = policy.infer(element)
                     action_chunk = result["actions"]  # (action_horizon, action_dim=12)
-                    assert (
-                        action_chunk.ndim == 2
-                    ), f"Model output must have shape (action_horizon, action_dim), but got {action_chunk.shape}"
-                    assert (
-                        action_chunk.shape[0] >= args.replan_steps
-                    ), f"Model must output at least {args.replan_steps} actions, got {action_chunk.shape[0]}"
+                    assert action_chunk.ndim == 2, (
+                        f"Model output must have shape (action_horizon, action_dim), but got {action_chunk.shape}"
+                    )
+                    assert action_chunk.shape[0] >= args.replan_steps, (
+                        f"Model must output at least {args.replan_steps} actions, got {action_chunk.shape[0]}"
+                    )
                     for t in range(args.replan_steps):
                         action_plan.append(action_chunk[t])
 
@@ -238,9 +243,12 @@ def main(args: Args) -> None:
     policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
     logger.info(f"Server metadata: {policy.get_server_metadata()}")
 
-    output_dir = os.path.join(
-        os.path.dirname(__file__), "output", f"single-{args.split}"
-    )
+    if args.output_dir is not None:
+        output_dir = args.output_dir
+    else:
+        output_dir = os.path.join(
+            os.path.dirname(__file__), "output", f"single-{args.split}"
+        )
     os.makedirs(output_dir, exist_ok=True)
 
     collect_session = CollectionSession(policy) if args.collect else None
