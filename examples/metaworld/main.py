@@ -112,6 +112,11 @@ class Args:
     fps: int = 24
     seed: int = 69_420
 
+    # Override the output directory. If None, defaults to
+    # ``examples/metaworld/output/{env_name}/``. Relative paths are resolved
+    # against the user's shell cwd, matching the libero and robocasa examples.
+    output_dir: str | None = None
+
 
 class MultiCameraWrapper(gym.Wrapper):
     """Wrapper that renders multiple cameras and includes images in info dict."""
@@ -181,7 +186,10 @@ def main(args: Args) -> None:
     policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
     logger.info(f"Server metadata: {policy.get_server_metadata()}")
 
-    output_dir = os.path.join(os.path.dirname(__file__), "output", args.env_name)
+    if args.output_dir is not None:
+        output_dir = os.path.abspath(args.output_dir)
+    else:
+        output_dir = os.path.join(os.path.dirname(__file__), "output", args.env_name)
     os.makedirs(output_dir, exist_ok=True)
 
     env = make_env(

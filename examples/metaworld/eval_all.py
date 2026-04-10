@@ -119,6 +119,11 @@ class Args:
     fps: int = 24
     seed: int = 69_420
 
+    # Override the output directory. If None, defaults to
+    # ``examples/metaworld/output/ML45-{split}/``. Relative paths are resolved
+    # against the user's shell cwd, matching the libero and robocasa examples.
+    output_dir: str | None = None
+
 
 class MultiCameraWrapper(gym.Wrapper):
     """Wrapper that renders multiple cameras and includes images in info dict."""
@@ -270,7 +275,11 @@ def main(args: Args) -> None:
     policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
     logger.info(f"Server metadata: {policy.get_server_metadata()}")
 
-    output_dir = os.path.join(os.path.dirname(__file__), "output", f"ML45-{args.split}")
+    if args.output_dir is not None:
+        output_dir = os.path.abspath(args.output_dir)
+    else:
+        output_dir = os.path.join(os.path.dirname(__file__), "output", f"ML45-{args.split}")
+    os.makedirs(output_dir, exist_ok=True)
 
     ml45 = metaworld.ML45()
     env_names = list(ml45.train_classes.keys()) if args.split == "train" else list(ml45.test_classes.keys())

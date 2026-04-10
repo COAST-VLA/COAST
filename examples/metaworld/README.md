@@ -97,6 +97,8 @@ uv run scripts/serve_policy.py --pytorch policy:checkpoint \
 
 ```bash
 MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
+# override the output directory:
+MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3 --output_dir /tmp/reach_debug
 ```
 
 ### All tasks (ML45 split)
@@ -104,9 +106,21 @@ MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
 ```bash
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
+# override the output directory (e.g. to keep runs isolated side-by-side):
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train --output_dir /tmp/ml45_run1
 ```
 
-`--split train` evaluates the 45 ML45 train tasks; `--split test` evaluates the 5 held-out test tasks.
+`--split train` evaluates the 45 ML45 train tasks; `--split test` evaluates the 5 held-out test tasks. `--output_dir` follows the same contract as the libero and robocasa examples: if set, every artifact (`results.json`, per-task video dirs) lands directly under that path; if omitted, the default is `examples/metaworld/output/ML45-{split}/`.
+
+### Parallelism model
+
+Unlike the libero and robocasa examples, metaworld uses **in-process** parallelism via `gym.vector.AsyncVectorEnv(context="spawn")` rather than spawning one subprocess per task. The `--num_envs N` flag (default 15 in `eval_all.py`, 10 in `main.py`) runs N parallel envs of the same task inside a single process and batches their observations into one policy call. This is more efficient for metaworld because:
+
+- Metaworld's MuJoCo + EGL setup is multiprocess-safe in this configuration (see PR #9 — `AsyncVectorEnv(spawn)` gave an 8.6× speedup over sequential env stepping)
+- Batched inference amortizes the policy call cost across all 15 envs
+- Metaworld env steps are fast (~5 ms), so the WebSocket policy server becomes the bottleneck well before subprocess-level parallelism would help
+
+Libero and robocasa cannot use this approach because their envs can't share EGL contexts in-process, so they fall back to one subprocess per task (see `examples/libero_env/eval_all.py` and `examples/robocasa_env/eval_all.py`, both of which expose a `--num_workers` flag). Metaworld does not have a `--num_workers` flag and does not need one — tune `--num_envs` instead.
 
 ## Evaluation Results
 
