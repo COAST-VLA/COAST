@@ -41,3 +41,9 @@ dev = [
 
 [tool.ruff.lint]
 select = ["I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "manual: requires a working Isaac Sim 5.0 install + NVIDIA GPU; not run in CI",
+]

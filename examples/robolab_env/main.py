@@ -325,14 +325,13 @@ def eval_task(
         results = env.get_env_results()  # list of {env_id, success, step}
         for r in results:
             successes.append(bool(r["success"]))
-            logger.info(
-                "[%s] run=%d env=%d success=%s step=%d video=%s",
-                task_name,
-                run_idx,
-                r["env_id"],
-                r["success"],
-                r["step"],
-                video_paths[r["env_id"]],
+            # ``step`` is None when the env never terminated (e.g. max_steps
+            # hit first). Use %s throughout so we don't crash on None.
+            print(
+                f"[{task_name}] run={run_idx} env={r['env_id']} "
+                f"success={r['success']} step={r['step']} "
+                f"video={video_paths[r['env_id']]}",
+                flush=True,
             )
 
         env.reset_eval_state()

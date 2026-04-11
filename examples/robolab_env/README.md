@@ -81,6 +81,31 @@ Each video tiles the external and wrist cameras side-by-side. Final `success_rat
 - **`simulation_app.close()` can hard-exit**: it sometimes calls `os._exit` from `finally`, silently dropping any stdout that hasn't been flushed. `main.py` prints the final `success_rate` line *inside* the `try` block before reaching the cleanup `finally`.
 - **Video writer**: `main.py` uses RoboLab's own `robolab.core.utils.video_utils.VideoWriter` (cv2-based H.264) rather than `imageio[pyav]`. The current `av==17.0.0` has a `write_frame` regression that leaves `stream.codec_context.time_base` unset. `av<16` is pinned anyway.
 
+## Tests
+
+All simulator tests live under `tests/` and are marked `manual` because they require a working Isaac Sim 5.0 install and an NVIDIA GPU (~40 s just to boot Kit). CI runs with `-m "not manual"` and skips them entirely — it does not `uv sync` this venv at all.
+
+Run the full suite locally from this directory:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 OMNI_KIT_ACCEPT_EULA=YES uv run pytest tests/ -m manual -v
+```
+
+Single test:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 OMNI_KIT_ACCEPT_EULA=YES uv run pytest \
+    tests/test_robolab_env.py::TestParallelRendering::test_parallel_envs_are_not_identical_at_reset \
+    -m manual -v
+```
+
+The suite finishes in ~85 s on an L40 and covers:
+
+- **Single-env smoke** — `make_env`, `reset`, `step` with the right obs-dict keys and tensor shapes; full `eval_task` loop with a stub policy (guards against the pyav / `observation/state` / hard-exit regressions).
+- **Parallel rendering (`num_envs=4`)** — batch dim propagates on every camera/proprio tensor, per-env scene randomization produces distinct camera views, actions route per-env (only env 0 moves when only env 0 is actioned), and `reset_eval_state()` correctly unfreezes all envs.
+
+The `test_robolab_env.py` module is importable **without** Isaac Sim installed — `import main` only runs inside the session-scoped `main_module` fixture — so CI collection works cleanly. If you ever wire this example's venv into CI, you can keep the `manual` skip and nothing changes.
+
 ## Porting Notes: `pi05_droid_jointpos`
 
 The config in this repo was ported from [`xuningy/openpi`](https://github.com/xuningy/openpi), which RoboLab's own `docs/inference.md` points users to. Two small changes were required in our fork:
