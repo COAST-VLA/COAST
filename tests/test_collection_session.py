@@ -69,5 +69,5 @@ class TestSetEpisodeResult:
         session.set_episode_result(True)
         session.finalize_episode()
         finalize = client.calls[-1]["__finalize_episode__"]
-        # steps_to_success should be 3 (= total number of real steps when success was declared)
-        assert finalize["steps_to_success"] == 3
+        # steps_to_success is the last valid 0-based index into per_step_reward (len - 1 = 2)
+        assert finalize["steps_to_success"] == 2
