@@ -146,7 +146,8 @@ class Policy(BasePolicy):
 
     @override
     def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
-        if obs["observation/state"].ndim == 2:
+        state = obs.get("observation/state")
+        if state is not None and state.ndim == 2:
             return self.infer_batched(obs, noise=noise)
 
         # Make a copy since transformations may modify the inputs in place.

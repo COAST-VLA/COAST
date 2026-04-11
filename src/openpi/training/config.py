@@ -743,6 +743,28 @@ _CONFIGS = [
             ),
         ),
     ),
+    # Joint-position variant used by RoboLab's inference docs. Identical to
+    # pi05_droid except the output group prepends AbsoluteActions(make_bool_mask(7, -1)):
+    # the 7 arm joints are delta-decoded back to absolute targets while the
+    # gripper channel passes through. Pair with checkpoint
+    # gs://openpi-assets-simeval/pi05_droid_jointpos at serve time.
+    TrainConfig(
+        name="pi05_droid_jointpos",
+        model=pi0_config.Pi0Config(action_horizon=15, pi05=True),
+        data=SimpleDataConfig(
+            assets=AssetsConfig(asset_id="droid"),
+            data_transforms=lambda model: _transforms.Group(
+                inputs=[droid_policy.DroidInputs(model_type=ModelType.PI05)],
+                outputs=[
+                    _transforms.AbsoluteActions(_transforms.make_bool_mask(7, -1)),
+                    droid_policy.DroidOutputs(),
+                ],
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+    ),
     #
     # Fine-tuning Libero configs.
     #

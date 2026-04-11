@@ -1,0 +1,90 @@
+# RoboLab Client Example
+
+[RoboLab](https://research.nvidia.com/labs/srl/projects/robolab) is NVIDIA's 120-task evaluation benchmark for robot manipulation policies, built on [Isaac Lab](https://github.com/isaac-sim/IsaacLab). Because it depends on Isaac Sim / Isaac Lab and a CUDA-specific PyTorch build, it cannot share the main `openpi` virtual environment — we install it in a dedicated venv under `examples/robolab_env` and communicate with the policy server over WebSocket, the same pattern used by `examples/robocasa_env` and `examples/libero_env`.
+
+Unlike robocasa/libero, RoboLab natively vectorizes episodes (`num_envs` parallel rollouts inside one Isaac Sim process), so `main.py` drives `num_envs` episodes per "run" and loops `num_runs` times. `num_envs=1` matches the robocasa/libero flow most closely.
+
+## Requirements
+
+| Dependency | Version |
+|---|---|
+| Isaac Sim | 5.0 |
+| Isaac Lab | 2.2.0 |
+| Python | 3.11 |
+| Linux | Ubuntu 22.04+ |
+
+## Installation
+
+Initialize submodules first if you have not already:
+
+```bash
+git submodule update --init --recursive third_party/robolab
+```
+
+Then sync the dedicated environment:
+
+```bash
+cd examples/robolab_env
+uv venv --python 3.11
+uv pip install "setuptools<81"
+uv sync
+```
+
+Verify the install by listing RoboLab's registered tasks. Isaac Sim prompts interactively for EULA acceptance on first boot — set `OMNI_KIT_ACCEPT_EULA=YES` to accept non-interactively (required on every invocation):
+
+```bash
+OMNI_KIT_ACCEPT_EULA=YES uv run python ../../third_party/robolab/scripts/check_registered_envs.py
+```
+
+A successful run prints the full 120-task benchmark registry. Warnings about `Replicator:Annotators` and `omni.physx.plugin` during shutdown are harmless.
+
+## Serving the RoboLab Policy
+
+RoboLab's [`docs/inference.md`](../../third_party/robolab/docs/inference.md) documents four DROID joint-position configs, all served from a public PI bucket. We've ported `pi05_droid_jointpos` into this repo's `src/openpi/training/config.py` (and companions from `xuningy/openpi`).
+
+### Start the Server
+
+```bash
+# Terminal 1 (repo root, main openpi venv) — server pinned to a free GPU
+export CUDA_VISIBLE_DEVICES=0
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.5 uv run scripts/serve_policy.py policy:checkpoint \
+    --policy.config=pi05_droid_jointpos \
+    --policy.dir=gs://openpi-assets-simeval/pi05_droid_jointpos
+```
+
+The checkpoint (~12 GB) downloads to `~/.cache/openpi/` on the first run and is reused thereafter. Norm stats ship inside the checkpoint bundle.
+
+### Run Evaluation
+
+#### Single task
+
+```bash
+# Terminal 2 (robolab_env venv)
+cd examples/robolab_env
+OMNI_KIT_ACCEPT_EULA=YES uv run python main.py --headless --task-name BananaInBowlTask
+```
+
+See [`tasks.py`](tasks.py) for a pure-Python snapshot of all 120 registered task names and their tags.
+
+Output layout for a single run:
+
+```
+examples/robolab_env/output/single-<instruction_type>/<task_name>/
+└── run_<run_idx:02d>_env<env_id:02d>.mp4
+```
+
+Each video tiles the external and wrist cameras side-by-side. Final `success_rate=A/B` is printed to stdout after the last run completes.
+
+## Known Quirks
+
+- **Isaac Sim hijacks root logging**: `logging.basicConfig` is a no-op once `isaaclab.app.AppLauncher` has run. `main.py` uses `print(..., flush=True)` for its own status lines instead of `logger.info`.
+- **`simulation_app.close()` can hard-exit**: it sometimes calls `os._exit` from `finally`, silently dropping any stdout that hasn't been flushed. `main.py` prints the final `success_rate` line *inside* the `try` block before reaching the cleanup `finally`.
+- **Video writer**: `main.py` uses RoboLab's own `robolab.core.utils.video_utils.VideoWriter` (cv2-based H.264) rather than `imageio[pyav]`. The current `av==17.0.0` has a `write_frame` regression that leaves `stream.codec_context.time_base` unset. `av<16` is pinned anyway.
+
+## Porting Notes: `pi05_droid_jointpos`
+
+The config in this repo was ported from [`xuningy/openpi`](https://github.com/xuningy/openpi), which RoboLab's own `docs/inference.md` points users to. Two small changes were required in our fork:
+
+1. **`src/openpi/training/config.py`** — added the `pi05_droid_jointpos` `TrainConfig`. All dependencies (`_transforms.AbsoluteActions`, `make_bool_mask`, `droid_policy.DroidInputs`/`DroidOutputs`, `SimpleDataConfig`, `AssetsConfig`) already existed; no new files. The `pi0_droid_jointpos` and `pi0_fast_droid_jointpos` siblings from `xuningy/openpi` have **not** been ported — add them the same way if you need those backends.
+
+2. **`src/openpi/policies/policy.py`** — the pre-transform batching check read `obs["observation/state"]` directly, which DROID payloads don't contain (they send `observation/joint_position` + `observation/gripper_position` and let `DroidInputs` build `state` internally). Changed to `obs.get("observation/state")` with a `None` guard so batched callers still work but DROID unbatched inference is unblocked.
