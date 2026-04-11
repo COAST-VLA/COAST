@@ -184,12 +184,19 @@ class CollectingPolicy(_base_policy.BasePolicy):
         # corrupt the on-disk dataset). Future support for batched collection
         # would require extending the protocol so __collect__ carries a list
         # of per-element metadata dicts.
-        state_arr = np.asarray(batched_obs["observation/state"])
-        if state_arr.ndim != 2 or state_arr.shape[0] != 1:
+        # Find a proprioceptive observation key to verify single-example batch.
+        probe_key = "observation/state"
+        if probe_key not in batched_obs:
+            for key in batched_obs:
+                if key.startswith("observation/") and "image" not in key:
+                    probe_key = key
+                    break
+        probe_arr = np.asarray(batched_obs[probe_key])
+        if probe_arr.ndim != 2 or probe_arr.shape[0] != 1:
             raise ValueError(
                 f"Collection mode only supports single-example inputs "
-                f"(observation/state shape (1, state_dim)), got shape "
-                f"{tuple(state_arr.shape)}. Send one inference call per env."
+                f"({probe_key} shape (1, N)), got shape "
+                f"{tuple(probe_arr.shape)}. Send one inference call per env."
             )
 
         # Serialize calls into infer_with_intermediates: the underlying
@@ -266,11 +273,22 @@ class CollectingPolicy(_base_policy.BasePolicy):
         sends pre-batched (num_envs, state_dim). Pass through unchanged when
         already batched.
         """
-        state = obs.get("observation/state")
-        if state is None:
+        # Find any observation array to check if already batched. Prefer
+        # "observation/state" (metaworld/libero/robocasa) but fall back to the
+        # first non-image observation key (droid sends observation/joint_position
+        # + observation/gripper_position instead of observation/state).
+        probe_key = None
+        if "observation/state" in obs:
+            probe_key = "observation/state"
+        else:
+            for key in obs:
+                if key.startswith("observation/") and "image" not in key:
+                    probe_key = key
+                    break
+        if probe_key is None:
             return obs
-        state_arr = np.asarray(state)
-        if state_arr.ndim >= 2:
+        probe_arr = np.asarray(obs[probe_key])
+        if probe_arr.ndim >= 2:
             return obs
 
         batched: dict = {}
