@@ -4,7 +4,7 @@
     "dir": "checkpoints/pi05_metaworld/pi05_metaworld_test/5000/"
   },
   "tasks": [
-    "assembly-v3"
+    "sweep-into-v3"
   ],
   "alphas": [
     0.1,
@@ -23,7 +23,7 @@
     2.0,
     5.0
   ],
-  "num_envs": 5,
+  "num_envs": 15,
   "max_steps": 300,
   "replan_steps": 10,
   "width": 224,

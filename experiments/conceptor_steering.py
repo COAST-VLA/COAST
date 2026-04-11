@@ -121,9 +121,12 @@ LAYER_MAP = {0: 0, 5: 1, 11: 2, 17: 3}
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def find_mixed_outcome_tasks(tasks):
-    """Find tasks that have both successful and failed episodes in the 15-env dataset."""
-    mixed_tasks = {}
+def find_steerable_tasks(tasks):
+    """Find tasks that have success episodes (for positive-only) or mixed outcomes (for contrastive).
+
+    Returns dict mapping task -> {"success": [...], "failure": [...], "has_failures": bool}
+    """
+    steerable_tasks = {}
     for task in tasks:
         success_envs = []
         failure_envs = []
@@ -145,15 +148,22 @@ def find_mixed_outcome_tasks(tasks):
             except Exception:
                 continue
         if success_envs and failure_envs:
-            mixed_tasks[task] = {"success": success_envs, "failure": failure_envs}
+            steerable_tasks[task] = {
+                "success": success_envs, "failure": failure_envs, "has_failures": True,
+            }
             logger.info(
-                f"  {task}: {len(success_envs)} success, {len(failure_envs)} failure envs"
+                f"  {task}: {len(success_envs)} success, {len(failure_envs)} failure envs (mixed)"
             )
         elif success_envs:
-            logger.info(f"  {task}: ALL {len(success_envs)} succeed (no failures)")
+            steerable_tasks[task] = {
+                "success": success_envs, "failure": [], "has_failures": False,
+            }
+            logger.info(
+                f"  {task}: ALL {len(success_envs)} succeed (positive-only steering)"
+            )
         elif failure_envs:
-            logger.info(f"  {task}: ALL {len(failure_envs)} fail (no successes)")
-    return mixed_tasks
+            logger.info(f"  {task}: ALL {len(failure_envs)} fail (no successes — skipping)")
+    return steerable_tasks
 
 
 def load_activations_for_episode(task, env_name, layer_idx=2):
@@ -273,46 +283,65 @@ def build_steering_conceptors(task, env_splits, alpha=0.5, layer_idx=2):
     Build conceptors for steering.
 
     Returns:
-        global_conceptor: (1024, 1024) — Strategy 3
-        step_conceptors: dict {t: (1024, 1024)} — Strategy 5
+        global_conceptor: (1024, 1024) — Strategy 3 (contrastive), or None if no failures
+        step_conceptors: dict {t: (1024, 1024)} — Strategy 5 (contrastive), or None
+        pos_global_conceptor: (1024, 1024) — Positive-only global C_success
+        pos_step_conceptors: dict {t: (1024, 1024)} — Positive-only per-step
         diagnostics: dict with quotas, spectra
     """
     logger.info(f"Collecting activations for {task}...")
     success_acts, failure_acts = collect_outcome_activations(task, env_splits, layer_idx)
 
     diagnostics = {"quotas": {}, "spectra": {}}
+    has_failures = failure_acts[0].shape[0] > 0
 
-    # Strategy 5: Per-denoising-step conceptors
-    step_conceptors = {}
+    # ── Positive-only conceptors (C_success) ──
+    pos_step_conceptors = {}
     for t in range(10):
         C_succ, _ = compute_conceptor(success_acts[t], alpha)
-        C_fail, _ = compute_conceptor(failure_acts[t], alpha)
-        C_steer = contrastive_conceptor(C_succ, C_fail)
-        step_conceptors[t] = C_steer
+        pos_step_conceptors[t] = C_succ
 
-        evals_steer = np.linalg.eigvalsh(C_steer)[::-1]
-        diagnostics["quotas"][t] = float(np.trace(C_steer))
-        diagnostics["spectra"][t] = evals_steer
-
-    # Strategy 3: Global conceptor (pool across all denoising steps)
     all_success = np.concatenate([success_acts[t] for t in range(10)], axis=0)
-    all_failure = np.concatenate([failure_acts[t] for t in range(10)], axis=0)
-
     C_succ_global, _ = compute_conceptor(all_success, alpha)
-    C_fail_global, _ = compute_conceptor(all_failure, alpha)
-    global_conceptor = contrastive_conceptor(C_succ_global, C_fail_global)
+    pos_global_conceptor = C_succ_global
 
-    evals_global = np.linalg.eigvalsh(global_conceptor)[::-1]
-    diagnostics["quotas"]["global"] = float(np.trace(global_conceptor))
-    diagnostics["spectra"]["global"] = evals_global
+    # ── Contrastive conceptors (C_success ∧ ¬C_failure) ──
+    step_conceptors = None
+    global_conceptor = None
 
-    logger.info(
-        f"  Global conceptor quota: {diagnostics['quotas']['global']:.1f}, "
-        f"per-step range: [{min(diagnostics['quotas'][t] for t in range(10)):.1f}, "
-        f"{max(diagnostics['quotas'][t] for t in range(10)):.1f}]"
-    )
+    if has_failures:
+        step_conceptors = {}
+        for t in range(10):
+            C_succ, _ = compute_conceptor(success_acts[t], alpha)
+            C_fail, _ = compute_conceptor(failure_acts[t], alpha)
+            C_steer = contrastive_conceptor(C_succ, C_fail)
+            step_conceptors[t] = C_steer
 
-    return global_conceptor, step_conceptors, diagnostics, success_acts, failure_acts
+            evals_steer = np.linalg.eigvalsh(C_steer)[::-1]
+            diagnostics["quotas"][t] = float(np.trace(C_steer))
+            diagnostics["spectra"][t] = evals_steer
+
+        all_failure = np.concatenate([failure_acts[t] for t in range(10)], axis=0)
+        C_fail_global, _ = compute_conceptor(all_failure, alpha)
+        global_conceptor = contrastive_conceptor(C_succ_global, C_fail_global)
+
+        evals_global = np.linalg.eigvalsh(global_conceptor)[::-1]
+        diagnostics["quotas"]["global"] = float(np.trace(global_conceptor))
+        diagnostics["spectra"]["global"] = evals_global
+
+        logger.info(
+            f"  Contrastive global quota: {diagnostics['quotas']['global']:.1f}, "
+            f"per-step range: [{min(diagnostics['quotas'][t] for t in range(10)):.1f}, "
+            f"{max(diagnostics['quotas'][t] for t in range(10)):.1f}]"
+        )
+    else:
+        logger.info("  No failure episodes — skipping contrastive conceptors")
+
+    pos_quota = float(np.trace(pos_global_conceptor))
+    logger.info(f"  Positive-only global quota: {pos_quota:.1f}")
+
+    return (global_conceptor, step_conceptors, pos_global_conceptor,
+            pos_step_conceptors, diagnostics, success_acts, failure_acts)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -877,48 +906,101 @@ class Args:
     output_dir: str = "experiments/steering_results"
 
 
+def _load_partial_results(partial_path: pathlib.Path):
+    """Load previously completed conditions from the partial JSONL checkpoint."""
+    completed = {}
+    if not partial_path.exists():
+        return completed
+    with open(partial_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            entry = json.loads(line)
+            name = entry["condition"]
+            completed[name] = entry
+    logger.info(f"  Resuming: found {len(completed)} completed conditions in checkpoint")
+    return completed
+
+
+def _save_partial_result(partial_path: pathlib.Path, name: str, metrics: dict,
+                         stats: dict | None, results: list):
+    """Append one completed condition to the partial JSONL checkpoint."""
+    entry = {
+        "condition": name,
+        "metrics": metrics,
+        "stat_tests": stats,
+        "per_env": [
+            {k: v for k, v in r.items() if k != "trajectory"}
+            for r in results
+        ],
+    }
+    with open(partial_path, "a") as f:
+        f.write(json.dumps(entry, default=str) + "\n")
+
+
 def run_full_experiment(task, env_splits, policy, args, output_dir, device="cuda"):
     """Run the complete steering experiment for one task."""
     output_dir = pathlib.Path(output_dir) / task
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── Resume support: load partial checkpoint ──
+    partial_path = output_dir / f"partial_{task}.jsonl"
+    completed = _load_partial_results(partial_path)
+
     all_results = {}
     all_metrics = {}
     stat_tests = {}
+
+    # Restore already-completed conditions from checkpoint
+    for name, entry in completed.items():
+        all_metrics[name] = entry["metrics"]
+        if entry.get("stat_tests"):
+            stat_tests[name] = entry["stat_tests"]
+        all_results[name] = entry.get("per_env", [])
 
     layer_idx_in_data = LAYER_MAP[args.steering_layer]
     model_layer = args.steering_layer
 
     # ── Baseline ──
-    logger.info(f"[{task}] Running baseline (no steering)...")
-    env = make_env(task, args.num_envs, args.seed, args.width, args.height, args.policy_cameras)
-    try:
-        baseline = run_episode(
-            policy, env, task, args.num_envs, args.max_steps, args.replan_steps,
-            steering_hooks=None,
+    if "baseline" in completed:
+        logger.info(f"[{task}] Baseline already completed (resuming), SR={all_metrics['baseline']['baseline_success_rate']:.3f}")
+        # Reconstruct baseline results list for stat tests
+        baseline = all_results["baseline"]
+    else:
+        logger.info(f"[{task}] Running baseline (no steering)...")
+        env = make_env(task, args.num_envs, args.seed, args.width, args.height, args.policy_cameras)
+        try:
+            baseline = run_episode(
+                policy, env, task, args.num_envs, args.max_steps, args.replan_steps,
+                steering_hooks=None,
+            )
+        finally:
+            env.close()
+            gc.collect()
+            torch.cuda.empty_cache()
+        all_results["baseline"] = baseline
+        all_metrics["baseline"] = {
+            "baseline_success_rate": float(np.mean([r["success"] for r in baseline])),
+            "baseline_reward_mean": float(np.mean([r["total_reward"] for r in baseline])),
+            "baseline_reward_std": float(np.std([r["total_reward"] for r in baseline])),
+            "baseline_action_magnitude": float(np.mean([
+                np.mean(np.linalg.norm(r["trajectory"], axis=-1)) for r in baseline
+            ])),
+        }
+        _save_partial_result(partial_path, "baseline", all_metrics["baseline"], None, baseline)
+        logger.info(
+            f"  Baseline: SR={all_metrics['baseline']['baseline_success_rate']:.3f}, "
+            f"Reward={all_metrics['baseline']['baseline_reward_mean']:.1f}"
         )
-    finally:
-        env.close()
-        gc.collect()
-        torch.cuda.empty_cache()
-    all_results["baseline"] = baseline
-    all_metrics["baseline"] = {
-        "baseline_success_rate": float(np.mean([r["success"] for r in baseline])),
-        "baseline_reward_mean": float(np.mean([r["total_reward"] for r in baseline])),
-        "baseline_reward_std": float(np.std([r["total_reward"] for r in baseline])),
-        "baseline_action_magnitude": float(np.mean([
-            np.mean(np.linalg.norm(r["trajectory"], axis=-1)) for r in baseline
-        ])),
-    }
-    logger.info(
-        f"  Baseline: SR={all_metrics['baseline']['baseline_success_rate']:.3f}, "
-        f"Reward={all_metrics['baseline']['baseline_reward_mean']:.1f}"
-    )
 
     # ── Compute conceptors ──
+    has_failures = env_splits.get("has_failures", True)
+
     for alpha in args.alphas:
         logger.info(f"[{task}] Computing conceptors (α={alpha}, layer={model_layer})...")
-        global_C, step_Cs, diagnostics, success_acts, failure_acts = \
+        (global_C, step_Cs, pos_global_C, pos_step_Cs,
+         diagnostics, success_acts, failure_acts) = \
             build_steering_conceptors(task, env_splits, alpha=alpha, layer_idx=layer_idx_in_data)
 
         plot_conceptor_spectra(diagnostics, task, output_dir)
@@ -934,68 +1016,172 @@ def run_full_experiment(task, env_splits, policy, args, output_dir, device="cuda
             json.dump(diag_save, f, indent=2)
 
         for beta in args.betas:
-            # ── Strategy 3: Global conceptor ──
-            name = f"strategy3_a{alpha}_b{beta}"
-            logger.info(f"[{task}] Running {name}...")
-            hook = ConceptorSteeringHook(
-                strategy="global", global_conceptor=global_C, beta=beta, device=device,
-            )
-            env = make_env(task, args.num_envs, args.seed, args.width, args.height, args.policy_cameras)
-            try:
-                results = run_episode(
-                    policy, env, task, args.num_envs, args.max_steps, args.replan_steps,
-                    steering_hooks=[(model_layer, hook)],
+            # ── Contrastive strategies (only if we have failures) ──
+            if has_failures and global_C is not None:
+                # ── Strategy 3: Global contrastive conceptor ──
+                name = f"strategy3_a{alpha}_b{beta}"
+                if name in completed:
+                    logger.info(f"[{task}] Skipping {name} (already completed)")
+                else:
+                    logger.info(f"[{task}] Running {name}...")
+                    hook = ConceptorSteeringHook(
+                        strategy="global", global_conceptor=global_C, beta=beta, device=device,
+                    )
+                    env = make_env(task, args.num_envs, args.seed, args.width, args.height, args.policy_cameras)
+                    try:
+                        results = run_episode(
+                            policy, env, task, args.num_envs, args.max_steps, args.replan_steps,
+                            steering_hooks=[(model_layer, hook)],
+                        )
+                    finally:
+                        env.close()
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                    all_results[name] = results
+                    all_metrics[name] = compute_metrics(baseline, results)
+                    stat_tests[name] = statistical_tests(baseline, results)
+                    _save_partial_result(partial_path, name, all_metrics[name], stat_tests[name], results)
+                    logger.info(
+                        f"  {name}: SR={all_metrics[name]['steered_success_rate']:.3f} "
+                        f"(Δ={all_metrics[name]['success_rate_delta']:+.3f}), "
+                        f"IntNorm={all_metrics[name].get('mean_intervention_norm', 0):.2f}"
+                    )
+
+                # ── Strategy 5: Per-step contrastive conceptors ──
+                name = f"strategy5_a{alpha}_b{beta}"
+                if name in completed:
+                    logger.info(f"[{task}] Skipping {name} (already completed)")
+                else:
+                    logger.info(f"[{task}] Running {name}...")
+                    hook = ConceptorSteeringHook(
+                        strategy="per_step", step_conceptors=step_Cs, beta=beta, device=device,
+                    )
+                    env = make_env(task, args.num_envs, args.seed, args.width, args.height, args.policy_cameras)
+                    try:
+                        results = run_episode(
+                            policy, env, task, args.num_envs, args.max_steps, args.replan_steps,
+                            steering_hooks=[(model_layer, hook)],
+                        )
+                    finally:
+                        env.close()
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                    all_results[name] = results
+                    all_metrics[name] = compute_metrics(baseline, results)
+                    stat_tests[name] = statistical_tests(baseline, results)
+                    _save_partial_result(partial_path, name, all_metrics[name], stat_tests[name], results)
+                    logger.info(
+                        f"  {name}: SR={all_metrics[name]['steered_success_rate']:.3f} "
+                        f"(Δ={all_metrics[name]['success_rate_delta']:+.3f}), "
+                        f"IntNorm={all_metrics[name].get('mean_intervention_norm', 0):.2f}"
+                    )
+                    plot_per_step_norms(hook, task, name, output_dir)
+
+            # ── Positive-only global conceptor (C_success, no contrastive) ──
+            name = f"posonly_global_a{alpha}_b{beta}"
+            if name in completed:
+                logger.info(f"[{task}] Skipping {name} (already completed)")
+            else:
+                logger.info(f"[{task}] Running {name}...")
+                hook = ConceptorSteeringHook(
+                    strategy="global", global_conceptor=pos_global_C, beta=beta, device=device,
                 )
-            finally:
-                env.close()
-                gc.collect()
-                torch.cuda.empty_cache()
-            all_results[name] = results
-            all_metrics[name] = compute_metrics(baseline, results)
-            stat_tests[name] = statistical_tests(baseline, results)
-            logger.info(
-                f"  {name}: SR={all_metrics[name]['steered_success_rate']:.3f} "
-                f"(Δ={all_metrics[name]['success_rate_delta']:+.3f}), "
-                f"IntNorm={all_metrics[name].get('mean_intervention_norm', 0):.2f}"
-            )
-
-            # ── Strategy 5: Per-step conceptors ──
-            name = f"strategy5_a{alpha}_b{beta}"
-            logger.info(f"[{task}] Running {name}...")
-            hook = ConceptorSteeringHook(
-                strategy="per_step", step_conceptors=step_Cs, beta=beta, device=device,
-            )
-            env = make_env(task, args.num_envs, args.seed, args.width, args.height, args.policy_cameras)
-            try:
-                results = run_episode(
-                    policy, env, task, args.num_envs, args.max_steps, args.replan_steps,
-                    steering_hooks=[(model_layer, hook)],
+                env = make_env(task, args.num_envs, args.seed, args.width, args.height, args.policy_cameras)
+                try:
+                    results = run_episode(
+                        policy, env, task, args.num_envs, args.max_steps, args.replan_steps,
+                        steering_hooks=[(model_layer, hook)],
+                    )
+                finally:
+                    env.close()
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                all_results[name] = results
+                all_metrics[name] = compute_metrics(baseline, results)
+                stat_tests[name] = statistical_tests(baseline, results)
+                _save_partial_result(partial_path, name, all_metrics[name], stat_tests[name], results)
+                logger.info(
+                    f"  {name}: SR={all_metrics[name]['steered_success_rate']:.3f} "
+                    f"(Δ={all_metrics[name]['success_rate_delta']:+.3f}), "
+                    f"IntNorm={all_metrics[name].get('mean_intervention_norm', 0):.2f}"
                 )
-            finally:
-                env.close()
-                gc.collect()
-                torch.cuda.empty_cache()
-            all_results[name] = results
-            all_metrics[name] = compute_metrics(baseline, results)
-            stat_tests[name] = statistical_tests(baseline, results)
-            logger.info(
-                f"  {name}: SR={all_metrics[name]['steered_success_rate']:.3f} "
-                f"(Δ={all_metrics[name]['success_rate_delta']:+.3f}), "
-                f"IntNorm={all_metrics[name].get('mean_intervention_norm', 0):.2f}"
-            )
-            plot_per_step_norms(hook, task, name, output_dir)
 
-    # ── Linear steering baseline ──
-    logger.info(f"[{task}] Computing linear steering vector...")
-    # Use pooled activations across denoising steps for mean-diff
-    pooled_s = np.concatenate([success_acts[t] for t in range(10)], axis=0)
-    pooled_f = np.concatenate([failure_acts[t] for t in range(10)], axis=0)
-    steer_vec = compute_linear_steering_vector(pooled_s, pooled_f)
+            # ── Positive-only per-step conceptors ──
+            name = f"posonly_perstep_a{alpha}_b{beta}"
+            if name in completed:
+                logger.info(f"[{task}] Skipping {name} (already completed)")
+            else:
+                logger.info(f"[{task}] Running {name}...")
+                hook = ConceptorSteeringHook(
+                    strategy="per_step", step_conceptors=pos_step_Cs, beta=beta, device=device,
+                )
+                env = make_env(task, args.num_envs, args.seed, args.width, args.height, args.policy_cameras)
+                try:
+                    results = run_episode(
+                        policy, env, task, args.num_envs, args.max_steps, args.replan_steps,
+                        steering_hooks=[(model_layer, hook)],
+                    )
+                finally:
+                    env.close()
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                all_results[name] = results
+                all_metrics[name] = compute_metrics(baseline, results)
+                stat_tests[name] = statistical_tests(baseline, results)
+                _save_partial_result(partial_path, name, all_metrics[name], stat_tests[name], results)
+                logger.info(
+                    f"  {name}: SR={all_metrics[name]['steered_success_rate']:.3f} "
+                    f"(Δ={all_metrics[name]['success_rate_delta']:+.3f}), "
+                    f"IntNorm={all_metrics[name].get('mean_intervention_norm', 0):.2f}"
+                )
 
-    for alpha_lin in args.linear_alphas:
-        name = f"linear_a{alpha_lin}"
-        logger.info(f"[{task}] Running {name}...")
-        hook = LinearSteeringHook(steer_vec, alpha=alpha_lin, device=device)
+    # ── Linear steering baseline (only if we have both outcomes) ──
+    if has_failures:
+        logger.info(f"[{task}] Computing linear steering vector...")
+        pooled_s = np.concatenate([success_acts[t] for t in range(10)], axis=0)
+        pooled_f = np.concatenate([failure_acts[t] for t in range(10)], axis=0)
+        steer_vec = compute_linear_steering_vector(pooled_s, pooled_f)
+    else:
+        steer_vec = None
+
+    if steer_vec is not None:
+        for alpha_lin in args.linear_alphas:
+            name = f"linear_a{alpha_lin}"
+            if name in completed:
+                logger.info(f"[{task}] Skipping {name} (already completed)")
+            else:
+                logger.info(f"[{task}] Running {name}...")
+                hook = LinearSteeringHook(steer_vec, alpha=alpha_lin, device=device)
+                env = make_env(task, args.num_envs, args.seed, args.width, args.height, args.policy_cameras)
+                try:
+                    results = run_episode(
+                        policy, env, task, args.num_envs, args.max_steps, args.replan_steps,
+                        steering_hooks=[(model_layer, hook)],
+                    )
+                finally:
+                    env.close()
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                all_results[name] = results
+                all_metrics[name] = compute_metrics(baseline, results)
+                stat_tests[name] = statistical_tests(baseline, results)
+                _save_partial_result(partial_path, name, all_metrics[name], stat_tests[name], results)
+                logger.info(
+                    f"  {name}: SR={all_metrics[name]['steered_success_rate']:.3f} "
+                    f"(Δ={all_metrics[name]['success_rate_delta']:+.3f})"
+                )
+
+    # ── Random conceptor control ──
+    name = "random_conceptor"
+    if name in completed:
+        logger.info(f"[{task}] Skipping {name} (already completed)")
+    else:
+        logger.info(f"[{task}] Running random conceptor control...")
+        target_quota = diagnostics["quotas"].get("global", float(np.trace(pos_global_C)))
+        random_C = compute_random_conceptor(quota_target=target_quota)
+        hook = ConceptorSteeringHook(
+            strategy="global", global_conceptor=random_C, beta=0.3, device=device,
+        )
         env = make_env(task, args.num_envs, args.seed, args.width, args.height, args.policy_cameras)
         try:
             results = run_episode(
@@ -1009,35 +1195,11 @@ def run_full_experiment(task, env_splits, policy, args, output_dir, device="cuda
         all_results[name] = results
         all_metrics[name] = compute_metrics(baseline, results)
         stat_tests[name] = statistical_tests(baseline, results)
+        _save_partial_result(partial_path, name, all_metrics[name], stat_tests[name], results)
         logger.info(
-            f"  {name}: SR={all_metrics[name]['steered_success_rate']:.3f} "
-            f"(Δ={all_metrics[name]['success_rate_delta']:+.3f})"
+            f"  random_conceptor: SR={all_metrics['random_conceptor']['steered_success_rate']:.3f} "
+            f"(Δ={all_metrics['random_conceptor']['success_rate_delta']:+.3f})"
         )
-
-    # ── Random conceptor control ──
-    logger.info(f"[{task}] Running random conceptor control...")
-    target_quota = diagnostics["quotas"]["global"]
-    random_C = compute_random_conceptor(quota_target=target_quota)
-    hook = ConceptorSteeringHook(
-        strategy="global", global_conceptor=random_C, beta=0.3, device=device,
-    )
-    env = make_env(task, args.num_envs, args.seed, args.width, args.height, args.policy_cameras)
-    try:
-        results = run_episode(
-            policy, env, task, args.num_envs, args.max_steps, args.replan_steps,
-            steering_hooks=[(model_layer, hook)],
-        )
-    finally:
-        env.close()
-        gc.collect()
-        torch.cuda.empty_cache()
-    all_results["random_conceptor"] = results
-    all_metrics["random_conceptor"] = compute_metrics(baseline, results)
-    stat_tests["random_conceptor"] = statistical_tests(baseline, results)
-    logger.info(
-        f"  random_conceptor: SR={all_metrics['random_conceptor']['steered_success_rate']:.3f} "
-        f"(Δ={all_metrics['random_conceptor']['success_rate_delta']:+.3f})"
-    )
 
     # ── Generate plots and summary ──
     plot_success_vs_beta(all_metrics, task, output_dir)
@@ -1070,14 +1232,19 @@ def main(args: Args):
     with open(output_dir / "args.json", "w") as f:
         json.dump(dataclasses.asdict(args), f, indent=2)
 
-    # Discover mixed-outcome tasks
-    logger.info("Discovering mixed-outcome tasks in 15-env dataset...")
-    mixed_tasks = find_mixed_outcome_tasks(args.tasks)
-    if not mixed_tasks:
-        logger.error("No mixed-outcome tasks found! Cannot perform contrastive steering.")
+    # Discover steerable tasks (mixed-outcome for contrastive, all-success for positive-only)
+    logger.info("Discovering steerable tasks in 15-env dataset...")
+    steerable_tasks = find_steerable_tasks(args.tasks)
+    if not steerable_tasks:
+        logger.error("No steerable tasks found (need at least some successes).")
         return
 
-    logger.info(f"Found {len(mixed_tasks)} mixed-outcome tasks: {list(mixed_tasks.keys())}")
+    mixed = [t for t, s in steerable_tasks.items() if s["has_failures"]]
+    posonly = [t for t, s in steerable_tasks.items() if not s["has_failures"]]
+    logger.info(
+        f"Found {len(steerable_tasks)} steerable tasks: "
+        f"{len(mixed)} mixed-outcome, {len(posonly)} positive-only"
+    )
 
     # Load policy
     logger.info("Loading policy...")
@@ -1092,14 +1259,15 @@ def main(args: Args):
 
     # Run experiments for each task
     for task in args.tasks:
-        if task not in mixed_tasks:
-            logger.warning(f"Skipping {task}: not a mixed-outcome task")
+        if task not in steerable_tasks:
+            logger.warning(f"Skipping {task}: no success episodes available")
             continue
-        env_splits = mixed_tasks[task]
+        env_splits = steerable_tasks[task]
         logger.info(f"\n{'='*60}")
         logger.info(f"Starting experiment for {task}")
         logger.info(f"  Success envs: {env_splits['success']}")
         logger.info(f"  Failure envs: {env_splits['failure']}")
+        logger.info(f"  Mode: {'contrastive + positive-only' if env_splits['has_failures'] else 'positive-only only'}")
         logger.info(f"{'='*60}")
 
         run_full_experiment(task, env_splits, policy, args, output_dir, device=device)

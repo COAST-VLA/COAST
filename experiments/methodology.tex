@@ -1,0 +1,193 @@
+% ============================================================================
+% NeurIPS Methodology Section — Conceptor Steering for Vision-Language-Action Models
+% ============================================================================
+% Place this in your main .tex file or \input{methodology.tex}
+% BibTeX entries are provided at the end of this file.
+
+\section{Method}
+\label{sec:method}
+
+We present a framework for inference-time steering of Vision-Language-Action (VLA) models using conceptors~\citep{jaeger2014controlling}---soft subspace operators originally developed for reservoir computing. Our approach constructs contrastive conceptors from the internal activations of a pre-trained VLA policy, distinguishing subspaces associated with successful versus failed task execution, and applies them as multiplicative gates during the denoising process to bias the model toward successful behavior \emph{without any retraining or fine-tuning}.
+
+\subsection{Conceptors}
+\label{sec:conceptors}
+
+A \emph{conceptor} is a soft linear operator that characterizes the subspace spanned by a collection of neural activation vectors~\citep{jaeger2014controlling}. Given a matrix of activation vectors $\mathbf{X} \in \mathbb{R}^{N \times d}$ collected from $N$ samples in a $d$-dimensional space, we first compute the correlation matrix
+\begin{equation}
+    \mathbf{R} = \frac{1}{N} \mathbf{X}^\top \mathbf{X},
+    \label{eq:correlation}
+\end{equation}
+and then define the conceptor matrix as
+\begin{equation}
+    \mathbf{C} = \mathbf{R} \left( \mathbf{R} + \alpha^{-2} \mathbf{I} \right)^{-1},
+    \label{eq:conceptor}
+\end{equation}
+where $\alpha > 0$ is the \emph{aperture} parameter controlling the sharpness of the subspace delineation, and $\mathbf{I} \in \mathbb{R}^{d \times d}$ is the identity matrix. The eigenvalues $\gamma_j$ of $\mathbf{C}$ lie in $[0, 1]$ and are related to the eigenvalues $\sigma_j$ of $\mathbf{R}$ by
+\begin{equation}
+    \gamma_j = \frac{\sigma_j}{\sigma_j + \alpha^{-2}}.
+    \label{eq:conceptor_eigenvalues}
+\end{equation}
+Intuitively, dimensions with large variance ($\sigma_j \gg \alpha^{-2}$) receive eigenvalues near 1, indicating they are ``claimed'' by the conceptor, while low-variance dimensions are suppressed toward 0. The \emph{quota} $q(\mathbf{C}) = \operatorname{tr}(\mathbf{C}) = \sum_j \gamma_j$ quantifies the effective dimensionality of the subspace captured by the conceptor.
+
+Conceptors support a soft Boolean algebra~\citep{jaeger2014controlling}. The \emph{negation} (complement) of a conceptor is defined as
+\begin{equation}
+    \lnot \mathbf{C} = \mathbf{I} - \mathbf{C},
+    \label{eq:not}
+\end{equation}
+which captures the subspace \emph{not} occupied by $\mathbf{C}$. The soft \emph{conjunction} (intersection) of two conceptors $\mathbf{C}_A$ and $\mathbf{C}_B$ is given by
+\begin{equation}
+    \mathbf{C}_A \wedge \mathbf{C}_B = \left( \mathbf{C}_A^{-1} + \mathbf{C}_B^{-1} - \mathbf{I} \right)^{-1},
+    \label{eq:and}
+\end{equation}
+which yields a conceptor whose eigenvalues are high only in dimensions where \emph{both} $\mathbf{C}_A$ and $\mathbf{C}_B$ have high eigenvalues. In practice, we add a small regularization term $\epsilon \mathbf{I}$ (with $\epsilon = 10^{-6}$) to the inverses for numerical stability. The \emph{overlap} between two conceptors is measured as $\operatorname{overlap}(\mathbf{C}_A, \mathbf{C}_B) = \operatorname{tr}(\mathbf{C}_A \mathbf{C}_B) / \operatorname{tr}(\mathbf{C}_A)$, quantifying the fraction of $\mathbf{C}_A$'s subspace shared with $\mathbf{C}_B$.
+
+
+\subsection{Contrastive Conceptors}
+\label{sec:contrastive}
+
+To steer the model toward successful behavior, we require a representation that isolates the subspace directions \emph{uniquely} associated with success and absent from failure. We achieve this by constructing \emph{contrastive conceptors}.
+
+Given activation matrices $\mathbf{X}^{+} \in \mathbb{R}^{N^{+} \times d}$ from successful episodes and $\mathbf{X}^{-} \in \mathbb{R}^{N^{-} \times d}$ from failed episodes, we compute individual conceptors $\mathbf{C}^{+}$ and $\mathbf{C}^{-}$ via Eq.~\eqref{eq:conceptor}. The contrastive conceptor is then defined as
+\begin{equation}
+    \mathbf{C}_{\text{steer}} = \mathbf{C}^{+} \wedge \lnot \mathbf{C}^{-} = \left( (\mathbf{C}^{+})^{-1} + (\mathbf{I} - \mathbf{C}^{-})^{-1} - \mathbf{I} \right)^{-1},
+    \label{eq:contrastive}
+\end{equation}
+which retains only those dimensions that are active in successful episodes but inactive in failed ones. The quota $q(\mathbf{C}_{\text{steer}})$ reflects the effective dimensionality of this success-specific subspace. A higher quota indicates more dimensions unique to success; empirically, we find that tasks with greater behavioral diversity between success and failure yield contrastive conceptors with higher quotas.
+
+For tasks where all episodes succeed (i.e., no failure data is available), we fall back to a \emph{positive-only} conceptor $\mathbf{C}_{\text{steer}} = \mathbf{C}^{+}$, which reinforces the success subspace without contrastive subtraction.
+
+
+\subsection{Steering Implementation}
+\label{sec:steering}
+
+We implement two conceptor-based steering strategies, both applied as forward hooks on a target transformer layer of the action expert during the denoising process.
+
+\paragraph{Multiplicative Conceptor Gate.}
+Given a conceptor $\mathbf{C}_{\text{steer}}$, we construct a \emph{soft multiplicative gate} matrix
+\begin{equation}
+    \mathbf{M} = (1 - \beta)\, \mathbf{I} + \beta\, \mathbf{C}_{\text{steer}},
+    \label{eq:gate}
+\end{equation}
+where $\beta \in [0, 1]$ is the steering strength. At each forward pass through the target layer, the residual stream activation $\mathbf{h} \in \mathbb{R}^{B \times T \times d}$ is transformed as
+\begin{equation}
+    \mathbf{h}' = \mathbf{h}\, \mathbf{M}^\top.
+    \label{eq:steer_apply}
+\end{equation}
+When $\beta = 0$, the intervention vanishes ($\mathbf{h}' = \mathbf{h}$); as $\beta \to 1$, the activation is projected more strongly onto the conceptor subspace. This multiplicative formulation preserves activation magnitude along success-relevant directions while attenuating others, providing a more structured intervention than additive approaches.
+
+We instantiate two variants of this strategy:
+\begin{itemize}
+    \item \textbf{Strategy~3 (Global Conceptor):} A single contrastive conceptor is computed by pooling activations across \emph{all} denoising steps. The same gate $\mathbf{M}$ is applied at every denoising step $t \in \{0, \ldots, 9\}$.
+    \item \textbf{Strategy~5 (Per-Step Conceptor):} A separate contrastive conceptor $\mathbf{C}_{\text{steer}}^{(t)}$ is computed for each denoising step $t$, yielding step-specific gates $\mathbf{M}^{(t)} = (1 - \beta)\,\mathbf{I} + \beta\,\mathbf{C}_{\text{steer}}^{(t)}$. The appropriate gate is applied based on the current denoising step, allowing the intervention to adapt to the evolving activation geometry across the denoising trajectory.
+\end{itemize}
+
+\paragraph{Linear Additive Steering (Baseline).}
+As a baseline, we also evaluate a standard additive steering approach~\citep{turner2023activation,li2024inference}. We compute the mean-difference steering vector
+\begin{equation}
+    \mathbf{d} = \frac{\boldsymbol{\mu}^{+} - \boldsymbol{\mu}^{-}}{\| \boldsymbol{\mu}^{+} - \boldsymbol{\mu}^{-} \|_2},
+    \label{eq:linear_direction}
+\end{equation}
+where $\boldsymbol{\mu}^{+}$ and $\boldsymbol{\mu}^{-}$ are the mean activations of successful and failed episodes, respectively. At inference time, the residual stream is modified as
+\begin{equation}
+    \mathbf{h}' = \mathbf{h} + \alpha_{\text{lin}}\, \mathbf{d},
+    \label{eq:linear_steer}
+\end{equation}
+where $\alpha_{\text{lin}}$ controls the intervention magnitude. This single-direction additive approach provides a natural comparison to the full-subspace multiplicative conceptor intervention.
+
+\paragraph{Random Conceptor Control.}
+To verify that steering effects are not artifacts of arbitrary subspace projection, we construct a \emph{random conceptor} $\mathbf{C}_{\text{rand}}$ by generating a random orthogonal basis and assigning eigenvalues $\gamma_j^{\text{rand}} = s_j / (s_j + \alpha^{-2})$ from random exponential draws $s_j$, yielding a conceptor with similar quota but unrelated subspace orientation. This control isolates the contribution of the learned subspace structure.
+
+
+\subsection{Activation Collection}
+\label{sec:activations}
+
+\paragraph{Residual Stream Extraction.}
+The $\pi_{0.5}$\xspace model generates actions through an iterative denoising process using $T = 10$ Euler steps of flow matching~\citep{lipman2023flow}, proceeding from pure noise ($t=1$) to the final action prediction ($t=0$). At each denoising step, the noisy action tokens pass through the 18-layer action expert transformer. We extract the \emph{residual stream} activations---the output of each transformer block (after the residual connection combining self-attention, MLP, and the skip path)---at four layers: $\ell \in \{0, 5, 11, 17\}$, spanning from input to output. For each layer and denoising step, the activation tensor has shape $(T_{\text{action}}, d) = (32, 1024)$, corresponding to 32 action tokens with hidden dimension $d = 1024$.
+
+\paragraph{Aggregation.}
+For conceptor computation, we mean-pool the per-token activations across the 32 action tokens, yielding a single $d$-dimensional vector per inference step and denoising step. Activations are collected for every inference step (policy query) within each episode, producing $N_{\text{inference}}$ vectors per episode. For each task, we partition the episodes into successful and failed sets based on episode-level binary success labels, concatenate the corresponding activation vectors, and compute conceptors separately for each outcome group.
+
+\paragraph{Denoising Step Structure.}
+The full activation tensor per inference step has shape $(10, 4, 32, 1024)$, representing 10 denoising steps $\times$ 4 layers $\times$ 32 action tokens $\times$ 1024 hidden dimensions. For the per-step steering strategy (Strategy~5), conceptors are computed independently for each denoising step $t \in \{0, \ldots, 9\}$. For the global strategy (Strategy~3), activations are pooled across all denoising steps before computing a single conceptor. Our primary experiments use layer $\ell = 11$ (a mid-to-late layer of the action expert), which our diagnostic analysis found to provide the best balance of task separation and quota differentiation; we report layer sweeps in the supplementary material.
+
+
+\subsection{Model}
+\label{sec:model}
+
+We use $\pi_{0.5}$\xspace~\citep{black2024pi0}, a state-of-the-art Vision-Language-Action model that combines a PaliGemma~\citep{beyer2024paligemma} vision-language backbone (Gemma 2B with SigLIP~\citep{zhai2023sigmoid} vision encoder) with a dedicated Gemma 300M action expert. The VLM backbone processes visual observations and language instructions to produce a cached key-value representation, which the action expert conditions on to generate motor commands. The action expert is an 18-layer Gemma transformer (hidden dimension 1024, 8 attention heads, MLP dimension 4096) that uses adaptive RMSNorm (adaRMSNorm) to inject flow-matching timestep information, enabling time-conditioned denoising. Actions are generated as 32-dimensional action chunks over a horizon of 32 steps via 10-step Euler integration of the learned flow field. We use a checkpoint fine-tuned on the MetaWorld ML45 benchmark for 5{,}000 training steps with the \texttt{pi05\_metaworld} configuration.
+
+
+\subsection{Dataset}
+\label{sec:dataset}
+
+We evaluate on the MetaWorld ML45 benchmark~\citep{yu2020meta}, a suite of 45 diverse robotic manipulation tasks in a simulated tabletop environment. Tasks range from simple reaching and button pressing to complex multi-step behaviors such as assembly, basketball dunking, and tool use. For activation collection, we use a dataset of rollouts with 15 parallel environment instances per task, each initialized with different random seeds. Episode-level binary success labels are determined by MetaWorld's built-in success criteria. Of the 45 tasks, 26 exhibit mixed outcomes (both successful and failed episodes across the 15 environments), enabling contrastive conceptor construction. Each policy query produces a sequence of 32 actions; activations are recorded at every such query throughout episodes of up to 300 environment steps (i.e., up to 30 inference steps per episode). The activation dataset, including residual stream outputs at four layers across all 10 denoising steps, is hosted on HuggingFace.\footnote{\url{https://huggingface.co/datasets/brandonyang/ml45-activations-15}}
+
+
+\subsection{Evaluation Protocol}
+\label{sec:eval_protocol}
+
+For each task, we evaluate steering by running 15 parallel environment rollouts per condition, comparing the steered policy against the unsteered baseline. We report \emph{success rate} as the primary metric, computed as the fraction of environments achieving the task-specific success criterion within 300 steps. We additionally report mean cumulative reward, mean intervention norm $\|\mathbf{h}' - \mathbf{h}\|_2$ (measuring the magnitude of the steering perturbation), and KL divergence between baseline and steered action distributions. We sweep the aperture $\alpha \in \{0.1, 0.5, 1.0\}$ and steering strength $\beta \in \{0.1, 0.3, 0.5\}$ for conceptor strategies, and $\alpha_{\text{lin}} \in \{0.5, 1.0, 2.0, 5.0\}$ for the linear baseline. Statistical significance is assessed via Fisher's exact test for success rates, Mann--Whitney U tests for rewards, and bootstrap 95\% confidence intervals ($n=1{,}000$ resamples) for the success rate difference.
+
+
+% ============================================================================
+% BibTeX entries — add these to your .bib file
+% ============================================================================
+%
+% @article{jaeger2014controlling,
+%   title={Controlling Recurrent Neural Networks by Conceptors},
+%   author={Jaeger, Herbert},
+%   journal={arXiv preprint arXiv:1403.3369},
+%   year={2014}
+% }
+%
+% @article{black2024pi0,
+%   title={$\pi_0$: A Vision-Language-Action Flow Model for General Robot Control},
+%   author={Black, Kevin and Brown, Noah and Driess, Danny and Esmail, Adnan and Equi, Michael and Finn, Chelsea and Fusai, Niccolo and Groom, Lachy and Hausman, Karol and Ichter, Brian and others},
+%   journal={arXiv preprint arXiv:2410.24164},
+%   year={2024}
+% }
+%
+% @article{beyer2024paligemma,
+%   title={PaliGemma: A versatile 3B VLM for transfer},
+%   author={Beyer, Lucas and Steiner, Andreas and Pinto, Andr{\'e} Susano and Kolesnikov, Alexander and Salz, Daniel and Zhai, Xiaohua and Dosovitskiy, Alexey and others},
+%   journal={arXiv preprint arXiv:2407.07726},
+%   year={2024}
+% }
+%
+% @inproceedings{zhai2023sigmoid,
+%   title={Sigmoid Loss for Language Image Pre-Training},
+%   author={Zhai, Xiaohua and Mustafa, Basil and Kolesnikov, Alexander and Beyer, Lucas},
+%   booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision},
+%   pages={11975--11986},
+%   year={2023}
+% }
+%
+% @article{lipman2023flow,
+%   title={Flow Matching for Generative Modeling},
+%   author={Lipman, Yaron and Chen, Ricky T. Q. and Ben-Hamu, Heli and Nickel, Maximilian},
+%   journal={arXiv preprint arXiv:2210.02747},
+%   year={2023}
+% }
+%
+% @inproceedings{yu2020meta,
+%   title={Meta-World: A Benchmark and Evaluation for Multi-Task and Meta Reinforcement Learning},
+%   author={Yu, Tianhe and Quillen, Deirdre and He, Zhanpeng and Julian, Ryan and Hausman, Karol and Finn, Chelsea and Levine, Sergey},
+%   booktitle={Conference on Robot Learning},
+%   pages={1094--1100},
+%   year={2020}
+% }
+%
+% @article{turner2023activation,
+%   title={Activation Addition: Steering Language Models Without Optimization},
+%   author={Turner, Alexander Matt and Thiergart, Lisa and Udell, David and Leech, Gavin and Mini, Ulisse and Nanda, Neel},
+%   journal={arXiv preprint arXiv:2308.10248},
+%   year={2023}
+% }
+%
+% @article{li2024inference,
+%   title={Inference-Time Intervention: Eliciting Truthful Answers from a Language Model},
+%   author={Li, Kenneth and Patel, Oam and Vi{\'e}gas, Fernanda and Pfister, Hanspeter and Wattenberg, Martin},
+%   journal={Advances in Neural Information Processing Systems},
+%   volume={36},
+%   year={2024}
+% }
