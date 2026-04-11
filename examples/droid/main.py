@@ -5,12 +5,14 @@ import dataclasses
 import datetime
 import faulthandler
 import os
+import re
 import signal
 import time
 from moviepy.editor import ImageSequenceClip
 import numpy as np
 from openpi_client import image_tools
 from openpi_client import websocket_client_policy
+from openpi_client.collection_session import CollectionSession
 import pandas as pd
 from PIL import Image
 from droid.robot_env import RobotEnv
@@ -46,6 +48,10 @@ class Args:
     remote_port: int = (
         8000  # point this to the port of the policy server, default server port for openpi servers is 8000
     )
+
+    # If True, attach activation-collection metadata to every infer call so the
+    # server (started with --collect_activations) saves intermediates to its disk.
+    collect: bool = False
 
 
 # We are using Ctrl+C to optionally terminate rollouts early -- however, if we press Ctrl+C while the policy server is
@@ -83,10 +89,24 @@ def main(args: Args):
     # Connect to the policy server
     policy_client = websocket_client_policy.WebsocketClientPolicy(args.remote_host, args.remote_port)
 
+    collect_session = CollectionSession(policy_client) if args.collect else None
+    episode_counter = 0
+
     df = pd.DataFrame(columns=["success", "duration", "video_filename"])
 
     while True:
         instruction = input("Enter instruction: ")
+
+        if collect_session is not None:
+            # Sanitize instruction to a filesystem-safe slug for use as the
+            # server-side task_name directory.
+            task_name = re.sub(r"[^a-zA-Z0-9]+", "-", instruction.strip().lower()).strip("-") or "droid-eval"
+            collect_session.start_episode(
+                task_name=task_name,
+                task_id=0,
+                episode_id=episode_counter,
+                prompt=instruction,
+            )
 
         # Rollout parameters
         actions_from_chunk_completed = 0
@@ -116,15 +136,26 @@ def main(args: Args):
 
                     # We resize images on the robot laptop to minimize the amount of data sent to the policy server
                     # and improve latency.
+                    joint_pos = curr_obs["joint_position"]
+                    gripper_pos = curr_obs["gripper_position"]
                     request_data = {
                         "observation/exterior_image_1_left": image_tools.resize_with_pad(
                             curr_obs[f"{args.external_camera}_image"], 224, 224
                         ),
                         "observation/wrist_image_left": image_tools.resize_with_pad(curr_obs["wrist_image"], 224, 224),
-                        "observation/joint_position": curr_obs["joint_position"],
-                        "observation/gripper_position": curr_obs["gripper_position"],
+                        "observation/joint_position": joint_pos,
+                        "observation/gripper_position": gripper_pos,
+                        # Also send the concatenated state so that the server-side
+                        # Policy.infer() batch-size detection (which probes this key)
+                        # works without a policy.py change. DroidInputs ignores this
+                        # key — it reads the individual keys above and builds its own
+                        # state vector.
+                        "observation/state": np.concatenate([joint_pos, np.atleast_1d(gripper_pos)]),
                         "prompt": instruction,
                     }
+
+                    if collect_session is not None:
+                        request_data["__collect__"] = collect_session.make_collect_metadata(t_step)
 
                     # Wrap the server call in a context manager to prevent Ctrl+C from interrupting it
                     # Ctrl+C will be handled after the server call is complete
@@ -150,6 +181,9 @@ def main(args: Args):
 
                 env.step(action)
 
+                if collect_session is not None:
+                    collect_session.record_step(t_step, reward=0.0, done=False)
+
                 # Sleep to match DROID data collection frequency
                 elapsed_time = time.time() - start_time
                 if elapsed_time < 1 / DROID_CONTROL_FREQUENCY:
@@ -174,6 +208,12 @@ def main(args: Args):
             success = float(success) / 100
             if not (0 <= success <= 1):
                 print(f"Success must be a number in [0, 100] but got: {success * 100}")
+
+        if collect_session is not None:
+            collect_session.set_episode_result(success=success > 0.0)
+            collect_session.finalize_episode()
+
+        episode_counter += 1
 
         df = df.append(
             {
