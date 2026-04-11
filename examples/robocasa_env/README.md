@@ -100,6 +100,8 @@ Everything one run produces lives under a single top-level directory (by default
 
 ### Evaluation Results with Released Checkpoints
 
+Original evaluation results are published [here](https://robocasa.ai/docs/build/html/benchmarking/multitask_learning.html#benchmark-results-and-checkpoints). We perform our own evaluation with the provided checkpoint.
+
 Results below are from the public `pi05_pretrain_human300/multitask_learning/75000` checkpoint, evaluated on the `pretrain` split with 15 episodes per task (`eval_all.py --num_workers 5 --num_episodes 15`). Raw per-task numbers are in [`figures/results_75000.json`](figures/results_75000.json).
 
 ![Mean success rate per task set](figures/compare_means_75000.png)
