@@ -118,7 +118,9 @@ class CollectionSession:
         """
         self._success = success
         if success and self._steps_to_success == -1:
-            self._steps_to_success = len(self._per_step_reward)
+            self._steps_to_success = len(self._per_step_reward) - 1
+        elif not success:
+            self._steps_to_success = -1
         if total_reward != 0.0:
             self._cumulative_reward = total_reward
 
