@@ -1,0 +1,77 @@
+{
+  "description": "pi05_robocasa eval results, checkpoint pi05_pretrain_human300/multitask_learning/75000, 15 episodes per task, eval_all.py @ num_workers=5",
+  "checkpoints": {
+    "75000": {
+      "policy_dir": "checkpoints/pi05_pretrain_human300/multitask_learning/75000",
+      "config_name": "pi05_robocasa",
+      "split": "pretrain",
+      "task_sets": {
+        "atomic_seen": {
+          "mean_success_rate": 0.33,
+          "per_task": [
+            {"env_name": "PickPlaceSinkToCounter", "success_rate": 0.73},
+            {"env_name": "SlideDishwasherRack", "success_rate": 0.73},
+            {"env_name": "OpenStandMixerHead", "success_rate": 0.67},
+            {"env_name": "TurnOnSinkFaucet", "success_rate": 0.67},
+            {"env_name": "OpenDrawer", "success_rate": 0.6},
+            {"env_name": "PickPlaceCounterToCabinet", "success_rate": 0.47},
+            {"env_name": "PickPlaceCounterToStove", "success_rate": 0.47},
+            {"env_name": "PickPlaceToasterToCounter", "success_rate": 0.4},
+            {"env_name": "CloseToasterOvenDoor", "success_rate": 0.33},
+            {"env_name": "CoffeeSetupMug", "success_rate": 0.27},
+            {"env_name": "CloseFridge", "success_rate": 0.13},
+            {"env_name": "TurnOffStove", "success_rate": 0.13},
+            {"env_name": "TurnOnElectricKettle", "success_rate": 0.13},
+            {"env_name": "OpenCabinet", "success_rate": 0.07},
+            {"env_name": "PickPlaceDrawerToCounter", "success_rate": 0.07},
+            {"env_name": "TurnOnMicrowave", "success_rate": 0.07},
+            {"env_name": "CloseBlenderLid", "success_rate": 0.0},
+            {"env_name": "NavigateKitchen", "success_rate": 0.0}
+          ]
+        },
+        "composite_seen": {
+          "mean_success_rate": 0.05125,
+          "per_task": [
+            {"env_name": "PreSoakPan", "success_rate": 0.2},
+            {"env_name": "StackBowlsCabinet", "success_rate": 0.2},
+            {"env_name": "KettleBoiling", "success_rate": 0.07},
+            {"env_name": "RinseSinkBasin", "success_rate": 0.07},
+            {"env_name": "ScrubCuttingBoard", "success_rate": 0.07},
+            {"env_name": "SearingMeat", "success_rate": 0.07},
+            {"env_name": "StirVegetables", "success_rate": 0.07},
+            {"env_name": "StoreLeftoversInBowl", "success_rate": 0.07},
+            {"env_name": "DeliverStraw", "success_rate": 0.0},
+            {"env_name": "GetToastedBread", "success_rate": 0.0},
+            {"env_name": "LoadDishwasher", "success_rate": 0.0},
+            {"env_name": "PackIdenticalLunches", "success_rate": 0.0},
+            {"env_name": "PrepareCoffee", "success_rate": 0.0},
+            {"env_name": "SetUpCuttingStation", "success_rate": 0.0},
+            {"env_name": "SteamInMicrowave", "success_rate": 0.0},
+            {"env_name": "WashLettuce", "success_rate": 0.0}
+          ]
+        },
+        "composite_unseen": {
+          "mean_success_rate": 0.013125,
+          "per_task": [
+            {"env_name": "CuttingToolSelection", "success_rate": 0.07},
+            {"env_name": "RecycleBottlesByType", "success_rate": 0.07},
+            {"env_name": "WashFruitColander", "success_rate": 0.07},
+            {"env_name": "ArrangeBreadBasket", "success_rate": 0.0},
+            {"env_name": "ArrangeTea", "success_rate": 0.0},
+            {"env_name": "BreadSelection", "success_rate": 0.0},
+            {"env_name": "CategorizeCondiments", "success_rate": 0.0},
+            {"env_name": "GarnishPancake", "success_rate": 0.0},
+            {"env_name": "GatherTableware", "success_rate": 0.0},
+            {"env_name": "HeatKebabSandwich", "success_rate": 0.0},
+            {"env_name": "MakeIceLemonade", "success_rate": 0.0},
+            {"env_name": "PanTransfer", "success_rate": 0.0},
+            {"env_name": "PortionHotDogs", "success_rate": 0.0},
+            {"env_name": "SeparateFreezerRack", "success_rate": 0.0},
+            {"env_name": "WaffleReheat", "success_rate": 0.0},
+            {"env_name": "WeighIngredients", "success_rate": 0.0}
+          ]
+        }
+      }
+    }
+  }
+}
