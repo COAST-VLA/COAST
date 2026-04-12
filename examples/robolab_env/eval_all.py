@@ -103,9 +103,7 @@ def _resolve_task_list(args: Args) -> list[str]:
 
     if args.tag is not None:
         if args.tag not in ALL_TAGS:
-            raise ValueError(
-                f"Unknown tag {args.tag!r}. Available: {sorted(ALL_TAGS)}"
-            )
+            raise ValueError(f"Unknown tag {args.tag!r}. Available: {sorted(ALL_TAGS)}")
         return tasks_with_tag(args.tag)
 
     # No filter → all tasks.
@@ -122,17 +120,28 @@ def _build_command(
         sys.executable,
         os.path.join(os.path.dirname(__file__), "main.py"),
         "--headless",
-        "--host", args.host,
-        "--port", str(args.port),
-        "--task-name", task_name,
-        "--instruction-type", args.instruction_type,
-        "--num-envs", str(args.num_envs),
-        "--num-runs", str(args.num_runs),
-        "--replan-steps", str(args.replan_steps),
-        "--resize-size", str(args.resize_size),
-        "--seed", str(args.seed),
-        "--device", args.device,
-        "--output-dir", output_dir,
+        "--host",
+        args.host,
+        "--port",
+        str(args.port),
+        "--task-name",
+        task_name,
+        "--instruction-type",
+        args.instruction_type,
+        "--num-envs",
+        str(args.num_envs),
+        "--num-runs",
+        str(args.num_runs),
+        "--replan-steps",
+        str(args.replan_steps),
+        "--resize-size",
+        str(args.resize_size),
+        "--seed",
+        str(args.seed),
+        "--device",
+        args.device,
+        "--output-dir",
+        output_dir,
     ]
     if args.max_steps is not None:
         cmd += ["--max-steps", str(args.max_steps)]
@@ -219,9 +228,9 @@ def _save_results(
         return
 
     valid = [
-        r for r in results_sorted
-        if isinstance(r["success_rate"], float)
-        and not math.isnan(r["success_rate"])
+        r
+        for r in results_sorted
+        if isinstance(r["success_rate"], float) and not math.isnan(r["success_rate"])
     ]
     mean_success = float(np.mean([r["success_rate"] for r in valid])) if valid else 0.0
 
@@ -292,9 +301,7 @@ def main() -> None:
     task_metadata = {name: idx for idx, name in enumerate(task_names)}
     results: list[dict] = []
 
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=args.num_workers
-    ) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.num_workers) as pool:
         futures = {
             pool.submit(
                 _run_one_task,
@@ -331,9 +338,9 @@ def main() -> None:
     _save_results(results, results_path, args, task_names, final=True)
 
     valid = [
-        r for r in results
-        if isinstance(r["success_rate"], float)
-        and not math.isnan(r["success_rate"])
+        r
+        for r in results
+        if isinstance(r["success_rate"], float) and not math.isnan(r["success_rate"])
     ]
     mean_success = float(np.mean([r["success_rate"] for r in valid])) if valid else 0.0
 
@@ -348,7 +355,9 @@ def main() -> None:
         len(results),
     )
     for r in sorted(results, key=lambda r: r["success_rate"], reverse=True):
-        rate_str = f"{r['success_rate']:.2f}" if not math.isnan(r["success_rate"]) else " NaN"
+        rate_str = (
+            f"{r['success_rate']:.2f}" if not math.isnan(r["success_rate"]) else " NaN"
+        )
         logger.info("  %-45s %s", r["task_name"], rate_str)
     logger.info("=" * 60)
     logger.info("Results saved to %s", results_path)
