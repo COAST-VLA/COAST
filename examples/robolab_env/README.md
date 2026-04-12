@@ -4,6 +4,9 @@
 
 Unlike robocasa/libero, RoboLab natively vectorizes episodes (`num_envs` parallel rollouts inside one Isaac Sim process), so `main.py` drives `num_envs` episodes per "run" and loops `num_runs` times. `num_envs=1` matches the robocasa/libero flow most closely.
 
+- `main.py` evaluates one RoboLab task.
+- `eval_all.py` evaluates all (or a filtered subset of) tasks, launching one `main.py` subprocess per task.
+
 ## Requirements
 
 | Dependency | Version |
@@ -74,6 +77,45 @@ examples/robolab_env/output/single-<instruction_type>/<task_name>/
 ```
 
 Each video tiles the external and wrist cameras side-by-side. Final `success_rate=A/B` is printed to stdout after the last run completes.
+
+#### All tasks (parallel subprocesses)
+
+`eval_all.py` runs every task (or a filtered subset) by launching one `main.py` subprocess per task. Each subprocess boots its own Isaac Sim process. Isaac Sim is heavy (~35 s boot, 10+ GB VRAM), so unlike robocasa/libero, **the default is ``--num_workers 1``** (sequential). Increase only if you have multiple GPUs.
+
+```bash
+cd examples/robolab_env
+
+# All 120 tasks, sequential (recommended for single GPU):
+OMNI_KIT_ACCEPT_EULA=YES uv run python eval_all.py --headless
+
+# Filter by tag:
+OMNI_KIT_ACCEPT_EULA=YES uv run python eval_all.py --headless --tag simple
+
+# Specific tasks:
+OMNI_KIT_ACCEPT_EULA=YES uv run python eval_all.py --headless \
+    --tasks BananaInBowlTask RubiksCubeTask
+
+# Parallel envs per task (RoboLab's native vectorization):
+OMNI_KIT_ACCEPT_EULA=YES uv run python eval_all.py --headless \
+    --num_envs 4 --num_runs 2   # 8 episodes per task
+```
+
+Output layout:
+
+```
+examples/robolab_env/output/<filter>-<instruction_type>/
+├── results.json
+├── parallel_logs/
+│   ├── task_000_BananaInBowlTask.log
+│   ├── task_001_RubiksCubeTask.log
+│   └── ...
+├── BananaInBowlTask/
+│   └── run_00_env00.mp4
+└── RubiksCubeTask/
+    └── run_00_env00.mp4
+```
+
+`results.json` is saved incrementally after each task completes. The final version is sorted by success rate, descending.
 
 ## Known Quirks
 
