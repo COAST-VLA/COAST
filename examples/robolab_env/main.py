@@ -226,6 +226,9 @@ def eval_task(
     successes: list[bool] = []
 
     for run_idx in range(args.num_runs):
+        # Double reset to let physics/rendering settle — matches robolab's
+        # own episode.py (run_episode calls env.reset() twice).
+        obs, _ = env.reset()
         obs, _ = env.reset()
         # One action plan deque per parallel env.
         action_plans: list[collections.deque] = [
