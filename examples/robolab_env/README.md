@@ -86,17 +86,17 @@ Each video tiles the external and wrist cameras side-by-side. Final `success_rat
 cd examples/robolab_env
 
 # All 120 tasks, sequential (recommended for single GPU):
-OMNI_KIT_ACCEPT_EULA=YES uv run python eval_all.py --headless
+OMNI_KIT_ACCEPT_EULA=YES uv run python eval_all.py
 
 # Filter by tag:
-OMNI_KIT_ACCEPT_EULA=YES uv run python eval_all.py --headless --tag simple
+OMNI_KIT_ACCEPT_EULA=YES uv run python eval_all.py --tag simple
 
 # Specific tasks:
-OMNI_KIT_ACCEPT_EULA=YES uv run python eval_all.py --headless \
+OMNI_KIT_ACCEPT_EULA=YES uv run python eval_all.py \
     --tasks BananaInBowlTask RubiksCubeTask
 
 # Parallel envs per task (RoboLab's native vectorization):
-OMNI_KIT_ACCEPT_EULA=YES uv run python eval_all.py --headless \
+OMNI_KIT_ACCEPT_EULA=YES uv run python eval_all.py \
     --num_envs 4 --num_runs 2   # 8 episodes per task
 ```
 
