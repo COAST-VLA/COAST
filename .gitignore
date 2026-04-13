@@ -14,6 +14,16 @@ pi05-libero-activations-v1-2000-15env/
 # Analysis outputs
 results/
 
+# Experiment rollout artifacts (videos, per-condition eval dirs).
+# Keep source, scripts, summary JSONs, and LaTeX tables.
+experiments/*/steering_results/*/
+!experiments/*/steering_results/scripts/
+!experiments/*/steering_results/logs/
+experiments/*/steering_results/logs/*.out
+experiments/*/steering_results/logs/*.err
+experiments/*/diagnostic_results/*/
+*.mp4
+
 # Debug artifacts
 *.pkl
 collection_log.txt

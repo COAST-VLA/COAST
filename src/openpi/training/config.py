@@ -715,6 +715,24 @@ _CONFIGS = [
             ),
         ),
     ),
+    TrainConfig(                                                                                                                                       
+        name="pi0_fast_metaworld",
+        # action_dim=4 (metaworld: dx,dy,dz,gripper - see MetaworldOutputs:65)
+        # action_horizon=32 to match pi05_metaworld in README                                                                                          
+        # max_token_len=250 (pi0_fast default; horizon=32 needs more tokens than libero's 180)                                                         
+        model=pi0_fast.Pi0FASTConfig(action_dim=4, action_horizon=32, max_token_len=250),                                                              
+        data=LeRobotMetaworldDataConfig(                                                                                                               
+            repo_id="brandonyang/metaworld_ml45",   # matches README & pi05_metaworld                                                                  
+            base_config=DataConfig(prompt_from_task=True),                                                                                             
+            extra_delta_transform=False,             # matches pi05_metaworld                                                                          
+        ),                                                                                                                                             
+        batch_size=512,                                                                                                                                
+        num_train_steps=2_501,                                                                                                                         
+        keep_period=500,                                                                                                                               
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "gs://openpi-assets/checkpoints/pi0_fast_base/params"                                                                                      
+        ),                                                                                                                                             
+    ), 
     TrainConfig(
         name="pi0_fast_droid",
         model=pi0_fast.Pi0FASTConfig(action_dim=8, action_horizon=10),
@@ -819,7 +837,9 @@ _CONFIGS = [
         ),
         # Note that we load the pi0-FAST base model checkpoint here.
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
-        num_train_steps=30_000,
+        keep_period = 500, 
+        num_train_steps=2_001,
+        batch_size = 512,
     ),
     TrainConfig(
         name="pi0_fast_libero_low_mem_finetune",

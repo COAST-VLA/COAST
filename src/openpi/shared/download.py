@@ -14,15 +14,53 @@ import fsspec
 import fsspec.generic
 import tqdm_loggable.auto as tqdm
 
-# Environment variable to control cache directory path, ~/.cache/openpi will be used by default.
+# Environment variable to control the unified data/cache root.
+# All downloaded models, HuggingFace caches, and GCS assets live under this directory.
+# Default: ~/.cache/openpi
 _OPENPI_DATA_HOME = "OPENPI_DATA_HOME"
-DEFAULT_CACHE_DIR = "~/.cache/openpi"
+DEFAULT_DATA_HOME = "~/.cache/openpi"
 
 logger = logging.getLogger(__name__)
 
 
+def get_data_home() -> pathlib.Path:
+    """Return the unified data/cache root directory.
+
+    Controlled by the OPENPI_DATA_HOME environment variable.
+    Defaults to ~/.cache/openpi.
+
+    All cached data lives under this root:
+      $OPENPI_DATA_HOME/
+        huggingface/        # HuggingFace hub, datasets, LeRobot, XET caches (HF_HOME)
+        openpi-assets/      # base model weights downloaded from gs://openpi-assets/
+        big_vision/         # PaliGemma tokenizer downloaded from gs://big_vision/
+    """
+    data_home = pathlib.Path(os.getenv(_OPENPI_DATA_HOME, DEFAULT_DATA_HOME)).expanduser().resolve()
+    data_home.mkdir(parents=True, exist_ok=True)
+    return data_home
+
+
+def _configure_hf_home() -> None:
+    """Set HF_HOME to $OPENPI_DATA_HOME/huggingface/ if not already set.
+
+    This ensures HuggingFace downloads (models, datasets, LeRobot, tokenizers)
+    live alongside OpenPI's own downloads under the same root.
+    """
+    if "HF_HOME" not in os.environ:
+        hf_home = get_data_home() / "huggingface"
+        hf_home.mkdir(parents=True, exist_ok=True)
+        os.environ["HF_HOME"] = str(hf_home)
+        logger.debug("Set HF_HOME=%s (derived from OPENPI_DATA_HOME)", hf_home)
+
+
+# Auto-configure HF_HOME at import time so that any subsequent HuggingFace
+# imports (transformers, datasets, lerobot) respect the unified cache root.
+_configure_hf_home()
+
+
 def get_cache_dir() -> pathlib.Path:
-    cache_dir = pathlib.Path(os.getenv(_OPENPI_DATA_HOME, DEFAULT_CACHE_DIR)).expanduser().resolve()
+    """Return the download cache directory (same as get_data_home())."""
+    cache_dir = get_data_home()
     cache_dir.mkdir(parents=True, exist_ok=True)
     _set_folder_permission(cache_dir)
     return cache_dir

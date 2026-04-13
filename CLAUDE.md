@@ -75,6 +75,43 @@ uv run ruff format .         # format
 
 Pre-commit hooks (ruff lint, ruff format, uv-lock) run automatically. Install with `pre-commit install`.
 
+## Unified Cache & Model Storage
+
+All downloaded models, HuggingFace caches, and GCS assets are consolidated under a **single root directory** controlled by the `OPENPI_DATA_HOME` environment variable (default: `~/.cache/openpi`).
+
+On this machine the physical location is `/vast/projects/ungar/stellar/miaom/.cache/openpi` (symlinked from `~/.cache/openpi`).
+
+```
+$OPENPI_DATA_HOME/                          # ~/.cache/openpi (default)
+├── huggingface/                            # HF_HOME — auto-set by download.py at import time
+│   ├── hub/                                # HuggingFace model hub cache
+│   ├── datasets/                           # HuggingFace datasets parquet cache (~33G)
+│   ├── lerobot/                            # LeRobot datasets (e.g. brandonyang/metaworld_ml45)
+│   ├── xet/                                # XET storage cache
+│   ├── token                               # HF auth token
+│   └── stored_tokens                       # HF stored tokens
+├── openpi-assets/                          # Base model weights downloaded from gs://openpi-assets/
+│   └── checkpoints/
+│       └── pi05_base/                      # (~12G) params, assets, etc.
+└── big_vision/                             # PaliGemma tokenizer downloaded from gs://big_vision/
+    └── paligemma_tokenizer.model           # (~4MB)
+```
+
+**How it works** (see `src/openpi/shared/download.py`):
+- `get_data_home()` returns the root. `get_cache_dir()` is an alias.
+- `_configure_hf_home()` runs at import time: if `HF_HOME` is not already set, it sets `HF_HOME=$OPENPI_DATA_HOME/huggingface/`. This ensures all HuggingFace downloads (transformers, datasets, LeRobot, XET) land under the same root.
+- `maybe_download(url)` downloads GCS URLs (e.g. `gs://openpi-assets/...`) into `$OPENPI_DATA_HOME/{netloc}/{path}`.
+
+**Training outputs** (checkpoints, assets, activations) default to **relative paths** from the working directory:
+- Checkpoints: `./checkpoints/{config_name}/{exp_name}/{step}/` (configurable via `--checkpoint_base_dir`)
+- Assets/norm stats: `./assets/{config_name}/` (configurable via `--assets_base_dir`)
+- Activations: `./activations/` (configurable via `--output_dir`)
+
+**To override the cache root**, set `OPENPI_DATA_HOME` before running any script:
+```bash
+export OPENPI_DATA_HOME=/path/to/unified/cache
+```
+
 ## Architecture
 
 ### Model Layer (`src/openpi/models/`)
