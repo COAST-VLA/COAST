@@ -5,50 +5,105 @@ on:
       - "*"
   workflow_dispatch:
 
+# Split main, libero_env, and robocasa_env into separate jobs so they don't
+# compete for the same ~14 GB of runner disk space. Each job gets a fresh VM.
 jobs:
-  test:
-    name: Tests (CPU)
-    runs-on: ubuntu-latest
+  test-main:
+    name: Tests (main, CPU)
+    runs-on: ubuntu-24.04
     env:
       GIT_LFS_SKIP_SMUDGE: true
       # Force JAX onto CPU. The runner has no GPU; setting this explicitly
       # avoids any ambiguity and keeps `jax.device_count() == 1` so data-loader
       # tests with small batch sizes don't try to shard across multiple devices.
       JAX_PLATFORMS: cpu
-      # Software-rendered MuJoCo via mesa's osmesa. Used by the libero_env
-      # tests below; works on a CPU-only runner with libosmesa6 installed.
+    steps:
+      - uses: actions/checkout@v6
+        # Main openpi tests don't need libero/robocasa/robosuite submodules.
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.5.14"
+          enable-cache: true
+
+      - name: Install the project
+        # Drop --all-extras: the `rlds` extra pulls in ~500 MB of tensorflow-cpu
+        # and tensorflow-datasets that no tests actually use. Keep --dev for pytest.
+        # uv will auto-install Python 3.11 per .python-version.
+        run: uv sync --dev
+
+      - name: Run main openpi tests
+        run: uv run pytest --strict-markers -m "not manual"
+
+  test-libero:
+    name: Tests (libero_env, CPU)
+    runs-on: ubuntu-24.04
+    env:
+      GIT_LFS_SKIP_SMUDGE: true
+      JAX_PLATFORMS: cpu
+      # Software-rendered MuJoCo via mesa's osmesa; works on CPU-only runners.
       MUJOCO_GL: osmesa
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
-          # libero / robocasa / robosuite are installed editable from third_party/
-          # so the libero_env and robocasa_env steps need the submodules cloned.
+          # libero / robosuite are installed editable from third_party/.
           submodules: recursive
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libosmesa6
+          sudo apt-get install -y --no-install-recommends ffmpeg libosmesa6
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Set up Python
-        run: uv python install
-
-      - name: Install the project
-        run: uv sync --all-extras --dev
-
-      - name: Run main openpi tests
-        run: uv run pytest --strict-markers -m "not manual"
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.5.14"
+          enable-cache: true
 
       - name: Sync libero_env venv
         working-directory: examples/libero_env
+        # uv will auto-download Python 3.8 per the pyproject.toml requires-python.
         run: uv sync
 
       - name: Run libero_env tests
         working-directory: examples/libero_env
         run: uv run pytest -v
+
+  test-robocasa:
+    name: Tests (robocasa_env, CPU)
+    runs-on: ubuntu-24.04
+    env:
+      GIT_LFS_SKIP_SMUDGE: true
+      JAX_PLATFORMS: cpu
+      MUJOCO_GL: osmesa
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # robocasa / robosuite are installed editable from third_party/.
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg libosmesa6
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.5.14"
+          enable-cache: true
 
       - name: Sync robocasa_env venv
         working-directory: examples/robocasa_env
