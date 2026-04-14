@@ -123,7 +123,7 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
 
 
 def create_default_policy(
-    env: EnvMode, *, default_prompt: str | None = None, torch_compile: bool = True
+    env: EnvMode, *, default_prompt: str | None = None, torch_compile: bool = False
 ) -> _policy.Policy:
     """Create a default policy for the given environment."""
     if checkpoint := DEFAULT_CHECKPOINT.get(env):

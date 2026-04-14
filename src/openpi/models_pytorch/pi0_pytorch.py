@@ -120,17 +120,17 @@ def make_att_2d_masks(pad_masks, att_masks):
 
 
 class PI0Pytorch(nn.Module):
-    def __init__(self, config, *, torch_compile: bool = True):
+    def __init__(self, config, *, torch_compile: bool = False):
         """Construct a pi0/pi0.5 PyTorch model.
 
         Args:
             config: Model config (Pi0Config).
-            torch_compile: If True (default), wrap ``sample_actions`` with
+            torch_compile: If True, wrap ``sample_actions`` with
                 ``torch.compile(mode="max-autotune")`` for ~2x inference throughput
-                at the cost of a 30-60s first-call warmup. Disable when using
-                forward hooks via ``sample_actions_with_steering`` or
-                ``sample_actions_with_intermediates`` if those call paths don't
-                suffice for your workload.
+                at the cost of a 30-60s first-call warmup. Off by default — opt in
+                explicitly for baseline-only inference workloads. Irrelevant for
+                forward-hook based paths (``sample_actions_with_steering``,
+                ``sample_actions_with_intermediates``) which are never compiled.
         """
         super().__init__()
         self.config = config
