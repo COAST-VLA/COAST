@@ -8,7 +8,6 @@ uv run scripts/serve_policy.py policy:checkpoint \
 import dataclasses
 import enum
 import logging
-import os
 import pathlib
 import socket
 
@@ -123,11 +122,16 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
 }
 
 
-def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) -> _policy.Policy:
+def create_default_policy(
+    env: EnvMode, *, default_prompt: str | None = None, torch_compile: bool = True
+) -> _policy.Policy:
     """Create a default policy for the given environment."""
     if checkpoint := DEFAULT_CHECKPOINT.get(env):
         return _policy_config.create_trained_policy(
-            _config.get_config(checkpoint.config), checkpoint.dir, default_prompt=default_prompt
+            _config.get_config(checkpoint.config),
+            checkpoint.dir,
+            default_prompt=default_prompt,
+            torch_compile=torch_compile,
         )
     raise ValueError(f"Unsupported environment mode: {env}")
 
@@ -141,10 +145,13 @@ def create_policy(args: Args) -> _policy.Policy:
 
                 ensure_pytorch_checkpoint(args.policy.dir, args.policy.config)
             return _policy_config.create_trained_policy(
-                _config.get_config(args.policy.config), args.policy.dir, default_prompt=args.default_prompt
+                _config.get_config(args.policy.config),
+                args.policy.dir,
+                default_prompt=args.default_prompt,
+                torch_compile=args.torch_compile,
             )
         case Default():
-            return create_default_policy(args.env, default_prompt=args.default_prompt)
+            return create_default_policy(args.env, default_prompt=args.default_prompt, torch_compile=args.torch_compile)
 
 
 def main(args: Args) -> None:
@@ -159,11 +166,6 @@ def main(args: Args) -> None:
             raise ValueError("--steer requires --pytorch (sample_actions_with_steering is PyTorch-only).")
         if args.collect_activations:
             raise ValueError("--steer and --collect_activations are mutually exclusive.")
-
-    # torch.compile is off by default. The model's __init__ checks TORCH_COMPILE_DISABLE
-    # and skips the compile wrap when set. Must be set before create_policy() below.
-    if not args.torch_compile:
-        os.environ["TORCH_COMPILE_DISABLE"] = "1"
 
     policy = create_policy(args)
 

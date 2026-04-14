@@ -17,15 +17,11 @@ Usage (from repo root)::
 # ruff: noqa: DTZ003, DTZ005, E741, FBT001, FBT002, N806, PT018, RUF001, RUF002, RUF003
 from __future__ import annotations
 
-import os
-
-# Set BEFORE importing torch — torch.compile breaks forward hooks.
-os.environ["TORCH_COMPILE_DISABLE"] = "1"
-
 import dataclasses
 import datetime
 import json
 import logging
+import os
 import pathlib
 import re
 import socket
@@ -198,7 +194,7 @@ def main(args: Args) -> None:
 
     ensure_pytorch_checkpoint(args.checkpoint_dir, args.config)
     train_config = _config.get_config(args.config)
-    policy = _policy_config.create_trained_policy(train_config, args.checkpoint_dir)
+    policy = _policy_config.create_trained_policy(train_config, args.checkpoint_dir, torch_compile=False)
     device = str(policy._pytorch_device)  # noqa: SLF001
 
     wrapper = SteeredPolicyWrapper(policy, conceptor_npz_path=CONCEPTOR_NPZ, device=device)

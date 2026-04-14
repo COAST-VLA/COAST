@@ -1,7 +1,6 @@
 import inspect
 import logging
 import math
-import os
 from pathlib import Path
 import shutil
 import sys
@@ -121,7 +120,18 @@ def make_att_2d_masks(pad_masks, att_masks):
 
 
 class PI0Pytorch(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, *, torch_compile: bool = True):
+        """Construct a pi0/pi0.5 PyTorch model.
+
+        Args:
+            config: Model config (Pi0Config).
+            torch_compile: If True (default), wrap ``sample_actions`` with
+                ``torch.compile(mode="max-autotune")`` for ~2x inference throughput
+                at the cost of a 30-60s first-call warmup. Disable when using
+                forward hooks via ``sample_actions_with_steering`` or
+                ``sample_actions_with_intermediates`` if those call paths don't
+                suffice for your workload.
+        """
         super().__init__()
         self.config = config
         self.pi05 = config.pi05
@@ -148,11 +158,7 @@ class PI0Pytorch(nn.Module):
             self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
         torch.set_float32_matmul_precision("high")
-        # Opt-in: set TORCH_COMPILE_DISABLE=1 (the default in scripts/serve_policy.py)
-        # to skip. torch.compile gives a ~2x speedup on baseline sample_actions but
-        # trades 30-60s first-call warmup and is incompatible with some hook
-        # patterns (activation collection / steering work fine on eager).
-        if not os.environ.get("TORCH_COMPILE_DISABLE"):
+        if torch_compile:
             self.sample_actions = torch.compile(self.sample_actions, mode="max-autotune")
 
         # Initialize gradient checkpointing flag
