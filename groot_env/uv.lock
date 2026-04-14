@@ -344,7 +344,7 @@ name = "decord"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "sys_platform != 'darwin'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/11/79/936af42edf90a7bd4e41a6cac89c913d4b47fa48a26b042d5129a9242ee3/decord-0.6.0-py3-none-manylinux2010_x86_64.whl", hash = "sha256:51997f20be8958e23b7c4061ba45d0efcd86bffd5fe81c695d0befee0d442976", size = 13602299, upload-time = "2021-06-14T21:30:55.486Z" },
@@ -421,7 +421,7 @@ name = "eva-decord"
 version = "0.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "sys_platform == 'darwin'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/f5/9dff2cab03be3eb59c7ffc64e7c5573f9c4d303c7692efecf8f4a1e05895/eva_decord-0.6.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:a81c49d11c3f93c23b40fb106854d6c0b5548508e4b7971ade50c4d1ae4ad68f", size = 12948253, upload-time = "2023-04-20T05:52:33.658Z" },
@@ -797,7 +797,7 @@ dev = [
 requires-dist = [
     { name = "gr00t", extras = ["base"], editable = "../third_party/Isaac-GR00T" },
     { name = "openpi-client", editable = "../packages/openpi-client" },
-    { name = "tyro" },
+    { name = "tyro", specifier = ">=0.8" },
 ]
 
 [package.metadata.requires-dev]
