@@ -114,3 +114,46 @@ jobs:
         # The TestRobocasaEnv class is marked manual because it needs the
         # ~10 GB kitchen assets download, which is impractical for CI.
         run: uv run pytest --strict-markers -m "not manual" -v
+
+  test-groot-env:
+    name: Tests (groot_env, CPU)
+    runs-on: ubuntu-24.04
+    env:
+      GIT_LFS_SKIP_SMUDGE: true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # gr00t is installed editable from third_party/Isaac-GR00T.
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.5.14"
+          enable-cache: true
+
+      - name: Sync groot_env venv
+        working-directory: groot_env
+        # groot_env/pyproject.toml deliberately omits flash-attn from main deps
+        # because building it needs CUDA/nvcc. CI only runs the stub-based
+        # unit tests in groot_env/tests/, which don't construct the real model
+        # and don't need flash-attn. Production serve-time installs follow the
+        # extra `uv pip install --no-build-isolation flash-attn==2.7.1.post4`
+        # step documented in groot_env/README.md.
+        run: uv sync
+
+      - name: Run groot_env tests
+        working-directory: groot_env
+        # test_groot_activations.py auto-skips if ACTIVATIONS_DIR isn't set
+        # (it validates an already-collected activation dataset, which we
+        # don't ship in CI). test_groot_adapter.py and
+        # test_groot_activation_collector.py are pure unit tests and run
+        # without a GPU, a checkpoint, or network access.
+        run: uv run pytest -v
