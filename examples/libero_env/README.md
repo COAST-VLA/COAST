@@ -356,13 +356,14 @@ toward the subspace of successful rollouts. The end-user surface is one flag:
        --repo-type dataset --local-dir conceptors/
    ```
 
-2. Start a steering-capable server (note `--pytorch --steer`; the server sets
-   `TORCH_COMPILE_DISABLE=1` itself because hooks are incompatible with compile):
+2. Start a steering-capable server. `--steer` requires `--pytorch` and
+   `--conceptor_npz`; `torch.compile` is off by default (needed for hooks):
 
    ```bash
-   uv run scripts/serve_policy.py policy:checkpoint \
-       --policy.config pi05_libero --policy.dir checkpoints/openpi-libero-2000 \
-       --env LIBERO --pytorch --steer
+   uv run scripts/serve_policy.py --pytorch --steer \
+       --conceptor_npz conceptors/libero_conceptors.npz \
+       policy:checkpoint \
+       --policy.config pi05_libero --policy.dir checkpoints/openpi-libero-2000
    ```
 
    The same `--steer` server happily serves baseline (unsteered) clients too —

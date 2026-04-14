@@ -27,15 +27,6 @@ class EnvMode(enum.Enum):
     ALOHA_SIM = "aloha_sim"
     DROID = "droid"
     LIBERO = "libero"
-    ROBOCASA = "robocasa"
-
-
-# Default conceptor NPZ paths keyed by --env when --steer is set.
-# Override with --conceptor_npz to point at a different file.
-DEFAULT_CONCEPTOR_NPZ: dict[EnvMode, str] = {
-    EnvMode.LIBERO: "conceptors/libero_conceptors.npz",
-    EnvMode.ROBOCASA: "conceptors/robocasa_conceptors.npz",
-}
 
 
 @dataclasses.dataclass
@@ -91,10 +82,12 @@ class Args:
     # Enable conceptor steering. When set, the server wraps the policy in
     # SteeredPolicyWrapper and dispatches on obs["__steering__"] (see
     # src/openpi/serving/steering.py). Implies --pytorch
-    # (sample_actions_with_steering is PyTorch-only).
+    # (sample_actions_with_steering is PyTorch-only) and requires
+    # --conceptor_npz.
     steer: bool = False
-    # Override the default conceptor NPZ path. If None, looks up a default based on --env
-    # (DEFAULT_CONCEPTOR_NPZ). Only used when --steer is set.
+    # Path to the conceptor NPZ. Required when --steer is set.
+    # Download from brandonyang/libero-conceptors or brandonyang/robocasa-conceptors,
+    # or rebuild via experiments/{libero,robocasa}/compute_conceptors.py.
     conceptor_npz: str | None = None
 
     # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
@@ -166,6 +159,12 @@ def main(args: Args) -> None:
             raise ValueError("--steer requires --pytorch (sample_actions_with_steering is PyTorch-only).")
         if args.collect_activations:
             raise ValueError("--steer and --collect_activations are mutually exclusive.")
+        if args.conceptor_npz is None:
+            raise ValueError(
+                "--steer requires --conceptor_npz <path>. "
+                "Download from brandonyang/libero-conceptors or brandonyang/robocasa-conceptors, "
+                "or rebuild via experiments/{libero,robocasa}/compute_conceptors.py."
+            )
 
     policy = create_policy(args)
 
@@ -189,15 +188,9 @@ def main(args: Args) -> None:
     if args.steer:
         from openpi.serving.steering import SteeredPolicyWrapper
 
-        npz_path = args.conceptor_npz or DEFAULT_CONCEPTOR_NPZ.get(args.env)
-        if npz_path is None:
-            raise ValueError(
-                f"--steer with --env={args.env.value} has no default conceptor NPZ. "
-                f"Pass --conceptor_npz explicitly. Supported defaults: {list(DEFAULT_CONCEPTOR_NPZ)}"
-            )
         device = str(policy._pytorch_device)  # noqa: SLF001
-        logging.info("Steering enabled: loading conceptor NPZ from %s (device=%s)", npz_path, device)
-        policy = SteeredPolicyWrapper(policy, conceptor_npz_path=npz_path, device=device)
+        logging.info("Steering enabled: loading conceptor NPZ from %s (device=%s)", args.conceptor_npz, device)
+        policy = SteeredPolicyWrapper(policy, conceptor_npz_path=args.conceptor_npz, device=device)
 
     policy_metadata = policy.metadata
 

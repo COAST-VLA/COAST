@@ -67,10 +67,11 @@ uv run python experiments/robocasa/find_best_configs.py \
 
 ```bash
 # Server
-uv run scripts/serve_policy.py policy:checkpoint \
+uv run scripts/serve_policy.py --pytorch --steer \
+    --conceptor_npz conceptors/robocasa_conceptors.npz \
+    policy:checkpoint \
     --policy.config pi05_robocasa \
-    --policy.dir checkpoints/pi05_pretrain_human300/multitask_learning/75000 \
-    --env ROBOCASA --pytorch --steer
+    --policy.dir checkpoints/pi05_pretrain_human300/multitask_learning/75000
 
 # Eval
 cd examples/robocasa_env
@@ -90,7 +91,7 @@ Pipeline is identical to LIBERO's (see `experiments/libero/README.md` →
 
 ```bash
 # 1. Collection server
-uv run scripts/serve_policy.py --env ROBOCASA --pytorch --collect_activations \
+uv run scripts/serve_policy.py --pytorch --collect_activations \
     --output_dir activations \
     policy:checkpoint --policy.config pi05_robocasa \
     --policy.dir checkpoints/pi05_pretrain_human300/multitask_learning/75000

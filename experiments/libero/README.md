@@ -103,9 +103,10 @@ Verify the winners reproduce under `eval_all.py`:
 
 ```bash
 # Terminal 1 — steering-aware server
-uv run scripts/serve_policy.py policy:checkpoint \
-    --policy.config pi05_libero --policy.dir checkpoints/openpi-libero-2000 \
-    --env LIBERO --pytorch --steer
+uv run scripts/serve_policy.py --pytorch --steer \
+    --conceptor_npz conceptors/libero_conceptors.npz \
+    policy:checkpoint \
+    --policy.config pi05_libero --policy.dir checkpoints/openpi-libero-2000
 
 # Terminal 2 — eval all tasks using the tuned configs
 cd examples/libero_env
@@ -128,8 +129,7 @@ when the checkpoint changes. Normal sweep workflow (above) never needs it.
 1. Start a collection-mode server (writes per-step hidden states to disk):
 
    ```bash
-   uv run scripts/serve_policy.py \
-       --env LIBERO --pytorch --collect_activations \
+   uv run scripts/serve_policy.py --pytorch --collect_activations \
        --output_dir activations \
        policy:checkpoint --policy.config pi05_libero \
        --policy.dir checkpoints/openpi-libero-2000

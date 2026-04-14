@@ -172,10 +172,11 @@ hf download brandonyang/robocasa-conceptors robocasa_conceptors.npz \
     --repo-type dataset --local-dir conceptors/
 
 # Server (from repo root)
-uv run scripts/serve_policy.py policy:checkpoint \
+uv run scripts/serve_policy.py --pytorch --steer \
+    --conceptor_npz conceptors/robocasa_conceptors.npz \
+    policy:checkpoint \
     --policy.config pi05_robocasa \
-    --policy.dir checkpoints/pi05_pretrain_human300/multitask_learning/75000 \
-    --env ROBOCASA --pytorch --steer
+    --policy.dir checkpoints/pi05_pretrain_human300/multitask_learning/75000
 ```
 
 ### Single env, default steering
