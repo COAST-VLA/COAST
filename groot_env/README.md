@@ -97,35 +97,45 @@ That's it. Videos + `results.json` go under `output/...` exactly as for pi05.
 
 ## Activation collection
 
-`serve.py --collect-activations` wraps the policy in `activation_collector.CollectingPolicy`, which rejects plain inference requests and only accepts calls carrying `__collect__` or `__finalize_episode__` magic keys. The robocasa client's `--collect` flag already emits these (see `openpi_client.collection_session.CollectionSession`).
+`serve.py --collect-activations` wraps the policy in `groot_activation_collector.CollectingPolicy`, which rejects plain inference requests and only accepts calls carrying `__collect__` or `__finalize_episode__` magic keys. The robocasa client's `--collect` flag already emits these (see `openpi_client.collection_session.CollectionSession`).
 
-The on-disk layout mirrors pi0's `activations_v1` schema where possible, with GR00T-specific renames for the per-step `.npz` files:
+Collection structure mirrors pi0's `sample_actions_with_intermediates` layout one-for-one — hybrid re-implemented denoising loop with forward hooks on the per-layer residuals and MLP expansion. Output files:
 
 ```
 <output_dir>/checkpoint-120000/<task_name>/episode_NNN_env_NNN/
-├── metadata.json            # task_name, episode_id, episode_success, total_reward, total_inference_steps, prompt, …
-├── rewards.npz              # per_step_reward, cumulative_reward, success_at_step
+├── metadata.json              # task_name, episode_id, episode_success, total_reward, total_inference_steps, prompt, …
+├── rewards.npz                # per_step_reward, cumulative_reward, success_at_step
 └── step_NNNN/
-    ├── metadata.json        # step, inference_step, cumulative_reward, success_so_far
-    ├── denoising.npz        # all_x_t (D+1,H,A) fp32, all_v_t (D,H,A) fp32
-    ├── backbone_cond.npz    # backbone_features (S,C) fp16 — VL backbone output, GR00T analog of pi0's adarms_cond
-    └── dit_hidden_states.npz  # all_dit_hidden_states (D,L+1,S,C) fp16 — DiT per-layer residuals, pi0 analog: suffix_residual
+    ├── metadata.json          # step, inference_step, cumulative_reward, success_so_far
+    ├── denoising.npz          # all_x_t (D,H,A) fp32, all_v_t (D,H,A) fp32                (pi0 schema: same)
+    ├── backbone_cond.npz      # backbone_features (S,C) fp16                              (pi0 analog: adarms_cond; see note below)
+    ├── dit_hidden_states.npz  # all_dit_hidden_states (D,L,S,C) fp16                      (pi0 analog: suffix_residual)
+    └── dit_mlp_hidden.npz     # all_dit_mlp_hidden (D,L,S,F) fp16                         (pi0 analog: suffix_mlp_hidden)
 ```
 
-Why this differs from pi0's schema: GR00T uses cross-attention to a variable-length VL backbone sequence instead of pi0's pooled AdaRMS conditioning, and captures the full DiT residual stream (16 layers + input) instead of just pi0's 4 "suffix" layers. GR00T's `suffix_mlp_hidden` analog is not captured by default — adding it would roughly double the per-step disk and require forward hooks on each `BasicTransformerBlock.ff`.
+where `D = num_denoising_steps`, `L = num_dit_layers`, `H = action_horizon`, `A = padded_action_dim`, `S = state+future+action token count`, `C = dit_hidden_dim`, `F = ff_inner_dim`.
+
+**Difference from pi0's schema**: GR00T uses cross-attention from the DiT to a VL backbone sequence that's computed once per inference (not per denoising step), whereas pi0 uses AdaRMS with a pooled conditioning vector that varies per step. So `backbone_cond.npz` has shape `(seq, hidden)` — the VL sequence — while pi0's `adarms_cond.npz` has shape `(num_steps, hidden)`. Everything else (`denoising`, per-layer residuals, MLP hidden) matches pi0's schema semantically, with shapes reflecting the N1.5 DiT's 16 layers + 4 denoising steps vs pi0's 4 suffix layers + 10 denoising steps.
 
 ### Verifying activations
 
-```bash
-# Fast schema + shape + finiteness check (parses every .npz).
-uv run python verify_activations.py ../groot_n15-robocasa-activations-v1-15env
+Env-var-driven pytest suite (skipped in CI when `ACTIVATIONS_DIR` is unset):
 
-# pytest suite — same shape as tests/test_activations.py for pi0.
+```bash
+# Deep invariants for ONE task: directory layout, metadata fields,
+# reward array/length agreement, dtype/shape strictness, flow-matching norm
+# signature, cross-episode variation.
 ACTIVATIONS_DIR=../groot_n15-robocasa-activations-v1-15env/checkpoint-120000/OpenDrawer \
     uv run pytest tests/test_groot_activations.py -v
 ```
 
-`tests/test_groot_activations.py` covers directory layout, metadata fields, reward-array/length agreement, the flow-matching signature (x_t norm decreases across denoising steps), and cross-episode variation.
+To sweep all tasks in a dataset, loop the same command:
+
+```bash
+for task in ../groot_n15-robocasa-activations-v1-15env/checkpoint-120000/*/; do
+    ACTIVATIONS_DIR="$task" uv run pytest tests/test_groot_activations.py -v
+done
+```
 
 ---
 
@@ -146,10 +156,18 @@ Robocasa's published N1.5 multitask atomic-seen average is **43.0%** over all 18
 
 ---
 
+## Known limitations
+
+1. **Image resolution upsampling**. The pi0-compatible openpi robocasa client sends 224×224 images (pi05's training resolution). N1.5's robocasa head expects 256×256 per its modality config, so `groot_adapter._resize_to_256` upscales via `cv2.INTER_LINEAR` before inference. Rendering the env natively at 256×256 would be marginally better but would require either (a) client-side `--resize_size 256` (breaks pi05 compat) or (b) an env-wrapper change.
+2. **Fixed action horizon, short client replan**. The DiT always produces a 16-step action chunk; the robocasa client uses `replan_steps=5`, so 11 of 16 predicted steps are recomputed every call. Only a perf tax — correctness is unaffected.
+3. **Right-view cross-camera fallback**. `build_robocasa_videos` prefers `observation/image2` (agentview_right) when the client sends it. Older clients without `observation/image2` fall back to duplicating `observation/image` as the right view, which degrades the stereo signal N1.5 was trained on but keeps the 3-channel shape contract. The openpi robocasa `main.py` in this repo emits `observation/image2` by default, so this fallback path isn't hit in normal use.
+
 ## How this integrates (for reference)
 
 - `serve.py` — thin wrapper that loads the checkpoint and starts a `WebsocketPolicyServer`. Mirrors `scripts/serve_policy.py` on the pi0 side.
-- `groot_adapter.py` — `GR00TAdapterPolicy(BasePolicy)` that translates openpi's flat `observation/*`-keyed client dict to GR00T's nested `{video, state, language}` dict, runs `Gr00tPolicy.get_action`, and concatenates GR00T's per-action-key dict back to a single `(action_horizon, action_dim)` array under the `"actions"` key.
-- `activation_collector.py` — the CollectingPolicy wrapper that serializes per-step intermediates. Shares its on-disk schema with `src/openpi/serving/activation_collector.py` where the semantics match.
-- `websocket_policy_server.py` — copied verbatim from `src/openpi/serving/` so `groot_env/` can serve without pulling in JAX/flax.
-- `tests/test_groot_activations.py` — GR00T N1.5 analog of `tests/test_activations.py` for the different schema.
+- `groot_adapter.py` — `GR00TAdapterPolicy(BasePolicy)` translating openpi's flat `observation/*`-keyed client dict to GR00T's nested `{video, state, language}` dict, running `Gr00tPolicy.get_action`, concatenating the per-action-key dict back to a single `(action_horizon, action_dim)` array under `"actions"`. Also houses `_get_action_with_intermediates`, a hybrid re-implementation + hook-based collector matching pi0's `sample_actions_with_intermediates` pattern.
+- `groot_activation_collector.py` — `CollectingPolicy` wrapper that dispatches `__collect__` / `__finalize_episode__` magic keys and writes the per-step/per-episode .npz files. Schema matches pi0's semantically; only file names and shapes differ per the architecture.
+- `websocket_policy_server.py` — copied verbatim from `src/openpi/serving/` (sha noted in its header) so `groot_env/` can serve without pulling in JAX/flax.
+- `tests/test_groot_adapter.py` — unit tests for translation logic + a `@pytest.mark.manual` real-model equivalence test that asserts `_get_action_with_intermediates` is bit-identical to `Gr00tPolicy.get_action`.
+- `tests/test_groot_activation_collector.py` — stub-based unit tests for writers + dispatcher, analog of pi0's `tests/test_activation_collector.py`.
+- `tests/test_groot_activations.py` — post-collection dataset validator (one task dir at a time, driven by `ACTIVATIONS_DIR`), analog of pi0's `tests/test_activations.py`.

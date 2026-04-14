@@ -44,3 +44,6 @@ select = ["I"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "manual: slow test that requires a real checkpoint + GPU; skipped in CI",
+]

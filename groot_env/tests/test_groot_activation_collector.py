@@ -1,11 +1,11 @@
-"""Unit tests for groot_env/activation_collector.py.
+"""Unit tests for groot_env/groot_activation_collector.py.
 
 Groot-side analog of `tests/test_activation_collector.py`. Stub-based: no GPU,
 no model, no checkpoint. Covers:
 
 - `save_step_activations` writes the GR00T schema (denoising.npz,
-  backbone_cond.npz, dit_hidden_states.npz, metadata.json) with correct
-  env-id slicing
+  backbone_cond.npz, dit_hidden_states.npz, dit_mlp_hidden.npz,
+  metadata.json) with correct env-id slicing
 - `save_episode_files` writes rewards.npz + metadata.json
 - `CollectingPolicy.infer` dispatch:
     - rejects plain requests (no magic keys)
@@ -25,7 +25,7 @@ import pathlib
 import numpy as np
 import pytest
 
-from activation_collector import (
+from groot_activation_collector import (
     CollectingPolicy,
     save_episode_files,
     save_step_activations,
@@ -38,17 +38,24 @@ def _fake_groot_intermediates(num_denoising: int = 4, batch: int = 1) -> dict:
     """Mimic the shapes returned by GR00TAdapterPolicy.infer_with_intermediates.
 
     See `groot_adapter._get_action_with_intermediates` for the real producer.
-    Shapes below are the robocasa N1.5 defaults: action_horizon=16,
-    action_dim=32 (padded), vl_seq_len=8 (tiny stub), vl_hidden=16 (stub),
-    num_dit_layers=16, sa_seq_len=10 (stub), dit_hidden=32 (stub).
+    Shapes below are the robocasa N1.5 defaults:
+      - action_horizon=16, action_dim=32 (padded)
+      - vl_seq_len=8 (stub), vl_hidden=16 (stub)
+      - num_dit_layers=16, sa_seq_len=10 (stub), dit_hidden=32 (stub), ff_inner=128 (stub)
+    `all_x_t` and `all_v_t` both have num_denoising entries (NOT num_denoising+1)
+    to match pi0's `sample_actions_with_intermediates` convention. The DiT layer
+    axis is exactly num_layers (no leading-input entry), also matching pi0.
     """
     return {
-        "all_x_t": np.random.randn(num_denoising + 1, batch, 16, 32).astype(np.float32),
+        "all_x_t": np.random.randn(num_denoising, batch, 16, 32).astype(np.float32),
         "all_v_t": np.random.randn(num_denoising, batch, 16, 32).astype(np.float32),
         "backbone_features": np.random.randn(batch, 8, 16).astype(np.float16),
         "all_dit_hidden_states": np.random.randn(
-            num_denoising, 17, batch, 10, 32
+            num_denoising, 16, batch, 10, 32
         ).astype(np.float16),
+        "all_dit_mlp_hidden": np.random.randn(num_denoising, 16, batch, 10, 128).astype(
+            np.float16
+        ),
     }
 
 
@@ -84,6 +91,7 @@ class TestSaveStepActivations:
             "denoising.npz",
             "backbone_cond.npz",
             "dit_hidden_states.npz",
+            "dit_mlp_hidden.npz",
             "metadata.json",
         ):
             assert (step_dir / fname).exists(), f"missing {fname}"
@@ -103,6 +111,10 @@ class TestSaveStepActivations:
         dh = np.load(step_dir / "dit_hidden_states.npz")
         np.testing.assert_array_equal(
             dh["all_dit_hidden_states"], interm["all_dit_hidden_states"][:, :, 1]
+        )
+        dm = np.load(step_dir / "dit_mlp_hidden.npz")
+        np.testing.assert_array_equal(
+            dm["all_dit_mlp_hidden"], interm["all_dit_mlp_hidden"][:, :, 1]
         )
 
     def test_metadata_json_content(self, tmp_path: pathlib.Path):
@@ -206,6 +218,7 @@ class TestCollectingPolicyDispatch:
         assert (step_dir / "denoising.npz").exists()
         assert (step_dir / "backbone_cond.npz").exists()
         assert (step_dir / "dit_hidden_states.npz").exists()
+        assert (step_dir / "dit_mlp_hidden.npz").exists()
 
     def test_finalize_writes_episode_files(self, tmp_path: pathlib.Path):
         policy, stub = _make_policy(tmp_path)
@@ -317,5 +330,6 @@ class TestCollectionSessionRoundtrip:
             assert (step_dir / "denoising.npz").exists()
             assert (step_dir / "backbone_cond.npz").exists()
             assert (step_dir / "dit_hidden_states.npz").exists()
+            assert (step_dir / "dit_mlp_hidden.npz").exists()
         assert (ep_dir / "metadata.json").exists()
         assert (ep_dir / "rewards.npz").exists()

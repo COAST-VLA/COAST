@@ -126,16 +126,42 @@ class TestBuildRobocasaVideos:
             assert arr.shape == (256, 256, 3)
             assert arr.dtype == np.uint8
 
-    def test_left_duplicated_as_right(self):
-        # The openpi client only sends agentview_left + wrist, so the adapter
-        # copies the left view into the right-view slot to satisfy the model's
-        # 3-camera input. Verify the left and right ndarrays share values.
+    def test_left_duplicated_as_right_when_no_image2(self):
+        # Fallback: client sends only agentview_left + wrist (older client
+        # builds, pre-observation/image2). The adapter copies the left view
+        # into the right-view slot so the model still gets 3 cameras.
         img = np.random.randint(0, 256, (224, 224, 3), dtype=np.uint8)
         obs = {"observation/image": img, "observation/wrist_image": np.zeros_like(img)}
         out = groot_adapter.build_robocasa_videos(obs)
         np.testing.assert_array_equal(
             out["video.robot0_agentview_left"], out["video.robot0_agentview_right"]
         )
+
+    def test_image2_used_as_right_when_present(self):
+        # Preferred path: client sends all 3 cameras. The right-view slot
+        # should come from observation/image2 (distinct from the left).
+        img_left = np.ones((224, 224, 3), dtype=np.uint8) * 7
+        img_right = np.ones((224, 224, 3), dtype=np.uint8) * 42
+        obs = {
+            "observation/image": img_left,
+            "observation/image2": img_right,
+            "observation/wrist_image": np.zeros_like(img_left),
+        }
+        out = groot_adapter.build_robocasa_videos(obs)
+        # After resize, the left/right should still reflect the distinct inputs
+        # (not byte-identical to img_left/img_right because of the resize, but
+        # should differ from each other).
+        assert not np.array_equal(
+            out["video.robot0_agentview_left"], out["video.robot0_agentview_right"]
+        )
+        # Both should be uint8 256x256x3.
+        for k in (
+            "video.robot0_agentview_left",
+            "video.robot0_agentview_right",
+            "video.robot0_eye_in_hand",
+        ):
+            assert out[k].shape == (256, 256, 3)
+            assert out[k].dtype == np.uint8
 
 
 class TestResizeTo256:
@@ -313,3 +339,94 @@ class TestInferRoundtrip:
         assert got["state.base_rotation"].shape == (1, 4)
         # Language — list[str] of length 1 (T=1).
         assert got["annotation.human.action.task_description"] == ["open the drawer"]
+
+
+@pytest.mark.manual
+class TestInferEquivalenceRealModel:
+    """Real-model regression guard: `_get_action_with_intermediates` must
+    produce bit-identical actions to upstream `Gr00tPolicy.get_action`
+    when seeded the same way.
+
+    The two code paths share the same denoising loop body; this test locks
+    that in so future upstream changes to `FlowmatchingActionHead.get_action`
+    can't silently drift our collection path. Skipped in CI via the `manual`
+    marker (loads a 3B checkpoint, needs a GPU). Run locally:
+
+        uv run pytest -m manual tests/test_groot_adapter.py::TestInferEquivalenceRealModel -v
+    """
+
+    MODEL_PATH = (
+        "../checkpoints/groot_n15/gr00t_n1-5/multitask_learning/checkpoint-120000"
+    )
+
+    def test_actions_match_upstream_get_action(self):
+        import os
+
+        import torch
+
+        if not os.path.exists(self.MODEL_PATH):
+            pytest.skip(f"checkpoint not found at {self.MODEL_PATH}")
+        if not torch.cuda.is_available():
+            pytest.skip("needs CUDA to load the N1.5 model in bfloat16")
+
+        policy = groot_adapter.make_robocasa_policy(
+            self.MODEL_PATH, device="cuda:0", denoising_steps=4
+        )
+
+        # Build a fake but well-shaped openpi-robocasa observation and let the
+        # adapter translate it into the GR00T-nested format. We then feed the
+        # SAME groot_obs to both paths.
+        openpi_obs = {
+            "observation/image": np.random.randint(
+                0, 255, (224, 224, 3), dtype=np.uint8
+            ),
+            "observation/wrist_image": np.random.randint(
+                0, 255, (224, 224, 3), dtype=np.uint8
+            ),
+            "observation/state": (np.random.randn(16) * 0.1).astype(np.float32),
+            "prompt": "open the drawer",
+        }
+        groot_obs = policy._build_groot_obs(openpi_obs)
+
+        # Upstream path.
+        torch.manual_seed(0)
+        upstream_actions = policy._policy.get_action(groot_obs)
+
+        # Collection path.
+        torch.manual_seed(0)
+        collected_actions, intermediates = groot_adapter._get_action_with_intermediates(
+            policy._policy, groot_obs
+        )
+
+        assert set(upstream_actions.keys()) == set(collected_actions.keys())
+        for k in upstream_actions:
+            diff = float(
+                np.max(
+                    np.abs(
+                        np.asarray(upstream_actions[k])
+                        - np.asarray(collected_actions[k])
+                    )
+                )
+            )
+            assert diff < 1e-5, f"{k}: max_abs_diff={diff} (expected ~0)"
+
+        # Shape sanity (pi0-aligned):
+        num_denoising = 4  # denoising_steps=4 above
+        assert intermediates["all_x_t"].shape[0] == num_denoising
+        assert intermediates["all_v_t"].shape[0] == num_denoising
+        assert intermediates["all_dit_hidden_states"].shape[0] == num_denoising
+        # DiT layer axis = num_layers (no leading input entry).
+        assert intermediates["all_dit_hidden_states"].shape[1] == 16
+        # MLP hidden has the same (steps, layers) shape.
+        assert intermediates["all_dit_mlp_hidden"].shape[0] == num_denoising
+        assert intermediates["all_dit_mlp_hidden"].shape[1] == 16
+        # ff_inner_dim should be strictly larger than the DiT hidden dim.
+        assert (
+            intermediates["all_dit_mlp_hidden"].shape[-1]
+            > intermediates["all_dit_hidden_states"].shape[-1]
+        )
+        # No NaN/Inf (cast fp16 to fp32 first).
+        for k, v in intermediates.items():
+            vf = v.astype(np.float32)
+            assert not np.isnan(vf).any(), f"{k} has NaN"
+            assert not np.isinf(vf).any(), f"{k} has Inf"

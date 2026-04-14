@@ -1,23 +1,33 @@
 """Tests for collected activation data from `serve.py --collect-activations` (GR00T N1.5).
 
-This is the GR00T-N1.5 analog of `tests/test_activations.py`. Same structure, but
-the schema differs because N1.5 has a different architecture from pi0:
+GR00T-N1.5 analog of `tests/test_activations.py`. Same structure; schema is
+aligned with pi0's `sample_actions_with_intermediates` one-for-one where the
+architecture allows:
 
 pi0 schema                -> N1.5 schema
 ----------------------------------------
-denoising.npz             -> denoising.npz              (kept)
-adarms_cond.npz           -> backbone_cond.npz           (VL backbone output, GR00T's
-                                                         conditioning analog)
-suffix_residual.npz       -> dit_hidden_states.npz       (DiT per-layer residuals,
-                                                         all layers + input)
-suffix_mlp_hidden.npz     -> (not captured)              (would require fwd hooks on
-                                                         every BasicTransformerBlock.ff
-                                                         — can be added later if needed
-                                                         for interpretability)
+denoising.npz             -> denoising.npz           (same: all_x_t + all_v_t,
+                                                      num_denoising_steps entries each)
+adarms_cond.npz           -> backbone_cond.npz        (VL backbone output. N1.5
+                                                      cross-attends to a VL sequence
+                                                      computed once per infer, so the
+                                                      shape is (seq, hidden) — NOT
+                                                      pi0's (steps, hidden) pooled
+                                                      per-step conditioning.)
+suffix_residual.npz       -> dit_hidden_states.npz    (DiT per-layer residual stream,
+                                                      shape (steps, layers, seq, hidden))
+suffix_mlp_hidden.npz     -> dit_mlp_hidden.npz       (DiT per-layer MLP expanded
+                                                      activation, hooked on each
+                                                      block.ff.net[2] input — analog
+                                                      of pi0's hook on
+                                                      mlp.down_proj input.)
 
 Run after collecting activations:
-    ACTIVATIONS_DIR=/tmp/groot_acts_test/checkpoint-120000/OpenDrawer \\
+    ACTIVATIONS_DIR=<root>/checkpoint-120000/OpenDrawer \\
         uv run pytest tests/test_groot_activations.py -v
+
+For a bulk walk across the entire dataset root (all tasks / all episodes),
+see `tests/test_full_activations.py`.
 """
 
 from __future__ import annotations
@@ -95,6 +105,7 @@ class TestDirectoryStructure:
             "denoising.npz",
             "backbone_cond.npz",
             "dit_hidden_states.npz",
+            "dit_mlp_hidden.npz",
             "metadata.json",
         ]
         for fname in expected:
@@ -186,26 +197,32 @@ class TestStepMetadata:
 
 # --- Activation shape tests ---
 #
-# N1.5 denoising shapes:
-#   all_x_t: (num_denoising_steps + 1, action_horizon, action_dim)
+# N1.5 denoising shapes (matches pi0's sample_actions_with_intermediates schema
+# one-for-one where the architecture allows):
+#   all_x_t: (num_denoising_steps, action_horizon, action_dim)
 #   all_v_t: (num_denoising_steps, action_horizon, action_dim)
-#   backbone_features: (vl_seq_len, backbone_hidden)        (seq_len is image+lang deps)
-#   all_dit_hidden_states: (num_denoising_steps, num_dit_layers + 1, sa_seq_len, dit_hidden)
+#   backbone_features: (vl_seq_len, backbone_hidden)                           (one per infer — N1.5
+#                                                                               cross-attends to VL seq
+#                                                                               once; architecturally
+#                                                                               distinct from pi0's pooled
+#                                                                               per-step adarms_cond)
+#   all_dit_hidden_states: (num_denoising_steps, num_dit_layers, sa_seq_len, dit_hidden)
+#   all_dit_mlp_hidden:    (num_denoising_steps, num_dit_layers, sa_seq_len, ff_inner_dim)
 #
-# vl_seq_len and sa_seq_len are architecture-dependent but fixed per-config, so we
-# probe the first step and require consistency across all steps instead of hardcoding.
+# vl_seq_len, sa_seq_len, and ff_inner_dim are architecture-dependent but fixed
+# per-config, so we probe the first step and require consistency across all
+# steps instead of hardcoding.
 
 
 class TestActivationShapes:
     def test_denoising_shapes(self, first_step):
         data = np.load(first_step / "denoising.npz")
-        # (denoising_steps + 1, action_horizon, action_dim)
+        # (denoising_steps, action_horizon, action_dim) — matches pi0's schema.
         assert data["all_x_t"].shape == (
-            EXPECTED_DENOISING_STEPS + 1,
+            EXPECTED_DENOISING_STEPS,
             EXPECTED_ACTION_HORIZON,
             EXPECTED_ACTION_DIM,
         )
-        # (denoising_steps, action_horizon, action_dim)
         assert data["all_v_t"].shape == (
             EXPECTED_DENOISING_STEPS,
             EXPECTED_ACTION_HORIZON,
@@ -216,9 +233,7 @@ class TestActivationShapes:
         data = np.load(first_step / "backbone_cond.npz")
         arr = data["backbone_features"]
         assert arr.ndim == 2, f"backbone_features should be 2-D, got {arr.shape}"
-        # Hidden dim of N1.5's Eagle 2.5 VLM. Lock to the observed value (not a
-        # magic number here since the Eagle config declares it) but assert it's
-        # the standard Eagle VL dim.
+        # Hidden dim of N1.5's Eagle 2.5 VLM.
         assert arr.shape[-1] in (1536, 2048), (
             f"unexpected backbone hidden dim {arr.shape[-1]}"
         )
@@ -226,12 +241,29 @@ class TestActivationShapes:
     def test_dit_hidden_states_shape(self, first_step):
         data = np.load(first_step / "dit_hidden_states.npz")
         arr = data["all_dit_hidden_states"]
-        # (denoising_steps, num_dit_layers + 1, sa_seq_len, dit_hidden)
+        # (denoising_steps, num_dit_layers, sa_seq_len, dit_hidden) — pi0 analog: suffix_residual.
         assert arr.ndim == 4, f"all_dit_hidden_states should be 4-D, got {arr.shape}"
         assert arr.shape[0] == EXPECTED_DENOISING_STEPS
-        assert arr.shape[1] == EXPECTED_DIT_LAYERS + 1, (
-            f"expected {EXPECTED_DIT_LAYERS + 1} entries on layer axis (num_layers + input), "
-            f"got {arr.shape[1]}"
+        assert arr.shape[1] == EXPECTED_DIT_LAYERS, (
+            f"expected {EXPECTED_DIT_LAYERS} entries on layer axis, got {arr.shape[1]}"
+        )
+
+    def test_dit_mlp_hidden_shape(self, first_step):
+        data = np.load(first_step / "dit_mlp_hidden.npz")
+        arr = data["all_dit_mlp_hidden"]
+        # (denoising_steps, num_dit_layers, sa_seq_len, ff_inner_dim) — pi0 analog: suffix_mlp_hidden.
+        assert arr.ndim == 4, f"all_dit_mlp_hidden should be 4-D, got {arr.shape}"
+        assert arr.shape[0] == EXPECTED_DENOISING_STEPS
+        assert arr.shape[1] == EXPECTED_DIT_LAYERS
+        # seq_len should match dit_hidden_states (both taken from the same DiT forward).
+        hidden = np.load(first_step / "dit_hidden_states.npz")["all_dit_hidden_states"]
+        assert arr.shape[2] == hidden.shape[2], (
+            f"mlp seq_len {arr.shape[2]} != hidden seq_len {hidden.shape[2]}"
+        )
+        # ff_inner_dim should be strictly larger than hidden dim (FeedForward expands
+        # hidden -> ff_inner, typically 4x). Sanity-check the expansion.
+        assert arr.shape[3] > hidden.shape[3], (
+            f"ff_inner_dim {arr.shape[3]} should exceed dit_hidden {hidden.shape[3]}"
         )
 
     def test_dtypes(self, first_step):
@@ -253,12 +285,22 @@ class TestActivationShapes:
             assert dh[key].dtype == np.float16, (
                 f"dit_hidden_states/{key} is {dh[key].dtype}, expected float16"
             )
+        dm = np.load(first_step / "dit_mlp_hidden.npz")
+        for key in dm:
+            assert dm[key].dtype == np.float16, (
+                f"dit_mlp_hidden/{key} is {dm[key].dtype}, expected float16"
+            )
 
     def test_no_nan_inf(self, first_step):
         # Cast fp16 to fp32 before finiteness check to avoid fp16-overflow spurious
         # infinities in intermediate reductions (real +-inf in the stored array
         # would still trip the final ``np.isfinite``).
-        for fname in ("denoising.npz", "backbone_cond.npz", "dit_hidden_states.npz"):
+        for fname in (
+            "denoising.npz",
+            "backbone_cond.npz",
+            "dit_hidden_states.npz",
+            "dit_mlp_hidden.npz",
+        ):
             data = np.load(first_step / fname)
             for key in data:
                 arr = data[key].astype(np.float32)
@@ -301,10 +343,23 @@ class TestSanityChecks:
         assert not np.allclose(h[0], h[-1]), (
             "DiT hidden states identical at first and last denoising step"
         )
-        # Layer 0 (DiT input) and layer -1 (DiT output) should differ (at least one
-        # transformer block did something).
+        # First vs last transformer block output should differ (each layer does
+        # non-trivial work on the residual stream).
         assert not np.allclose(h[0, 0], h[0, -1]), (
-            "DiT layer 0 and layer -1 identical at step 0"
+            "DiT layer 0 and layer -1 outputs identical at denoising step 0"
+        )
+
+    def test_dit_mlp_hidden_nonzero_and_varies(self, first_step):
+        data = np.load(first_step / "dit_mlp_hidden.npz")
+        m = data["all_dit_mlp_hidden"].astype(np.float32)
+        assert np.any(m != 0), "DiT MLP hidden is all zeros"
+        # Different denoising steps should produce different MLP activations.
+        assert not np.allclose(m[0], m[-1]), (
+            "DiT MLP hidden identical at first and last denoising step"
+        )
+        # Different layers should have different MLP activations.
+        assert not np.allclose(m[0, 0], m[0, -1]), (
+            "DiT MLP layer 0 and layer -1 identical at denoising step 0"
         )
 
     def test_cross_episode_different_activations(self, act_dir):

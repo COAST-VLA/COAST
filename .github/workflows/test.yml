@@ -155,5 +155,7 @@ jobs:
         # (it validates an already-collected activation dataset, which we
         # don't ship in CI). test_groot_adapter.py and
         # test_groot_activation_collector.py are pure unit tests and run
-        # without a GPU, a checkpoint, or network access.
-        run: uv run pytest -v
+        # without a GPU, a checkpoint, or network access. `manual`-marked
+        # tests (e.g. TestInferEquivalenceRealModel) need a 3B checkpoint
+        # and GPU — excluded via `-m "not manual"`.
+        run: uv run pytest --strict-markers -m "not manual" -v

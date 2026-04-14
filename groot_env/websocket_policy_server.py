@@ -1,3 +1,7 @@
+# This is adapted from
+#     src/openpi/serving/websocket_policy_server.py
+# at commit 0aa7bd42b7137c3cb4eeb4e552f691cc778131c7 (2026-03-27).
+
 import asyncio
 import http
 import logging

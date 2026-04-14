@@ -33,30 +33,40 @@ def save_step_activations(
     array, then writes one .npz per activation kind plus metadata.json. The
     schema mirrors pi0's naming convention where it makes sense so downstream
     mech-interp tooling can reuse the same file layout:
-      - denoising.npz {all_x_t, all_v_t}    - per denoising-step action and velocity
-      - backbone_cond.npz {backbone_features} - the VL backbone output that conditions
-                                              the DiT (GR00T analog of pi0's adarms_cond)
-      - dit_hidden_states.npz {all_dit_hidden_states} - per denoising-step per-layer
-                                              DiT residual stream (analog of pi0's
-                                              suffix_residual; stored fp16 to save disk)
+      - denoising.npz {all_x_t, all_v_t}                - per denoising-step x_t and velocity
+      - backbone_cond.npz {backbone_features}           - VL backbone output the DiT
+                                                          cross-attends to (GR00T analog
+                                                          of pi0's adarms_cond; shape
+                                                          differs because of the
+                                                          architectural difference —
+                                                          see adapter docstring).
+      - dit_hidden_states.npz {all_dit_hidden_states}   - DiT per-layer residual stream,
+                                                          pi0 analog: suffix_residual.
+      - dit_mlp_hidden.npz {all_dit_mlp_hidden}         - DiT per-layer MLP expanded
+                                                          activation (input to the
+                                                          ff_inner->hidden contraction);
+                                                          pi0 analog: suffix_mlp_hidden.
     """
     step_dir.mkdir(parents=True, exist_ok=True)
 
     # GR00T intermediates shapes (produced by GR00TAdapterPolicy.infer_with_intermediates):
-    #   all_x_t: (num_denoising_steps + 1, batch, action_horizon, action_dim), fp32
+    #   all_x_t: (num_denoising_steps, batch, action_horizon, action_dim), fp32
     #   all_v_t: (num_denoising_steps, batch, action_horizon, action_dim), fp32
     #   backbone_features: (batch, seq_len, hidden_dim), fp16
-    #   all_dit_hidden_states: (num_denoising_steps, num_dit_layers + 1, batch, seq_len, hidden_dim), fp16
+    #   all_dit_hidden_states: (num_denoising_steps, num_dit_layers, batch, seq_len, hidden_dim), fp16
+    #   all_dit_mlp_hidden: (num_denoising_steps, num_dit_layers, batch, seq_len, ff_inner_dim), fp16
     all_x_t = intermediates["all_x_t"][:, env_id]
     all_v_t = intermediates["all_v_t"][:, env_id]
     backbone_features = intermediates["backbone_features"][env_id]
     all_dit_hidden_states = intermediates["all_dit_hidden_states"][:, :, env_id]
+    all_dit_mlp_hidden = intermediates["all_dit_mlp_hidden"][:, :, env_id]
 
     np.savez(step_dir / "denoising.npz", all_x_t=all_x_t, all_v_t=all_v_t)
     np.savez(step_dir / "backbone_cond.npz", backbone_features=backbone_features)
     np.savez(
         step_dir / "dit_hidden_states.npz", all_dit_hidden_states=all_dit_hidden_states
     )
+    np.savez(step_dir / "dit_mlp_hidden.npz", all_dit_mlp_hidden=all_dit_mlp_hidden)
 
     with open(step_dir / "metadata.json", "w") as f:
         json.dump(step_metadata, f, indent=2)
@@ -224,11 +234,13 @@ class CollectingPolicy(_base_policy.BasePolicy):
             )
 
         # Serialize calls into infer_with_intermediates: the underlying
-        # sample_actions_with_intermediates_v2 registers forward hooks on shared
-        # module instances, so two in-flight calls would pollute each other's
-        # capture dicts. The current single-threaded asyncio server already
-        # serializes calls implicitly, but this lock makes the invariant explicit
-        # and defends against future executor-based optimizations.
+        # `_get_action_with_intermediates` (GR00T analog of pi0's V1
+        # `sample_actions_with_intermediates`) registers forward hooks on
+        # shared module instances, so two in-flight calls would pollute each
+        # other's capture dicts. The current single-threaded asyncio server
+        # already serializes calls implicitly, but this lock makes the
+        # invariant explicit and defends against future executor-based
+        # optimizations.
         with self._intermediates_lock:
             result, intermediates = self._policy.infer_with_intermediates(batched_obs)
 

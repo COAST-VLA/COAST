@@ -24,6 +24,7 @@ duplicating the left view; success rate may suffer slightly versus the native
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from typing import Any
 
@@ -98,27 +99,48 @@ def _resize_to_256(img: np.ndarray) -> np.ndarray:
 def build_robocasa_videos(obs: dict[str, Any]) -> dict[str, np.ndarray]:
     """Map openpi client camera keys to GR00T N1.5 video keys.
 
-    The N1.5 robocasa head expects 3 cameras (two side views + wrist), but the
-    pi05-compatible openpi client only sends agentview_left + eye_in_hand. We
-    duplicate the left view as the missing right view to satisfy the model's
-    input shape; this loses some 3D info but lets the existing client work
-    unchanged. Images are also resized to 256x256 to match the N1.5 checkpoint's
+    The N1.5 robocasa head was trained with THREE distinct cameras (two side
+    views + wrist). The openpi robocasa client emits three keys:
+        observation/image       -> agentview_left  -> video.robot0_agentview_left
+        observation/image2      -> agentview_right -> video.robot0_agentview_right
+        observation/wrist_image -> eye_in_hand     -> video.robot0_eye_in_hand
+    `observation/image2` is a backward-compatible addition — pi0's RobocasaInputs
+    doesn't read it, so adding this key to the client doesn't affect pi05
+    serving. If a client omits it (older builds), we fall back to duplicating
+    `observation/image` into the right-view slot so the model still has a
+    three-channel input; the stereo signal is degraded but correctness is
+    preserved. Images are resized to 256x256 to match the N1.5 checkpoint's
     declared metadata resolution.
     """
     img = _resize_to_256(np.asarray(obs["observation/image"], dtype=np.uint8))
     wrist = _resize_to_256(np.asarray(obs["observation/wrist_image"], dtype=np.uint8))
+    if "observation/image2" in obs:
+        img2 = _resize_to_256(np.asarray(obs["observation/image2"], dtype=np.uint8))
+    else:
+        # Fallback: no right-view available -> reuse left-view. Degrades
+        # accuracy but keeps the shape contract intact.
+        img2 = img
     return {
         "video.robot0_agentview_left": img,
-        "video.robot0_agentview_right": img,
+        "video.robot0_agentview_right": img2,
         "video.robot0_eye_in_hand": wrist,
     }
 
 
-class RobocasaPandaOmronDataConfig:
-    """N1.5 DataConfig for robocasa Panda Omron, derived from
+# gr00t is always installed in this venv (the whole package exists to serve
+# N1.5), so importing `BaseDataConfig` at module load is fine. The subclass
+# below catches any upstream API drift (renamed attribute, new required
+# method, etc.) as a clear error at construction time.
+from gr00t.experiment.data_config import BaseDataConfig
+
+
+class RobocasaPandaOmronDataConfig(BaseDataConfig):
+    """N1.5 DataConfig for robocasa Panda Omron. Derived from
     `gr00t.experiment.data_config.SinglePandaGripperDataConfig` but with the
-    video keys aligned to the env wrapper's outputs and the same ordering as
-    the checkpoint's metadata.json.
+    video keys aligned to the openpi robocasa env's wrapper outputs
+    (`robot0_agentview_left/right`, `robot0_eye_in_hand`) and the
+    state/action key ordering verified against the checkpoint's
+    `experiment_cfg/metadata.json`.
     """
 
     video_keys = list(ROBOCASA_VIDEO_KEYS)
@@ -147,79 +169,70 @@ class RobocasaPandaOmronDataConfig:
         "action.control_mode": "binary",
     }
 
-    def modality_config(self):
-        # Imported here so the module can be imported without gr00t installed.
-        from gr00t.data.dataset import ModalityConfig
-
-        return {
-            "video": ModalityConfig(
-                delta_indices=self.observation_indices, modality_keys=self.video_keys
-            ),
-            "state": ModalityConfig(
-                delta_indices=self.observation_indices, modality_keys=self.state_keys
-            ),
-            "action": ModalityConfig(
-                delta_indices=self.action_indices, modality_keys=self.action_keys
-            ),
-            "language": ModalityConfig(
-                delta_indices=self.observation_indices, modality_keys=self.language_keys
-            ),
-        }
+    # `BaseDataConfig.modality_config` is already defined exactly as we need
+    # it (builds ModalityConfig objects from the six class attributes above),
+    # so we inherit it unchanged.
 
     def transform(self):
-        from gr00t.data.transform.base import ComposedModalityTransform
-        from gr00t.data.transform.concat import ConcatTransform
-        from gr00t.data.transform.state_action import (
-            StateActionToTensor,
-            StateActionTransform,
-        )
-        from gr00t.data.transform.video import (
-            VideoColorJitter,
-            VideoCrop,
-            VideoResize,
-            VideoToNumpy,
-            VideoToTensor,
-        )
-        from gr00t.model.transforms import GR00TTransform
+        return _build_robocasa_transform(self)
 
-        transforms = [
-            VideoToTensor(apply_to=self.video_keys),
-            VideoCrop(apply_to=self.video_keys, scale=0.95),
-            VideoResize(
-                apply_to=self.video_keys, height=224, width=224, interpolation="linear"
-            ),
-            VideoColorJitter(
-                apply_to=self.video_keys,
-                brightness=0.3,
-                contrast=0.4,
-                saturation=0.5,
-                hue=0.08,
-            ),
-            VideoToNumpy(apply_to=self.video_keys),
-            StateActionToTensor(apply_to=self.state_keys),
-            StateActionTransform(
-                apply_to=self.state_keys,
-                normalization_modes=self.state_normalization_modes,
-                target_rotations=self.state_target_rotations,
-            ),
-            StateActionToTensor(apply_to=self.action_keys),
-            StateActionTransform(
-                apply_to=self.action_keys,
-                normalization_modes=self.action_normalization_modes,
-            ),
-            ConcatTransform(
-                video_concat_order=self.video_keys,
-                state_concat_order=self.state_keys,
-                action_concat_order=self.action_keys,
-            ),
-            GR00TTransform(
-                state_horizon=len(self.observation_indices),
-                action_horizon=len(self.action_indices),
-                max_state_dim=64,
-                max_action_dim=32,
-            ),
-        ]
-        return ComposedModalityTransform(transforms=transforms)
+
+def _build_robocasa_transform(self):
+    """Module-level helper because the transform body is long; the inner
+    subclass above just delegates here."""
+    from gr00t.data.transform.base import ComposedModalityTransform
+    from gr00t.data.transform.concat import ConcatTransform
+    from gr00t.data.transform.state_action import (
+        StateActionToTensor,
+        StateActionTransform,
+    )
+    from gr00t.data.transform.video import (
+        VideoColorJitter,
+        VideoCrop,
+        VideoResize,
+        VideoToNumpy,
+        VideoToTensor,
+    )
+    from gr00t.model.transforms import GR00TTransform
+
+    transforms = [
+        VideoToTensor(apply_to=self.video_keys),
+        VideoCrop(apply_to=self.video_keys, scale=0.95),
+        VideoResize(
+            apply_to=self.video_keys, height=224, width=224, interpolation="linear"
+        ),
+        VideoColorJitter(
+            apply_to=self.video_keys,
+            brightness=0.3,
+            contrast=0.4,
+            saturation=0.5,
+            hue=0.08,
+        ),
+        VideoToNumpy(apply_to=self.video_keys),
+        StateActionToTensor(apply_to=self.state_keys),
+        StateActionTransform(
+            apply_to=self.state_keys,
+            normalization_modes=self.state_normalization_modes,
+            target_rotations=self.state_target_rotations,
+        ),
+        StateActionToTensor(apply_to=self.action_keys),
+        StateActionTransform(
+            apply_to=self.action_keys,
+            normalization_modes=self.action_normalization_modes,
+        ),
+        ConcatTransform(
+            video_concat_order=self.video_keys,
+            state_concat_order=self.state_keys,
+            action_concat_order=self.action_keys,
+        ),
+        GR00TTransform(
+            state_horizon=len(self.observation_indices),
+            action_horizon=len(self.action_indices),
+            max_state_dim=64,
+            max_action_dim=32,
+        ),
+    ]
+    return ComposedModalityTransform(transforms=transforms)
 
 
 class GR00TAdapterPolicy(_base_policy.BasePolicy):
@@ -317,20 +330,36 @@ class GR00TAdapterPolicy(_base_policy.BasePolicy):
     ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
         """Run inference and return the per-step activations used for mech-interp.
 
-        Intermediates shape convention (matches pi0's `save_step_activations` format):
-          - all_x_t: (num_denoising_steps + 1, B, action_horizon, action_dim), fp32
-                     Denoising trajectory: index 0 is the sampled noise, index k is
-                     the action after k velocity updates.
+        Intermediates shape convention (matches pi0's `sample_actions_with_intermediates`
+        schema one-for-one where the architecture allows):
+          - all_x_t: (num_denoising_steps, B, action_horizon, action_dim), fp32
+                     Denoising input trajectory. Entry k is x_t at the START of
+                     step k (k=0 is the sampled noise). Matches pi0's shape and
+                     semantic — the post-final-step action is NOT included here,
+                     it's returned as part of `actions`.
           - all_v_t: (num_denoising_steps, B, action_horizon, action_dim), fp32
                      Predicted velocity at each denoising step.
           - backbone_features: (B, seq_len, hidden_dim), fp16
-                               The VL backbone output the DiT conditions on
-                               (analog of pi0's adarms_cond).
-          - all_dit_hidden_states: (num_denoising_steps, num_dit_layers + 1, B, seq_len_sa, hidden_dim), fp16
-                                   DiT residual stream per layer per denoising step
-                                   (analog of pi0's suffix_residual). Index 0 of the
-                                   layer axis is the DiT input; subsequent indices are
-                                   the output of each transformer block.
+                               VL backbone output the DiT cross-attends to. This
+                               is GR00T's analog of pi0's `adarms_cond`, but note
+                               the architectures differ: pi0 has a POOLED
+                               per-step conditioning vector (hence shape
+                               (num_steps, hidden)), while GR00T computes a
+                               variable-length VL sequence ONCE and feeds it to
+                               the DiT via cross-attention (hence (seq, hidden)).
+          - all_dit_hidden_states: (num_denoising_steps, num_dit_layers, B, seq_len_sa, hidden_dim), fp16
+                                   DiT residual stream per layer per denoising
+                                   step. Captured via forward hooks on each
+                                   `BasicTransformerBlock` output (matches pi0's
+                                   `suffix_residual` capture pattern on each
+                                   `expert_layers[i]`). Only layer OUTPUTS are
+                                   captured, not the DiT input.
+          - all_dit_mlp_hidden: (num_denoising_steps, num_dit_layers, B, seq_len_sa, ff_inner_dim), fp16
+                                Per-layer MLP expanded activation. Captured via
+                                input hooks on each DiT block's `ff.net[2]` (the
+                                `inner_dim -> dim` contraction Linear); matches
+                                pi0's `suffix_mlp_hidden` which hooks inputs of
+                                `expert_layers[i].mlp.down_proj`.
         Batch dim B is always 1 here (openpi server sends one obs at a time).
         """
         groot_obs = self._build_groot_obs(obs)
@@ -347,10 +376,23 @@ class GR00TAdapterPolicy(_base_policy.BasePolicy):
 def _get_action_with_intermediates(gr00t_policy, groot_obs):
     """Run Gr00tPolicy inference while capturing denoising intermediates.
 
-    Mirrors the flow of `Gr00tPolicy.get_action` -> `GR00T_N1_5.get_action` ->
-    `FlowmatchingActionHead.get_action`, but intercepts the flow-matching
-    denoising loop to record per-step (x_t, v_t) and the DiT's per-layer
-    residual stream (via `return_all_hidden_states=True`).
+    Structured to match pi0's `sample_actions_with_intermediates` pattern
+    (`src/openpi/models_pytorch/pi0_pytorch.py`), which is a HYBRID:
+      - The denoising loop body is re-implemented inline so we can capture
+        loop-level values (x_t, v_t, the backbone conditioning) directly at the
+        point they're computed.
+      - Per-layer internal activations (residual stream, MLP hidden) are
+        captured via PyTorch forward hooks on the DiT transformer blocks, then
+        picked up after each step. This is how pi0 captures
+        `expert_residual_{i}` (output hook on each expert layer) and
+        `expert_mlp_hidden_{i}` (input hook on each expert layer's
+        `mlp.down_proj`). We do the exact same thing on the DiT side: output
+        hook on each `transformer_blocks[i]` for the residual, input hook on
+        each `transformer_blocks[i].ff.net[2]` (the `inner_dim -> dim`
+        contraction Linear) for the pre-contraction MLP activation.
+
+    Schema lines up with pi0 one-for-one where architecturally possible
+    (see `GR00TAdapterPolicy.infer_with_intermediates` for the full spec).
 
     Parameters
     ----------
@@ -362,14 +404,13 @@ def _get_action_with_intermediates(gr00t_policy, groot_obs):
     Returns
     -------
     (action_dict, intermediates)
-        action_dict: {"action.X": np.ndarray (T, D), ...} -- exactly what
+        action_dict: {"action.X": np.ndarray (T, D), ...} — exactly what
                      `Gr00tPolicy.get_action` would return.
-        intermediates: dict of numpy arrays with keys matching what
-                       `save_step_activations` expects (all_x_t, all_v_t,
-                       backbone_features, all_dit_hidden_states).
+        intermediates: dict of numpy arrays: all_x_t, all_v_t,
+                       backbone_features, all_dit_hidden_states,
+                       all_dit_mlp_hidden.
     """
     import torch
-    from transformers.feature_extraction_utils import BatchFeature
 
     obs_copy = {}
     for k, v in groot_obs.items():
@@ -392,85 +433,164 @@ def _get_action_with_intermediates(gr00t_policy, groot_obs):
     model = gr00t_policy.model
     head = model.action_head
 
+    # --- Forward hooks for per-layer intermediates (pi0 pattern) -----------
+    # step_activations is cleared at the start of every denoising step; the
+    # per-layer captures for that step are collected into the aggregate lists
+    # right after the DiT forward returns.
+    step_activations: dict[str, torch.Tensor] = {}
+    num_layers = len(head.model.transformer_blocks)
+
+    def _make_output_hook(name):
+        def hook(module, input, output):
+            if isinstance(output, tuple):
+                step_activations[name] = output[0].detach()
+            else:
+                step_activations[name] = output.detach()
+
+        return hook
+
+    def _make_input_hook(name):
+        def hook(module, input, output):
+            # input is the positional args tuple; first element is the tensor
+            # about to be contracted from ff_inner_dim back to hidden_dim.
+            step_activations[name] = input[0].detach()
+
+        return hook
+
+    hooks = []
+    for i, block in enumerate(head.model.transformer_blocks):
+        # Residual stream after block i (analog of pi0's expert_residual_{i}).
+        hooks.append(block.register_forward_hook(_make_output_hook(f"residual_{i}")))
+        # MLP inner activation (pre-contraction). `ff.net[2]` is the
+        # (ff_inner_dim -> hidden_dim) Linear, structurally analogous to pi0's
+        # `mlp.down_proj`. Hooking its INPUT gives us the post-GELU expanded
+        # activation, matching pi0's `expert_mlp_hidden_{i}` semantic.
+        hooks.append(
+            block.ff.net[2].register_forward_hook(_make_input_hook(f"mlp_hidden_{i}"))
+        )
+
     # Replicate GR00T_N1_5.get_action's input prep.
     backbone_inputs, action_inputs = model.prepare_input(normalized_input)
-    with (
-        torch.inference_mode(),
-        torch.autocast(device_type="cuda", dtype=torch.bfloat16),
-    ):
-        backbone_outputs = model.backbone(backbone_inputs)
-        # Replicate FlowmatchingActionHead.get_action but with collection.
-        processed_backbone = head.process_backbone_output(backbone_outputs)
-        vl_embs = processed_backbone.backbone_features  # (B, S, C)
-        embodiment_id = action_inputs.embodiment_id
-        state_features = head.state_encoder(action_inputs.state, embodiment_id)
+    autocast_device_type = torch.device(gr00t_policy.device).type
 
-        batch_size = vl_embs.shape[0]
-        device = vl_embs.device
-        actions = torch.randn(
-            size=(batch_size, head.config.action_horizon, head.config.action_dim),
-            dtype=vl_embs.dtype,
-            device=device,
-        )
-
-        num_steps = head.num_inference_timesteps
-        dt = 1.0 / num_steps
-
-        all_x_t_list = [actions.detach().float().cpu()]
-        all_v_t_list = []
-        all_dit_hidden_list = []  # list (len=num_steps) of list (len=num_layers+1) of tensors
-
-        for t in range(num_steps):
-            t_cont = t / float(num_steps)
-            t_discretized = int(t_cont * head.num_timestep_buckets)
-            timesteps_tensor = torch.full(
-                size=(batch_size,), fill_value=t_discretized, device=device
+    try:
+        # autocast only on CUDA / MPS; on CPU we skip the context (bfloat16 on
+        # CPU is supported in recent torch but N1.5's 3B model isn't viable on
+        # CPU anyway; this keeps the code path honest).
+        if autocast_device_type in ("cuda", "mps"):
+            ac_ctx = torch.autocast(
+                device_type=autocast_device_type, dtype=torch.bfloat16
             )
-            action_features = head.action_encoder(
-                actions, timesteps_tensor, embodiment_id
+        else:
+            ac_ctx = contextlib.nullcontext()
+        with torch.inference_mode(), ac_ctx:
+            backbone_outputs = model.backbone(backbone_inputs)
+            processed_backbone = head.process_backbone_output(backbone_outputs)
+            vl_embs = processed_backbone.backbone_features  # (B, S, C)
+            embodiment_id = action_inputs.embodiment_id
+            state_features = head.state_encoder(action_inputs.state, embodiment_id)
+
+            batch_size = vl_embs.shape[0]
+            device = vl_embs.device
+            actions = torch.randn(
+                size=(
+                    batch_size,
+                    head.config.action_horizon,
+                    head.config.action_dim,
+                ),
+                dtype=vl_embs.dtype,
+                device=device,
             )
-            if head.config.add_pos_embed:
-                pos_ids = torch.arange(
-                    action_features.shape[1], dtype=torch.long, device=device
+
+            num_steps = head.num_inference_timesteps
+            dt = 1.0 / num_steps
+
+            # Inline per-step aggregates (matches pi0's list-accumulator style).
+            all_x_t_list = []
+            all_v_t_list = []
+            all_dit_residual_per_step = []  # each entry: (num_layers, B, S, D) tensor
+            all_dit_mlp_hidden_per_step = []  # each entry: (num_layers, B, S, ff_inner) tensor
+
+            for t in range(num_steps):
+                step_activations.clear()
+
+                # x_t at the START of this step (pi0: captured BEFORE the model
+                # forward, at the same point in the loop).
+                all_x_t_list.append(actions.detach().float().cpu())
+
+                t_cont = t / float(num_steps)
+                t_discretized = int(t_cont * head.num_timestep_buckets)
+                timesteps_tensor = torch.full(
+                    size=(batch_size,), fill_value=t_discretized, device=device
                 )
-                pos_embs = head.position_embedding(pos_ids).unsqueeze(0)
-                action_features = action_features + pos_embs
-            future_tokens = head.future_tokens.weight.unsqueeze(0).expand(
-                vl_embs.shape[0], -1, -1
-            )
-            sa_embs = torch.cat((state_features, future_tokens, action_features), dim=1)
+                action_features = head.action_encoder(
+                    actions, timesteps_tensor, embodiment_id
+                )
+                if head.config.add_pos_embed:
+                    pos_ids = torch.arange(
+                        action_features.shape[1], dtype=torch.long, device=device
+                    )
+                    pos_embs = head.position_embedding(pos_ids).unsqueeze(0)
+                    action_features = action_features + pos_embs
+                future_tokens = head.future_tokens.weight.unsqueeze(0).expand(
+                    vl_embs.shape[0], -1, -1
+                )
+                sa_embs = torch.cat(
+                    (state_features, future_tokens, action_features), dim=1
+                )
 
-            model_output, dit_hidden_states = head.model(
-                hidden_states=sa_embs,
-                encoder_hidden_states=vl_embs,
-                timestep=timesteps_tensor,
-                return_all_hidden_states=True,
-            )
-            all_dit_hidden_list.append([h.detach() for h in dit_hidden_states])
-            pred = head.action_decoder(model_output, embodiment_id)
-            pred_velocity = pred[:, -head.action_horizon :]
-            all_v_t_list.append(pred_velocity.detach().float().cpu())
-            actions = actions + dt * pred_velocity
-            all_x_t_list.append(actions.detach().float().cpu())
+                # Plain DiT forward — hooks fire during this call. We no
+                # longer ask for `return_all_hidden_states=True` because the
+                # output hook on each transformer_block gives us the same
+                # per-layer residual stream.
+                model_output = head.model(
+                    hidden_states=sa_embs,
+                    encoder_hidden_states=vl_embs,
+                    timestep=timesteps_tensor,
+                )
 
-        # Stack into arrays with the shapes save_step_activations expects.
-        all_x_t = torch.stack(all_x_t_list, dim=0).numpy()  # (num_steps+1, B, T_a, D_a)
-        all_v_t = torch.stack(all_v_t_list, dim=0).numpy()  # (num_steps, B, T_a, D_a)
-        # all_dit_hidden_list: list[num_steps] of list[num_layers+1] of (B, S, D) tensors
-        dit_stacked = torch.stack(
-            [torch.stack(step, dim=0) for step in all_dit_hidden_list], dim=0
-        )
-        # -> (num_steps, num_layers+1, B, S, D) in bf16/fp16
-        all_dit_hidden_states = dit_stacked.to(torch.float16).cpu().numpy()
-        backbone_features = vl_embs.to(torch.float16).cpu().numpy()  # (B, S, C)
+                pred = head.action_decoder(model_output, embodiment_id)
+                pred_velocity = pred[:, -head.action_horizon :]
+                all_v_t_list.append(pred_velocity.detach().float().cpu())
 
-        final_action_tensor = actions.float().cpu()
+                # Gather hook captures for this step. Stacking along layer
+                # axis gives (num_layers, B, S, D) / (num_layers, B, S, ff_inner).
+                residuals = torch.stack(
+                    [step_activations[f"residual_{i}"] for i in range(num_layers)],
+                    dim=0,
+                )
+                mlp_hidden = torch.stack(
+                    [step_activations[f"mlp_hidden_{i}"] for i in range(num_layers)],
+                    dim=0,
+                )
+                all_dit_residual_per_step.append(residuals)
+                all_dit_mlp_hidden_per_step.append(mlp_hidden)
 
-    action_head_outputs = BatchFeature(data={"action_pred": final_action_tensor})
+                actions = actions + dt * pred_velocity
+
+            # Shapes match pi0:
+            #   all_x_t: (num_steps, B, H, D)            (NOT num_steps+1)
+            #   all_v_t: (num_steps, B, H, D)
+            all_x_t = torch.stack(all_x_t_list, dim=0).numpy()
+            all_v_t = torch.stack(all_v_t_list, dim=0).numpy()
+            # all_dit_hidden_states: (num_steps, num_layers, B, S, D)   — no leading input
+            dit_hidden_stacked = torch.stack(all_dit_residual_per_step, dim=0)
+            all_dit_hidden_states = dit_hidden_stacked.to(torch.float16).cpu().numpy()
+            # all_dit_mlp_hidden: (num_steps, num_layers, B, S, ff_inner)
+            dit_mlp_stacked = torch.stack(all_dit_mlp_hidden_per_step, dim=0)
+            all_dit_mlp_hidden = dit_mlp_stacked.to(torch.float16).cpu().numpy()
+            backbone_features = vl_embs.to(torch.float16).cpu().numpy()
+
+            final_action_tensor = actions.float().cpu()
+    finally:
+        for h in hooks:
+            h.remove()
+
     # Go through the same unnormalize path as Gr00tPolicy so the action dict is
     # in physical units. Replicates _get_unnormalized_action.
-    normalized_action = final_action_tensor
-    unnormalized_action = gr00t_policy.unapply_transforms({"action": normalized_action})
+    unnormalized_action = gr00t_policy.unapply_transforms(
+        {"action": final_action_tensor}
+    )
 
     if not is_batch:
         unnormalized_action = squeeze_dict_values(unnormalized_action)
@@ -480,6 +600,7 @@ def _get_action_with_intermediates(gr00t_policy, groot_obs):
         "all_v_t": all_v_t.astype(np.float32),
         "backbone_features": backbone_features,
         "all_dit_hidden_states": all_dit_hidden_states,
+        "all_dit_mlp_hidden": all_dit_mlp_hidden,
     }
     return unnormalized_action, intermediates
 

@@ -31,7 +31,7 @@ import pathlib
 
 import tyro
 
-import activation_collector
+import groot_activation_collector
 import groot_adapter
 import websocket_policy_server
 
@@ -57,7 +57,7 @@ class Args:
     # were measured at.
     denoising_steps: int = 4
     # Enable activation-collection mode. The server wraps the policy in
-    # `activation_collector.CollectingPolicy` and rejects any request that
+    # `groot_activation_collector.CollectingPolicy` and rejects any request that
     # doesn't carry the __collect__ or __finalize_episode__ magic keys. Mirrors
     # `scripts/serve_policy.py --collect_activations` on the pi0 side.
     collect_activations: bool = False
@@ -107,7 +107,7 @@ def main(args: Args) -> None:
             checkpoint_step,
             output_root,
         )
-        policy = activation_collector.CollectingPolicy(
+        policy = groot_activation_collector.CollectingPolicy(
             policy=policy,
             output_root=output_root,
             checkpoint_step=checkpoint_step,
