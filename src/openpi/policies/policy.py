@@ -295,9 +295,7 @@ class Policy(BasePolicy):
         if is_single:
             inputs = jax.tree.map(lambda x: x, obs)
             inputs = self._input_transform(inputs)
-            inputs = jax.tree.map(
-                lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device)[None, ...], inputs
-            )
+            inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device)[None, ...], inputs)
         else:
             inputs = jax.tree.map(lambda x: x, obs)
             eval_batch_size = int(inputs["observation/state"].shape[0])
@@ -328,7 +326,9 @@ class Policy(BasePolicy):
 
         if is_single:
             outputs = jax.tree.map(
-                lambda x: np.asarray(x[0, ...].detach().cpu()) if isinstance(x, torch.Tensor) else np.asarray(x[0, ...]),
+                lambda x: np.asarray(x[0, ...].detach().cpu())
+                if isinstance(x, torch.Tensor)
+                else np.asarray(x[0, ...]),
                 outputs,
             )
         else:
