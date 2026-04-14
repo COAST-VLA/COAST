@@ -98,6 +98,15 @@ Everything one run produces lives under a single top-level directory (by default
 
 `results.json` is updated incrementally after each task finishes so progress is preserved on early exit. The final summary is sorted by success rate, descending.
 
+### Evaluation Results with Released Checkpoints
+
+Original evaluation results are published [here](https://robocasa.ai/docs/build/html/benchmarking/multitask_learning.html#benchmark-results-and-checkpoints). We perform our own evaluation with the provided checkpoint.
+
+Results below are from the public `pi05_pretrain_human300/multitask_learning/75000` checkpoint, evaluated on the `pretrain` split with 15 episodes per task (`eval_all.py --num_workers 5 --num_episodes 15`). Raw per-task numbers are in [`figures/results_75000.json`](figures/results_75000.json).
+
+![Mean success rate per task set](figures/compare_means_75000.png)
+![Per-task success rates](figures/compare_per_task_75000.png)
+
 ## Activation Collection
 
 For mech-interp work you can have the policy server save per-step intermediate
