@@ -338,3 +338,103 @@ metadata, so clients can discover the checkpoint identity:
 
 Read it via `client.get_server_metadata()` immediately after constructing
 the `WebsocketClientPolicy` (the libero client logs it on startup).
+
+## Running with Steering
+
+Conceptor-based activation steering nudges the action expert's hidden state
+toward the subspace of successful rollouts. The end-user surface is one flag:
+`--steer`. Tuned per-task hyperparameters are committed at
+`experiments/libero/best_configs.json`; producing new ones is a research task
+(see `experiments/libero/README.md`).
+
+### Prereqs
+
+1. Download the conceptor NPZ:
+
+   ```bash
+   hf download brandonyang/libero-conceptors libero_conceptors.npz \
+       --repo-type dataset --local-dir conceptors/
+   ```
+
+2. Start a steering-capable server (note `--pytorch --steer`; the server sets
+   `TORCH_COMPILE_DISABLE=1` itself because hooks are incompatible with compile):
+
+   ```bash
+   uv run scripts/serve_policy.py policy:checkpoint \
+       --policy.config pi05_libero --policy.dir checkpoints/openpi-libero-2000 \
+       --env LIBERO --pytorch --steer
+   ```
+
+   The same `--steer` server happily serves baseline (unsteered) clients too —
+   an obs without an `__steering__` key passes straight through.
+
+### Single task, default steering params
+
+```bash
+cd examples/libero_env
+MUJOCO_GL=egl uv run python main.py \
+    --task_suite_name libero_10 --task_id 2 --steer
+```
+
+Defaults (duplicated from `src/openpi/serving/steering.py`):
+`--steering_layer 11 --steering_alpha 0.1 --steering_beta 0.3 --steering_strategy global`.
+
+### Single task, explicit params
+
+```bash
+MUJOCO_GL=egl uv run python main.py \
+    --task_suite_name libero_10 --task_id 2 --steer \
+    --steering_layer 17 --steering_alpha 0.5 --steering_beta 0.1 \
+    --steering_strategy per_step_0
+```
+
+### Full suite, uniform defaults
+
+```bash
+MUJOCO_GL=egl uv run python eval_all.py \
+    --task_suite_name libero_10 --num_episodes 10 --steer
+```
+
+### Full suite, per-task tuned configs
+
+This is the standard way to reproduce tuned steering results:
+
+```bash
+MUJOCO_GL=egl uv run python eval_all.py \
+    --task_suite_name libero_10 --num_episodes 10 \
+    --steer --steering_config ../../experiments/libero/best_configs.json
+```
+
+Tasks not present in `best_configs.json` fall back to the config's `defaults`
+block if present, or the CLI scalar flags otherwise.
+
+### All steering flags
+
+`main.py`:
+
+| Flag                   | Default   | Notes                                     |
+|------------------------|-----------|-------------------------------------------|
+| `--steer`              | False     | Toggle steering on                        |
+| `--steering_layer`     | 11        | Action-expert transformer layer index     |
+| `--steering_alpha`     | 0.1       | Conceptor aperture                        |
+| `--steering_beta`      | 0.3       | Interpolation weight (β=0 is no-op)       |
+| `--steering_strategy`  | "global"  | "global", "per_step_0", or "per_step_9"   |
+| `--steering_task`      | None      | Override NPZ task key (default: LIBERO task name) |
+
+`eval_all.py` adds:
+
+| Flag                 | Default | Notes                                            |
+|----------------------|---------|--------------------------------------------------|
+| `--steering_config`  | None    | Path to `best_configs.json` (per-task overrides) |
+
+### Error behavior
+
+- Server started without `--steer` receiving an `__steering__` payload: hard
+  error back to the client ("CollectingPolicy requires..."/wrong wrapper).
+- `task` not present in the conceptor NPZ: `ValueError` listing available task keys.
+- Malformed `best_configs.json`: `eval_all.py` fails before spawning any
+  subprocesses and points at the offending field.
+
+### Producing new tuned configs
+
+Not a normal-user task. See `experiments/libero/README.md`.

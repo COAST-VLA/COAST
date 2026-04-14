@@ -11,6 +11,16 @@ pi05-metaworld-activations-v1-15env/
 pi05-metaworld-activations-v2-15env/
 pi05-libero-activations-v1-2000-15env/
 
+# Experiment artifacts (per-run sweep outputs; best_configs.json IS committed)
+experiments/*/steering_results/
+experiments/*/diagnostic_results/
+
+# Pre-computed conceptor NPZs (download from brandonyang/libero-conceptors, brandonyang/robocasa-conceptors)
+conceptors/
+
+# Worktree
+.claude/worktrees/
+
 # Analysis outputs
 results/
 

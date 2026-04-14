@@ -151,3 +151,50 @@ Notes:
   and `__finalize_episode__` payloads. The same `openpi_client.collection_session.CollectionSession`
   helper handles the bookkeeping for libero, robocasa, and any future client.
 
+## Running with Steering
+
+Same flag surface as libero — the end-user entry point is `--steer`. The NPZ
+key is the RoboCasa env name directly (e.g., `CloseFridge`).
+
+### Prereqs
+
+```bash
+hf download brandonyang/robocasa-conceptors robocasa_conceptors.npz \
+    --repo-type dataset --local-dir conceptors/
+
+# Server (from repo root)
+uv run scripts/serve_policy.py policy:checkpoint \
+    --policy.config pi05_robocasa \
+    --policy.dir checkpoints/pi05_pretrain_human300/multitask_learning/75000 \
+    --env ROBOCASA --pytorch --steer
+```
+
+### Single env, default steering
+
+```bash
+cd examples/robocasa_env
+MUJOCO_GL=egl uv run python main.py --env_name CloseFridge --steer
+```
+
+### Single env, explicit params
+
+```bash
+MUJOCO_GL=egl uv run python main.py --env_name CloseFridge --steer \
+    --steering_layer 11 --steering_alpha 0.5 --steering_beta 0.1 \
+    --steering_strategy per_step_0
+```
+
+### Full task_set with per-env tuned configs
+
+```bash
+MUJOCO_GL=egl uv run python eval_all.py \
+    --task_set atomic_seen --num_episodes 10 \
+    --steer --steering_config ../../experiments/robocasa/best_configs.json
+```
+
+Flag names match libero; see `examples/libero_env/README.md#running-with-steering`
+for the full table. The only difference is the NPZ task-key source: robocasa
+uses `args.env_name` directly, so `--steering_task` is rarely needed.
+
+To produce new tuned configs, see `experiments/robocasa/README.md`.
+

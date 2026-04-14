@@ -8,6 +8,7 @@ uv run scripts/serve_policy.py policy:checkpoint \
 import dataclasses
 import enum
 import logging
+import os
 import pathlib
 import socket
 
@@ -27,6 +28,15 @@ class EnvMode(enum.Enum):
     ALOHA_SIM = "aloha_sim"
     DROID = "droid"
     LIBERO = "libero"
+    ROBOCASA = "robocasa"
+
+
+# Default conceptor NPZ paths keyed by --env when --steer is set.
+# Override with --conceptor_npz to point at a different file.
+DEFAULT_CONCEPTOR_NPZ: dict[EnvMode, str] = {
+    EnvMode.LIBERO: "conceptors/libero_conceptors.npz",
+    EnvMode.ROBOCASA: "conceptors/robocasa_conceptors.npz",
+}
 
 
 @dataclasses.dataclass
@@ -71,6 +81,16 @@ class Args:
     # <output_dir>/<checkpoint_step>/<task_name>/episode_NNN_env_NNN/step_NNNN/. Only
     # used when --collect_activations is set.
     output_dir: str = "activations"
+
+    # Enable conceptor steering. When set, the server wraps the policy in
+    # SteeredPolicyWrapper and dispatches on obs["__steering__"] (see
+    # src/openpi/serving/steering.py). Implies --pytorch (sample_actions_with_steering
+    # is PyTorch-only) and sets TORCH_COMPILE_DISABLE=1 at import time (torch.compile
+    # breaks forward hooks).
+    steer: bool = False
+    # Override the default conceptor NPZ path. If None, looks up a default based on --env
+    # (DEFAULT_CONCEPTOR_NPZ). Only used when --steer is set.
+    conceptor_npz: str | None = None
 
     # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
     policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
@@ -128,6 +148,15 @@ def main(args: Args) -> None:
         if not isinstance(args.policy, Checkpoint):
             raise ValueError("--collect_activations requires --policy=checkpoint (default policies are not supported).")
 
+    if args.steer:
+        if not args.pytorch:
+            raise ValueError("--steer requires --pytorch (sample_actions_with_steering is PyTorch-only).")
+        if args.collect_activations:
+            raise ValueError("--steer and --collect_activations are mutually exclusive.")
+        # torch.compile captures a graph at init and silently breaks forward hooks.
+        # This env var is read inside src/openpi/models_pytorch/pi0_pytorch.py:151.
+        os.environ["TORCH_COMPILE_DISABLE"] = "1"
+
     policy = create_policy(args)
 
     if args.collect_activations:
@@ -146,6 +175,19 @@ def main(args: Args) -> None:
             policy_dir=args.policy.dir,
             config_name=args.policy.config,
         )
+
+    if args.steer:
+        from openpi.serving.steering import SteeredPolicyWrapper
+
+        npz_path = args.conceptor_npz or DEFAULT_CONCEPTOR_NPZ.get(args.env)
+        if npz_path is None:
+            raise ValueError(
+                f"--steer with --env={args.env.value} has no default conceptor NPZ. "
+                f"Pass --conceptor_npz explicitly. Supported defaults: {list(DEFAULT_CONCEPTOR_NPZ)}"
+            )
+        device = str(policy._pytorch_device)  # noqa: SLF001
+        logging.info("Steering enabled: loading conceptor NPZ from %s (device=%s)", npz_path, device)
+        policy = SteeredPolicyWrapper(policy, conceptor_npz_path=npz_path, device=device)
 
     policy_metadata = policy.metadata
 

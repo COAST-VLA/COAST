@@ -30,10 +30,11 @@ import json
 import logging
 import math
 import os
+import pathlib
 import re
 import subprocess
 import sys
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
 import tyro
@@ -46,6 +47,69 @@ logger = logging.getLogger(__name__)
 # main.py logs this once at the end of eval_task via ``logger.info``, e.g.:
 #   [libero_spatial/pick_up.../task_00] success_rate=1.00 (1/1)
 SUCCESS_RATE_RE = re.compile(r"success_rate=([0-9.]+)")
+
+_ALLOWED_STRATEGIES = ("global", "per_step_0", "per_step_9")
+
+
+def _load_and_validate_steering_config(path: str) -> Dict[str, Any]:
+    """Parse and schema-check a best_configs.json.
+
+    Standalone implementation — the libero sub-venv cannot import openpi, so
+    this duplicates the logic in src/openpi/serving/steering.py:validate_best_configs_json.
+    Keep the two in sync.
+    """
+    cfg_path = pathlib.Path(path)
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"steering_config not found: {cfg_path}")
+    with open(cfg_path) as f:
+        cfg = json.load(f)
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("tasks"), dict):
+        raise ValueError(f"{cfg_path}: root must be a dict with a 'tasks' dict")
+    required = {
+        "layer": int,
+        "alpha": (int, float),
+        "beta": (int, float),
+        "strategy": str,
+    }
+    for name, entry in cfg["tasks"].items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"{cfg_path}: tasks[{name!r}] must be a dict")
+        for k, t in required.items():
+            if k not in entry:
+                raise ValueError(f"{cfg_path}: tasks[{name!r}] missing {k!r}")
+            if not isinstance(entry[k], t):
+                raise ValueError(f"{cfg_path}: tasks[{name!r}].{k} wrong type")
+        if entry["strategy"] not in _ALLOWED_STRATEGIES:
+            raise ValueError(
+                f"{cfg_path}: tasks[{name!r}].strategy not in {_ALLOWED_STRATEGIES}"
+            )
+    if "defaults" in cfg:
+        for k, t in required.items():
+            if k not in cfg["defaults"] or not isinstance(cfg["defaults"][k], t):
+                raise ValueError(f"{cfg_path}: defaults.{k} missing or wrong type")
+    return cfg
+
+
+def _resolve_steering_for_task(
+    args: Any, config: Optional[Dict[str, Any]], task_name: str
+) -> Dict[str, Any]:
+    """Return the per-task steering config (layer, alpha, beta, strategy)."""
+    fallback = {
+        "layer": args.steering_layer,
+        "alpha": args.steering_alpha,
+        "beta": args.steering_beta,
+        "strategy": args.steering_strategy,
+    }
+    if config is None:
+        return fallback
+    if task_name in config["tasks"]:
+        return config["tasks"][task_name]
+    if "defaults" in config:
+        return config["defaults"]
+    logger.warning(
+        "Task %s not in steering_config; falling back to CLI defaults", task_name
+    )
+    return fallback
 
 
 @dataclasses.dataclass
@@ -102,14 +166,38 @@ class Args:
     # are resolved against the user's shell cwd.
     output_dir: Optional[str] = None
 
+    # ── Steering (requires server started with --steer). ──────────────────────
+    # Forwarded verbatim to each main.py subprocess. If --steering_config is
+    # set, per-task overrides from that JSON take precedence.
+    steer: bool = False
+    # Path to a best_configs.json (see src/openpi/serving/steering.py
+    # validate_best_configs_json). Per-task entries override the scalar flags
+    # below. Tasks missing from the config fall back to the scalar flags
+    # (or to `defaults` within the config if present).
+    steering_config: Optional[str] = None
+    steering_layer: int = 11
+    steering_alpha: float = 0.1
+    steering_beta: float = 0.3
+    steering_strategy: str = "global"
 
-def _build_command(args: Args, task_id: int, output_dir: str) -> List[str]:
+
+def _build_command(
+    args: Args,
+    task_id: int,
+    output_dir: str,
+    task_name: Optional[str] = None,
+    steering_config: Optional[Dict[str, Any]] = None,
+) -> List[str]:
     """Build the ``main.py`` CLI invocation for one task_id.
 
     ``output_dir`` is the absolute path where this subprocess should write its
     per-task video directory. It is unconditionally forwarded as ``--output_dir``
     so that main.py does not fall back to its own default (which would land
     videos in a separate ``output/single-{suite}/`` tree).
+
+    When ``args.steer`` is True, appends ``--steer`` plus the per-task scalar
+    steering flags. If ``steering_config`` is provided, its per-task entries
+    override the scalar defaults.
     """
     cmd = [
         sys.executable,
@@ -148,11 +236,36 @@ def _build_command(args: Args, task_id: int, output_dir: str) -> List[str]:
         cmd.append("--collect")
     if args.max_steps is not None:
         cmd.extend(["--max_steps", str(args.max_steps)])
+    if args.steer:
+        if task_name is None:
+            raise ValueError("_build_command: steer=True requires task_name")
+        steer_cfg = _resolve_steering_for_task(args, steering_config, task_name)
+        cmd.extend(
+            [
+                "--steer",
+                "--steering_layer",
+                str(int(steer_cfg["layer"])),
+                "--steering_alpha",
+                str(float(steer_cfg["alpha"])),
+                "--steering_beta",
+                str(float(steer_cfg["beta"])),
+                "--steering_strategy",
+                str(steer_cfg["strategy"]),
+                "--steering_task",
+                task_name,
+            ]
+        )
     return cmd
 
 
 def _run_one_task(
-    args: Args, task_id: int, log_dir: str, cwd: str, output_dir: str
+    args: Args,
+    task_id: int,
+    log_dir: str,
+    cwd: str,
+    output_dir: str,
+    task_name: Optional[str] = None,
+    steering_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, object]:
     """Launch main.py for a single task_id and return a parsed result dict.
 
@@ -160,7 +273,13 @@ def _run_one_task(
     so the main process doesn't have to deal with interleaved output, and so
     the user can re-inspect the per-task logs after the run.
     """
-    cmd = _build_command(args, task_id, output_dir)
+    cmd = _build_command(
+        args,
+        task_id,
+        output_dir,
+        task_name=task_name,
+        steering_config=steering_config,
+    )
     env = os.environ.copy()
     env.setdefault("MUJOCO_GL", "egl")
 
@@ -246,6 +365,27 @@ def main(args: Args) -> None:
             "task_description": str(task.language),
         }
 
+    # Load steering config once up-front (fail-fast before any subprocesses launch).
+    steering_config: Optional[Dict[str, Any]] = None
+    if args.steer and args.steering_config:
+        steering_config = _load_and_validate_steering_config(args.steering_config)
+        suite_task_names = {
+            task_metadata[i]["task_name"] for i in range(task_suite.n_tasks)
+        }
+        unknown = set(steering_config["tasks"]) - suite_task_names
+        if unknown:
+            logger.warning(
+                "steering_config has %d tasks not in suite (will be ignored): %s",
+                len(unknown),
+                sorted(unknown)[:3],
+            )
+        logger.info(
+            "Loaded steering_config from %s (%d task entries, defaults=%s)",
+            args.steering_config,
+            len(steering_config["tasks"]),
+            "yes" if "defaults" in steering_config else "no",
+        )
+
     results: List[Dict[str, object]] = []
     results_path = os.path.join(output_dir, "results.json")
 
@@ -256,7 +396,14 @@ def main(args: Args) -> None:
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.num_workers) as pool:
         futures = {
             pool.submit(
-                _run_one_task, args, task_id, log_dir, script_dir, output_dir
+                _run_one_task,
+                args,
+                task_id,
+                log_dir,
+                script_dir,
+                output_dir,
+                task_metadata[task_id]["task_name"],
+                steering_config,
             ): task_id
             for task_id in range(task_suite.n_tasks)
         }
