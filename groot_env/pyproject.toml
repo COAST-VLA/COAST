@@ -14,7 +14,7 @@ dependencies = [
     # For WebsocketPolicyServer + base_policy. Editable install keeps us in sync
     # with the root repo's openpi-client package.
     "openpi-client",
-    "tyro",
+    "tyro>=0.9",
 ]
 
 # flash-attn is required at SERVE time (N1.5's backbone uses it), but not at
@@ -22,16 +22,13 @@ dependencies = [
 # runners don't have, so it's NOT pulled by `uv sync`. Install it separately
 # per the groot_env/README.md step-3:
 #     uv pip install --no-build-isolation flash-attn==2.7.1.post4
-# That's also NVIDIA's official install recipe for N1.5.
+# That's also NVIDIA's official install recipe for N1.5. The
+# `--no-build-isolation` flag uses the already-installed torch directly, so no
+# `[tool.uv.extra-build-dependencies]` hint is required here.
 
 [tool.uv.sources]
 gr00t = { path = "../third_party/Isaac-GR00T", editable = true }
 openpi-client = { path = "../packages/openpi-client", editable = true }
-
-[tool.uv.extra-build-dependencies]
-# flash-attn needs torch present at build time. Without this hint uv tries to
-# build flash-attn in an isolated env that lacks torch and fails immediately.
-flash-attn = ["torch==2.5.1", "numpy==1.26.4"]
 
 [dependency-groups]
 dev = [
