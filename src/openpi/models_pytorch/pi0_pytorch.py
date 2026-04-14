@@ -148,6 +148,10 @@ class PI0Pytorch(nn.Module):
             self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
         torch.set_float32_matmul_precision("high")
+        # Opt-in: set TORCH_COMPILE_DISABLE=1 (the default in scripts/serve_policy.py)
+        # to skip. torch.compile gives a ~2x speedup on baseline sample_actions but
+        # trades 30-60s first-call warmup and is incompatible with some hook
+        # patterns (activation collection / steering work fine on eager).
         if not os.environ.get("TORCH_COMPILE_DISABLE"):
             self.sample_actions = torch.compile(self.sample_actions, mode="max-autotune")
 

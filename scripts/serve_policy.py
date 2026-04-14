@@ -73,6 +73,13 @@ class Args:
     # Use PyTorch backend for inference. Auto-converts the JAX checkpoint if needed.
     pytorch: bool = False
 
+    # Apply torch.compile(sample_actions, mode="max-autotune") at model load. Off by
+    # default for safety: compile trades a 30-60s first-call warmup for ~2x steady-state
+    # speedup on baseline inference, and is incompatible with some forward-hook patterns
+    # (activation collection, steering) in non-trivial call paths. Opt in when you are
+    # running a long baseline-only eval and want the throughput.
+    torch_compile: bool = False
+
     # Enable activation-collection mode. The server wraps the policy in CollectingPolicy
     # and rejects any client request that doesn't include the __collect__ or __finalize_episode__
     # magic key. Requires --pytorch (infer_with_intermediates is PyTorch-only).
@@ -84,9 +91,8 @@ class Args:
 
     # Enable conceptor steering. When set, the server wraps the policy in
     # SteeredPolicyWrapper and dispatches on obs["__steering__"] (see
-    # src/openpi/serving/steering.py). Implies --pytorch (sample_actions_with_steering
-    # is PyTorch-only) and sets TORCH_COMPILE_DISABLE=1 at import time (torch.compile
-    # breaks forward hooks).
+    # src/openpi/serving/steering.py). Implies --pytorch
+    # (sample_actions_with_steering is PyTorch-only).
     steer: bool = False
     # Override the default conceptor NPZ path. If None, looks up a default based on --env
     # (DEFAULT_CONCEPTOR_NPZ). Only used when --steer is set.
@@ -153,8 +159,10 @@ def main(args: Args) -> None:
             raise ValueError("--steer requires --pytorch (sample_actions_with_steering is PyTorch-only).")
         if args.collect_activations:
             raise ValueError("--steer and --collect_activations are mutually exclusive.")
-        # torch.compile captures a graph at init and silently breaks forward hooks.
-        # This env var is read inside src/openpi/models_pytorch/pi0_pytorch.py:151.
+
+    # torch.compile is off by default. The model's __init__ checks TORCH_COMPILE_DISABLE
+    # and skips the compile wrap when set. Must be set before create_policy() below.
+    if not args.torch_compile:
         os.environ["TORCH_COMPILE_DISABLE"] = "1"
 
     policy = create_policy(args)
