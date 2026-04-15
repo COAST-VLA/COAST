@@ -109,6 +109,21 @@ class CollectionSession:
         if done:
             self._success = True
 
+    def set_episode_result(self, success: bool, total_reward: float = 0.0) -> None:
+        """Override episode outcome directly (e.g. from a post-hoc human label).
+
+        Unlike record_step(done=True), this does not append a fake env step to
+        per_step_reward / per_step_success. Use this when the success signal comes
+        from outside the env loop (human labeling, external classifier, etc.).
+        """
+        self._success = success
+        if success and self._steps_to_success == -1:
+            self._steps_to_success = len(self._per_step_reward) - 1
+        elif not success:
+            self._steps_to_success = -1
+        if total_reward != 0.0:
+            self._cumulative_reward = total_reward
+
     def finalize_episode(self) -> Dict[str, Any]:
         """Send the __finalize_episode__ payload so the server writes
         episode-level metadata.json + rewards.npz. Returns the server's ack.

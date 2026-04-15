@@ -27,26 +27,46 @@ def save_step_activations(
     env_id: int,
     step_metadata: dict,
 ) -> None:
-    """Save per-env, per-step activation data (v1 format).
+    """Save per-env, per-step activation data (GR00T N1.5 schema, v1 format).
 
     Slices the env_id-th example out of the batch dimension of each intermediate
     array, then writes one .npz per activation kind plus metadata.json. The
-    output schema must stay byte-identical to examples/metaworld/collect_activations.py
-    so existing analysis tooling keeps working.
+    schema mirrors pi0's naming convention where it makes sense so downstream
+    mech-interp tooling can reuse the same file layout:
+      - denoising.npz {all_x_t, all_v_t}                - per denoising-step x_t and velocity
+      - backbone_cond.npz {backbone_features}           - VL backbone output the DiT
+                                                          cross-attends to (GR00T analog
+                                                          of pi0's adarms_cond; shape
+                                                          differs because of the
+                                                          architectural difference —
+                                                          see adapter docstring).
+      - dit_hidden_states.npz {all_dit_hidden_states}   - DiT per-layer residual stream,
+                                                          pi0 analog: suffix_residual.
+      - dit_mlp_hidden.npz {all_dit_mlp_hidden}         - DiT per-layer MLP expanded
+                                                          activation (input to the
+                                                          ff_inner->hidden contraction);
+                                                          pi0 analog: suffix_mlp_hidden.
     """
     step_dir.mkdir(parents=True, exist_ok=True)
 
-    # intermediates shapes: (num_steps, batch, ...) or (num_steps, num_layers, batch, ...)
-    all_x_t = intermediates["all_x_t"][:, env_id]  # (10, 32, 32)
-    all_v_t = intermediates["all_v_t"][:, env_id]  # (10, 32, 32)
-    all_adarms_cond = intermediates["all_adarms_cond"][:, env_id]  # (10, 1024)
-    all_suffix_residual = intermediates["all_suffix_residual"][:, :, env_id]  # (10, 4, 32, 1024)
-    all_suffix_mlp_hidden = intermediates["all_suffix_mlp_hidden"][:, :, env_id]  # (10, 4, 32, 4096)
+    # GR00T intermediates shapes (produced by GR00TAdapterPolicy.infer_with_intermediates):
+    #   all_x_t: (num_denoising_steps, batch, action_horizon, action_dim), fp32
+    #   all_v_t: (num_denoising_steps, batch, action_horizon, action_dim), fp32
+    #   backbone_features: (batch, seq_len, hidden_dim), fp16
+    #   all_dit_hidden_states: (num_denoising_steps, num_dit_layers, batch, seq_len, hidden_dim), fp16
+    #   all_dit_mlp_hidden: (num_denoising_steps, num_dit_layers, batch, seq_len, ff_inner_dim), fp16
+    all_x_t = intermediates["all_x_t"][:, env_id]
+    all_v_t = intermediates["all_v_t"][:, env_id]
+    backbone_features = intermediates["backbone_features"][env_id]
+    all_dit_hidden_states = intermediates["all_dit_hidden_states"][:, :, env_id]
+    all_dit_mlp_hidden = intermediates["all_dit_mlp_hidden"][:, :, env_id]
 
     np.savez(step_dir / "denoising.npz", all_x_t=all_x_t, all_v_t=all_v_t)
-    np.savez(step_dir / "adarms_cond.npz", all_adarms_cond=all_adarms_cond)
-    np.savez(step_dir / "suffix_residual.npz", all_suffix_residual=all_suffix_residual)
-    np.savez(step_dir / "suffix_mlp_hidden.npz", all_suffix_mlp_hidden=all_suffix_mlp_hidden)
+    np.savez(step_dir / "backbone_cond.npz", backbone_features=backbone_features)
+    np.savez(
+        step_dir / "dit_hidden_states.npz", all_dit_hidden_states=all_dit_hidden_states
+    )
+    np.savez(step_dir / "dit_mlp_hidden.npz", all_dit_mlp_hidden=all_dit_mlp_hidden)
 
     with open(step_dir / "metadata.json", "w") as f:
         json.dump(step_metadata, f, indent=2)
@@ -127,7 +147,9 @@ class CollectingPolicy(_base_policy.BasePolicy):
         collect_meta = obs.get(_COLLECT_KEY)
 
         if finalize_meta is not None and collect_meta is not None:
-            raise ValueError(f"Request contains both {_COLLECT_KEY} and {_FINALIZE_KEY}; only one is allowed per call.")
+            raise ValueError(
+                f"Request contains both {_COLLECT_KEY} and {_FINALIZE_KEY}; only one is allowed per call."
+            )
 
         if finalize_meta is not None:
             return self._handle_finalize(finalize_meta)
@@ -149,13 +171,21 @@ class CollectingPolicy(_base_policy.BasePolicy):
         task_name_str = str(task_name)
         task_path = pathlib.PurePosixPath(task_name_str)
         if task_path.is_absolute():
-            raise ValueError(f"Invalid task_name {task_name_str!r}: absolute paths are not allowed.")
+            raise ValueError(
+                f"Invalid task_name {task_name_str!r}: absolute paths are not allowed."
+            )
         if any(part in {"", ".", ".."} for part in task_path.parts):
-            raise ValueError(f"Invalid task_name {task_name_str!r}: path traversal segments are not allowed.")
+            raise ValueError(
+                f"Invalid task_name {task_name_str!r}: path traversal segments are not allowed."
+            )
         if len(task_path.parts) != 1:
-            raise ValueError(f"Invalid task_name {task_name_str!r}: nested paths are not allowed.")
+            raise ValueError(
+                f"Invalid task_name {task_name_str!r}: nested paths are not allowed."
+            )
         if "\\" in task_name_str:
-            raise ValueError(f"Invalid task_name {task_name_str!r}: path separators are not allowed.")
+            raise ValueError(
+                f"Invalid task_name {task_name_str!r}: path separators are not allowed."
+            )
         return task_name_str
 
     def _episode_dir(self, meta: dict) -> pathlib.Path:
@@ -164,7 +194,9 @@ class CollectingPolicy(_base_policy.BasePolicy):
             self._output_root
             / self._checkpoint_step
             / task_name
-            / "episode_{:03d}_env_{:03d}".format(int(meta["episode_id"]), int(meta["env_id"]))
+            / "episode_{:03d}_env_{:03d}".format(
+                int(meta["episode_id"]), int(meta["env_id"])
+            )
         )
 
     def _step_dir(self, meta: dict) -> pathlib.Path:
@@ -173,7 +205,9 @@ class CollectingPolicy(_base_policy.BasePolicy):
     def _handle_collect_infer(self, obs: dict, collect_meta: dict) -> dict:
         # Drop the magic keys before passing the obs to the underlying policy.
         # We mutate a shallow copy so the caller's dict is untouched.
-        clean_obs = {k: v for k, v in obs.items() if k not in (_COLLECT_KEY, _FINALIZE_KEY)}
+        clean_obs = {
+            k: v for k, v in obs.items() if k not in (_COLLECT_KEY, _FINALIZE_KEY)
+        }
 
         batched_obs = self._batch_single_example(clean_obs)
 
@@ -200,11 +234,13 @@ class CollectingPolicy(_base_policy.BasePolicy):
             )
 
         # Serialize calls into infer_with_intermediates: the underlying
-        # sample_actions_with_intermediates_v2 registers forward hooks on shared
-        # module instances, so two in-flight calls would pollute each other's
-        # capture dicts. The current single-threaded asyncio server already
-        # serializes calls implicitly, but this lock makes the invariant explicit
-        # and defends against future executor-based optimizations.
+        # `_get_action_with_intermediates` (GR00T analog of pi0's V1
+        # `sample_actions_with_intermediates`) registers forward hooks on
+        # shared module instances, so two in-flight calls would pollute each
+        # other's capture dicts. The current single-threaded asyncio server
+        # already serializes calls implicitly, but this lock makes the
+        # invariant explicit and defends against future executor-based
+        # optimizations.
         with self._intermediates_lock:
             result, intermediates = self._policy.infer_with_intermediates(batched_obs)
 
@@ -240,7 +276,9 @@ class CollectingPolicy(_base_policy.BasePolicy):
             "episode_success": bool(finalize_meta.get("episode_success", False)),
             "total_reward": float(finalize_meta.get("total_reward", 0.0)),
             "steps_to_success": int(finalize_meta.get("steps_to_success", -1)),
-            "total_env_steps": int(finalize_meta.get("total_env_steps", len(per_step_reward))),
+            "total_env_steps": int(
+                finalize_meta.get("total_env_steps", len(per_step_reward))
+            ),
             "total_inference_steps": int(finalize_meta.get("total_inference_steps", 0)),
             "prompt": str(finalize_meta.get("prompt", "")),
             "checkpoint_dir": str(self._policy_dir),

@@ -83,6 +83,7 @@ members = ["packages/*"]
 exclude = [
     "examples/robocasa_env",
     "examples/libero_env",
+    "groot_env",
 ]
 
 [tool.ruff]

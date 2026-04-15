@@ -177,6 +177,41 @@ class TestBatchSingleExample:
         obs = {"foo": "bar"}
         assert CollectingPolicy._batch_single_example(obs) is obs  # noqa: SLF001
 
+    def test_batch_single_example_droid_keys(self) -> None:
+        """Droid sends observation/joint_position + observation/gripper_position
+        instead of observation/state. Verify all arrays gain a batch dim."""
+        obs = {
+            "observation/joint_position": np.zeros(7, dtype=np.float32),
+            "observation/gripper_position": np.zeros(1, dtype=np.float32),
+            "observation/exterior_image_1_left": np.zeros((224, 224, 3), dtype=np.uint8),
+            "prompt": "pick up cup",
+        }
+        batched = CollectingPolicy._batch_single_example(obs)  # noqa: SLF001
+        assert batched["observation/joint_position"].shape == (1, 7)
+        assert batched["observation/gripper_position"].shape == (1, 1)
+        assert batched["observation/exterior_image_1_left"].shape == (1, 224, 224, 3)
+        assert batched["prompt"] == ["pick up cup"]
+
+    def test_batch_single_example_already_batched_droid_keys(self) -> None:
+        """If droid obs already has a batch dim, pass through unchanged."""
+        obs = {
+            "observation/joint_position": np.zeros((1, 7), dtype=np.float32),
+            "observation/gripper_position": np.zeros((1, 1), dtype=np.float32),
+            "observation/exterior_image_1_left": np.zeros((1, 224, 224, 3), dtype=np.uint8),
+            "prompt": ["pick up cup"],
+        }
+        batched = CollectingPolicy._batch_single_example(obs)  # noqa: SLF001
+        assert batched["observation/joint_position"].shape == (1, 7)
+        assert batched["observation/gripper_position"].shape == (1, 1)
+        assert batched["observation/exterior_image_1_left"].shape == (1, 224, 224, 3)
+        assert batched["prompt"] == ["pick up cup"]
+
+    def test_batch_single_example_no_observation_keys(self) -> None:
+        """If no observation arrays exist, return unchanged."""
+        obs = {"prompt": "hello"}
+        result = CollectingPolicy._batch_single_example(obs)  # noqa: SLF001
+        assert result is obs
+
 
 # ------------------------------------------- CollectingPolicy dispatch tests
 
