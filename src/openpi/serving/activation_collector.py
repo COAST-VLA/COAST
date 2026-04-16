@@ -75,6 +75,56 @@ def save_episode_files(
     )
 
 
+def save_step_activations_fast(
+    step_dir: pathlib.Path,
+    intermediates: dict,
+    env_id: int,
+    step_metadata: dict,
+) -> None:
+    """Save per-env, per-step activation data for pi0-fast (autoregressive) models.
+
+    On-disk schema:
+    - tokens.npz: generated_tokens (num_tokens,) int32 — sampled action token IDs
+    - hidden_states.npz: token_pre_logits (num_tokens-1, width) float16 — per-token
+      last hidden state (one fewer than tokens because the final token's forward pass
+      isn't needed for the next prediction)
+    - token_logprobs.npz: token_logprobs (num_tokens,) float32 — log-prob of sampled token
+    - metadata.json: step metadata + num_tokens
+    """
+    step_dir.mkdir(parents=True, exist_ok=True)
+
+    # intermediates shapes have batch dim in position 1 (or 0 for some)
+    # generated_tokens: (num_tokens, batch)
+    # token_pre_logits: (num_tokens-1, batch, width)
+    # token_logprobs: (num_tokens, batch)
+    generated_tokens = intermediates["generated_tokens"][:, env_id]  # (num_tokens,)
+    token_logprobs = intermediates["token_logprobs"][:, env_id]  # (num_tokens,)
+    num_tokens = int(intermediates["num_tokens"])
+
+    np.savez(
+        step_dir / "tokens.npz",
+        generated_tokens=np.asarray(generated_tokens, dtype=np.int32),
+    )
+    np.savez(
+        step_dir / "token_logprobs.npz",
+        token_logprobs=np.asarray(token_logprobs, dtype=np.float32),
+    )
+
+    # token_pre_logits may be empty if only 1 token was generated (and it was EOS)
+    token_pre_logits = intermediates["token_pre_logits"]
+    if token_pre_logits.shape[0] > 0:
+        np.savez(
+            step_dir / "hidden_states.npz",
+            token_pre_logits=np.asarray(token_pre_logits[:, env_id], dtype=np.float16),
+        )
+
+    step_metadata = dict(step_metadata)
+    step_metadata["num_tokens"] = num_tokens
+    step_metadata["collection_version"] = "fast_v1"
+    with open(step_dir / "metadata.json", "w") as f:
+        json.dump(step_metadata, f, indent=2)
+
+
 _COLLECT_KEY = "__collect__"
 _FINALIZE_KEY = "__finalize_episode__"
 
@@ -100,12 +150,17 @@ class CollectingPolicy(_base_policy.BasePolicy):
         checkpoint_step: str,
         policy_dir: str,
         config_name: str,
+        steering_hooks_fn: Any | None = None,
     ) -> None:
         self._policy = policy
         self._output_root = pathlib.Path(output_root)
         self._checkpoint_step = checkpoint_step
         self._policy_dir = policy_dir
         self._config_name = config_name
+        # Optional callable: task_name -> list[(layer_idx, hook_callable)] or None.
+        # When set, activations are collected with steering hooks active so the
+        # saved intermediates reflect post-steering values.
+        self._steering_hooks_fn = steering_hooks_fn
         # Serializes calls into the model's hook-based intermediate collection
         # path. See _handle_collect_infer for the rationale.
         self._intermediates_lock = threading.Lock()
@@ -198,16 +253,33 @@ class CollectingPolicy(_base_policy.BasePolicy):
         # capture dicts. The current single-threaded asyncio server already
         # serializes calls implicitly, but this lock makes the invariant explicit
         # and defends against future executor-based optimizations.
+        # Resolve per-task steering hooks (if configured).
+        task_steering_hooks = None
+        if self._steering_hooks_fn is not None:
+            task_name = collect_meta.get("task_name", "")
+            task_steering_hooks = self._steering_hooks_fn(task_name)
+
         with self._intermediates_lock:
-            result, intermediates = self._policy.infer_with_intermediates(batched_obs)
+            result, intermediates = self._policy.infer_with_intermediates(
+                batched_obs, steering_hooks=task_steering_hooks,
+            )
 
         step_dir = self._step_dir(collect_meta)
-        save_step_activations(
-            step_dir=step_dir,
-            intermediates=intermediates,
-            env_id=0,  # batch_size is enforced to 1 above
-            step_metadata=dict(collect_meta),
-        )
+        # Detect pi0-fast (autoregressive) vs pi0/pi0.5 (diffusion) from intermediates keys
+        if "generated_tokens" in intermediates:
+            save_step_activations_fast(
+                step_dir=step_dir,
+                intermediates=intermediates,
+                env_id=0,  # batch_size is enforced to 1 above
+                step_metadata=dict(collect_meta),
+            )
+        else:
+            save_step_activations(
+                step_dir=step_dir,
+                intermediates=intermediates,
+                env_id=0,  # batch_size is enforced to 1 above
+                step_metadata=dict(collect_meta),
+            )
 
         # Strip the batch dim from actions so the client receives the same
         # shape it would from a non-collection server (action_horizon, action_dim).
