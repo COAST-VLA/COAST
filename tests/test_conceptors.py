@@ -23,6 +23,7 @@ from openpi.serving.conceptors import DEFAULT_COLLECT_LAYERS
 from openpi.serving.conceptors import boolean_and
 from openpi.serving.conceptors import boolean_not
 from openpi.serving.conceptors import compute_all_conceptors
+from openpi.serving.conceptors import compute_linear_direction
 from openpi.serving.conceptors import compute_task_conceptors
 from openpi.serving.conceptors import conceptor
 from openpi.serving.conceptors import contrastive_conceptor
@@ -32,6 +33,7 @@ from openpi.serving.conceptors import flatten_global
 from openpi.serving.conceptors import flatten_per_step
 from openpi.serving.conceptors import iter_episode_dirs
 from openpi.serving.conceptors import load_episode_hiddens
+from openpi.serving.conceptors import random_matched_conceptor
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # correlation_matrix
@@ -206,6 +208,110 @@ def test_contrastive_disjoint_subspaces():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Linear direction (for the `linear` steering strategy)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_linear_direction_is_unit():
+    rng = np.random.default_rng(20)
+    X_s = rng.standard_normal((100, 16)) + 3.0  # shifted positive
+    X_f = rng.standard_normal((100, 16))
+    v = compute_linear_direction(X_s, X_f)
+    assert v.shape == (16,)
+    assert v.dtype == np.float32
+    np.testing.assert_allclose(np.linalg.norm(v), 1.0, atol=1e-5)
+
+
+def test_linear_direction_points_from_failure_to_success():
+    """If success cluster is shifted in the +e0 direction, v should align with e0."""
+    d = 8
+    rng = np.random.default_rng(21)
+    X_s = rng.standard_normal((200, d)) * 0.1 + np.eye(d)[0] * 5.0  # shifted on e0
+    X_f = rng.standard_normal((200, d)) * 0.1
+    v = compute_linear_direction(X_s, X_f)
+    # v[0] should be ≈ 1, others ≈ 0
+    assert v[0] > 0.95
+    assert np.max(np.abs(v[1:])) < 0.1
+
+
+def test_linear_direction_zero_when_means_coincide():
+    """Identical distributions → zero vector (no NaN)."""
+    X = np.random.default_rng(22).standard_normal((50, 8))
+    v = compute_linear_direction(X, X)  # same data both classes
+    assert v.shape == (8,)
+    np.testing.assert_allclose(v, np.zeros(8), atol=1e-6)
+
+
+def test_linear_direction_rejects_mismatched_dim():
+    with pytest.raises(ValueError, match="hidden dim mismatch"):
+        compute_linear_direction(np.zeros((10, 8)), np.zeros((10, 16)))
+
+
+def test_linear_direction_rejects_empty():
+    with pytest.raises(ValueError, match="empty success or failure"):
+        compute_linear_direction(np.zeros((0, 8)), np.zeros((10, 8)))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Random-matched conceptor (for the `random_matched` control strategy)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_random_matched_preserves_spectrum():
+    """Eigenvalues of C_random match those of C_reference (within numerical tolerance)."""
+    rng = np.random.default_rng(30)
+    d = 12
+    X = rng.standard_normal((500, d))
+    C_ref = conceptor(correlation_matrix(X), alpha=0.5)
+    C_rand = random_matched_conceptor(C_ref, seed=7)
+    eig_ref = np.sort(np.linalg.eigvalsh(0.5 * (C_ref + C_ref.T)))
+    eig_rand = np.sort(np.linalg.eigvalsh(0.5 * (C_rand + C_rand.T)))
+    np.testing.assert_allclose(eig_rand, eig_ref, atol=1e-4, rtol=1e-4)
+
+
+def test_random_matched_is_deterministic_for_same_seed():
+    d = 8
+    C_ref = np.eye(d) * 0.5
+    a = random_matched_conceptor(C_ref, seed=42)
+    b = random_matched_conceptor(C_ref, seed=42)
+    np.testing.assert_array_equal(a, b)
+
+
+def test_random_matched_differs_for_different_seed():
+    d = 16
+    rng = np.random.default_rng(31)
+    C_ref = conceptor(correlation_matrix(rng.standard_normal((200, d))), alpha=1.0)
+    a = random_matched_conceptor(C_ref, seed=1)
+    b = random_matched_conceptor(C_ref, seed=2)
+    # Different random basis → matrices should differ substantially
+    assert np.linalg.norm(a - b) > 0.1
+
+
+def test_random_matched_output_is_symmetric_and_float32():
+    d = 10
+    rng = np.random.default_rng(32)
+    C_ref = conceptor(correlation_matrix(rng.standard_normal((300, d))), alpha=1.0)
+    C_rand = random_matched_conceptor(C_ref, seed=5)
+    assert C_rand.shape == (d, d)
+    assert C_rand.dtype == np.float32
+    np.testing.assert_allclose(C_rand, C_rand.T, atol=1e-5)
+
+
+def test_random_matched_rejects_non_square():
+    with pytest.raises(ValueError, match="square"):
+        random_matched_conceptor(np.zeros((3, 4)), seed=0)
+
+
+def test_random_matched_rotational_invariant_eigenvalues():
+    """Using a scaled identity C_ref, the random result must also have constant eigenvalues."""
+    d = 6
+    C_ref = np.eye(d) * 0.3
+    C_rand = random_matched_conceptor(C_ref, seed=99)
+    eig = np.sort(np.linalg.eigvalsh(0.5 * (C_rand + C_rand.T)))
+    np.testing.assert_allclose(eig, np.full(d, 0.3), atol=1e-5)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Flatten helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -252,8 +358,8 @@ def test_compute_task_conceptors_key_layout():
         collect_layers=DEFAULT_COLLECT_LAYERS,
     )
 
-    # Per layer: 2 alphas × 3 kinds + 2 per_step × 3 kinds = 12 keys. × 2 layers = 24
-    assert len(out) == 24
+    # Per layer: 2 alphas × 3 kinds + 2 per_step × 3 kinds + 1 linear = 13 keys. × 2 layers = 26
+    assert len(out) == 26
 
     for layer in (0, 11):
         for alpha in (0.1, 1.0):
@@ -262,6 +368,7 @@ def test_compute_task_conceptors_key_layout():
         for t in (0, 9):
             for kind in ("C_success", "C_failure", "C_contrastive"):
                 assert f"L{layer}__per_step_{t}__{kind}" in out
+        assert f"L{layer}__linear_direction" in out
 
 
 def test_compute_task_conceptors_matrix_shape_and_dtype():
@@ -277,7 +384,10 @@ def test_compute_task_conceptors_matrix_shape_and_dtype():
         collect_layers=DEFAULT_COLLECT_LAYERS,
     )
     for k, M in out.items():
-        assert M.shape == (d, d), f"{k}: shape {M.shape}"
+        if k.endswith("linear_direction"):
+            assert M.shape == (d,), f"{k}: shape {M.shape}"
+        else:
+            assert M.shape == (d, d), f"{k}: shape {M.shape}"
         assert M.dtype == np.float32
         assert np.all(np.isfinite(M))
 
@@ -374,8 +484,8 @@ def test_compute_all_conceptors_end_to_end(tmp_path):
         per_step_indices=(0, 9),
     )
     assert summary["num_tasks"] == 2
-    # 2 tasks × (1 layer × (2 alphas × 3 kinds + 2 per_step × 3 kinds)) = 2 × 12 = 24 keys
-    assert summary["num_keys"] == 24
+    # 2 tasks × (1 layer × (2 alphas × 3 kinds + 2 per_step × 3 kinds + 1 linear)) = 2 × 13 = 26
+    assert summary["num_keys"] == 26
     assert summary["skipped_tasks"] == []
     assert set(summary["included_tasks"]) == {"taskA", "taskB"}
 
@@ -386,6 +496,10 @@ def test_compute_all_conceptors_end_to_end(tmp_path):
         assert f"{task}__L11__1.0__C_success" in npz.files
         assert f"{task}__L11__per_step_0__C_failure" in npz.files
         assert f"{task}__L11__per_step_9__C_contrastive" in npz.files
+        assert f"{task}__L11__linear_direction" in npz.files
+        v = npz[f"{task}__L11__linear_direction"]
+        assert v.shape == (16,)  # d=16 in the fake tree
+        assert v.dtype == np.float32
 
     # Matrix shape should be (d, d) where d=16 in the fake tree
     M = npz["taskA__L11__1.0__C_contrastive"]
@@ -458,3 +572,63 @@ def test_compute_all_conceptors_output_is_steering_compatible(tmp_path):
     assert C.shape == (16, 16)
     C2 = get_conceptor_matrix(npz, "taskB", 11, 0.1, "per_step_0")
     assert C2.shape == (16, 16)
+
+
+def test_compute_all_conceptors_supports_all_five_strategies(tmp_path):
+    """Full-stack integration: synthetic activations → NPZ → dispatch all 5 strategies via wrapper."""
+    from openpi.serving.steering import ConceptorSteeringHook
+    from openpi.serving.steering import LinearSteeringHook
+    from openpi.serving.steering import SteeredPolicyWrapper
+
+    root = _make_fake_tree(tmp_path)
+    out_path = tmp_path / "out.npz"
+    compute_all_conceptors(
+        root,
+        out_path,
+        layers=(11,),
+        alphas=(0.1,),
+        per_step_indices=(0, 9),
+    )
+
+    # Stub policy that records calls; wrapper dispatches hooks through us.
+    class _Stub:
+        def __init__(self):
+            self.last_steering_hooks = None
+            self._metadata = {}
+
+        def infer(self, obs):
+            return {"actions": np.zeros((1, 4))}
+
+        def infer_with_steering(self, obs, *, steering_hooks):
+            self.last_steering_hooks = steering_hooks
+            return {"actions": np.ones((1, 4))}, {}
+
+        @property
+        def metadata(self):
+            return self._metadata
+
+    w = SteeredPolicyWrapper(_Stub(), conceptor_npz_path=out_path, device="cpu")
+    expected_hook_types = {
+        "global": ConceptorSteeringHook,
+        "per_step_0": ConceptorSteeringHook,
+        "per_step_9": ConceptorSteeringHook,
+        "positive_only": ConceptorSteeringHook,
+        "random_matched": ConceptorSteeringHook,
+        "linear": LinearSteeringHook,
+    }
+    for strategy, expected_cls in expected_hook_types.items():
+        payload = {
+            "task": "taskA",
+            "layer": 11,
+            "alpha": 0.1,
+            "beta": 0.3,
+            "strategy": strategy,
+        }
+        w.infer({"__steering__": payload})
+        layer_idx, hook = w._policy.last_steering_hooks[0]  # noqa: SLF001
+        assert layer_idx == 11, f"{strategy}: wrong layer"
+        assert isinstance(hook, expected_cls), f"{strategy}: got {type(hook).__name__}"
+
+    # Cache should hold exactly 6 entries (5 unique strategies × 1 config, +
+    # per_step_9 distinct from per_step_0).
+    assert len(w._hook_cache) == 6  # noqa: SLF001

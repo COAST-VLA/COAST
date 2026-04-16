@@ -124,7 +124,14 @@ class Args:
     steering_strategy: str = "global"
 
 
-_ALLOWED_STRATEGIES = ("global", "per_step_0", "per_step_9")
+_ALLOWED_STRATEGIES = (
+    "global",
+    "per_step_0",
+    "per_step_9",
+    "positive_only",
+    "random_matched",
+    "linear",
+)
 
 
 def _load_and_validate_steering_config(path: str) -> Dict[str, Any]:

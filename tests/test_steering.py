@@ -231,14 +231,24 @@ def test_missing_file_raises(tmp_path: pathlib.Path):
 
 @pytest.fixture
 def mini_npz(tmp_path: pathlib.Path) -> pathlib.Path:
-    """Build a tiny conceptor NPZ with two tasks, one layer, matching miranda-v2 key format."""
+    """Build a tiny conceptor NPZ with two tasks, one layer, matching miranda-v2 key format.
+
+    Contains all per-strategy keys: C_contrastive + C_success (+ C_failure) per
+    alpha, per_step_{0,9} variants, and a linear_direction per layer.
+    """
     d = 8
     arrays = {}
     for task in ("taskA", "taskB"):
         for alpha in ("0.1", "0.5", "1.0"):
             arrays[f"{task}__L11__{alpha}__C_contrastive"] = np.eye(d, dtype=np.float32) * 0.5
+            arrays[f"{task}__L11__{alpha}__C_success"] = np.eye(d, dtype=np.float32) * 0.4
+            arrays[f"{task}__L11__{alpha}__C_failure"] = np.eye(d, dtype=np.float32) * 0.35
         for step in (0, 9):
             arrays[f"{task}__L11__per_step_{step}__C_contrastive"] = np.eye(d, dtype=np.float32) * 0.3
+        # Linear direction: unit vector, distinct per task
+        v = np.zeros(d, dtype=np.float32)
+        v[0 if task == "taskA" else 1] = 1.0
+        arrays[f"{task}__L11__linear_direction"] = v
     path = tmp_path / "mini.npz"
     np.savez(path, **arrays)
     return path
@@ -387,4 +397,179 @@ def test_defaults_are_module_constants():
     assert isinstance(steering.DEFAULT_STEERING_LAYER, int)
     assert isinstance(steering.DEFAULT_STEERING_ALPHA, float)
     assert isinstance(steering.DEFAULT_STEERING_BETA, float)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LinearSteeringHook
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_linear_hook_alpha_zero_is_no_op():
+    d = 8
+    v = np.zeros(d, dtype=np.float32)
+    v[0] = 1.0
+    hook = steering.LinearSteeringHook(v, alpha=0.0, device="cpu")
+    h = torch.randn(2, 4, d)
+    out = hook(None, None, h)
+    torch.testing.assert_close(out, h, rtol=1e-6, atol=1e-6)
+
+
+def test_linear_hook_additive_math():
+    """h' = h + alpha * v elementwise (v broadcasts across batch and sequence)."""
+    d = 8
+    v = np.zeros(d, dtype=np.float32)
+    v[0] = 1.0
+    hook = steering.LinearSteeringHook(v, alpha=2.5, device="cpu")
+    h = torch.zeros(1, 1, d)
+    out = hook(None, None, h)
+    expected = torch.zeros(1, 1, d)
+    expected[..., 0] = 2.5
+    torch.testing.assert_close(out, expected, rtol=1e-6, atol=1e-6)
+
+
+def test_linear_hook_preserves_tuple_output():
+    d = 4
+    v = np.zeros(d, dtype=np.float32)
+    hook = steering.LinearSteeringHook(v, alpha=1.0, device="cpu")
+    h = torch.randn(1, 2, d)
+    extras = ("kv", 99)
+    out = hook(None, None, (h, *extras))
+    assert isinstance(out, tuple)
+    assert out[1:] == extras
+    torch.testing.assert_close(out[0], h, rtol=1e-6, atol=1e-6)
+
+
+def test_linear_hook_records_intervention_norms():
+    d = 8
+    v = np.zeros(d, dtype=np.float32)
+    v[0] = 1.0
+    hook = steering.LinearSteeringHook(v, alpha=1.0, device="cpu")
+    h = torch.randn(2, 4, d)
+    hook(None, None, h)
+    hook(None, None, h)
+    assert len(hook.intervention_norms) == 2
+    assert all(n > 0 for n in hook.intervention_norms)
+
+
+def test_linear_hook_rejects_non_1d_direction():
+    with pytest.raises(ValueError, match="1-D"):
+        steering.LinearSteeringHook(np.zeros((3, 3), dtype=np.float32), alpha=1.0, device="cpu")
+
+
+def test_linear_hook_repr():
+    hook = steering.LinearSteeringHook(np.zeros(32, dtype=np.float32), alpha=0.5, device="cpu")
+    s = repr(hook)
+    assert "0.5" in s
+    assert "32" in s
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# get_conceptor_matrix — new strategies
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_positive_only_looks_up_C_success(mini_npz: pathlib.Path):
+    npz = steering.load_conceptor_npz(mini_npz)
+    C = steering.get_conceptor_matrix(npz, "taskA", 11, 0.1, "positive_only")
+    # Fixture sets C_success = 0.4 * I; C_contrastive = 0.5 * I. Must pick C_success.
+    np.testing.assert_allclose(C, 0.4 * np.eye(8), atol=1e-6)
+
+
+def test_random_matched_same_spectrum_as_contrastive(mini_npz: pathlib.Path):
+    npz = steering.load_conceptor_npz(mini_npz)
+    # Fixture's C_contrastive = 0.5 * I → eigenvalues all 0.5.
+    C = steering.get_conceptor_matrix(npz, "taskA", 11, 0.1, "random_matched", random_seed=7)
+    eig = np.sort(np.linalg.eigvalsh(0.5 * (C + C.T)))
+    np.testing.assert_allclose(eig, np.full(8, 0.5), atol=1e-5)
+
+
+def test_random_matched_requires_seed(mini_npz: pathlib.Path):
+    npz = steering.load_conceptor_npz(mini_npz)
+    with pytest.raises(ValueError, match="random_seed"):
+        steering.get_conceptor_matrix(npz, "taskA", 11, 0.1, "random_matched")
+
+
+def test_linear_strategy_routed_to_helper(mini_npz: pathlib.Path):
+    """get_conceptor_matrix should refuse 'linear'; caller must use get_linear_direction."""
+    npz = steering.load_conceptor_npz(mini_npz)
+    with pytest.raises(ValueError, match="linear"):
+        steering.get_conceptor_matrix(npz, "taskA", 11, 0.1, "linear")
+
+
+def test_get_linear_direction(mini_npz: pathlib.Path):
+    npz = steering.load_conceptor_npz(mini_npz)
+    v_a = steering.get_linear_direction(npz, "taskA", 11)
+    v_b = steering.get_linear_direction(npz, "taskB", 11)
+    # Fixture: taskA → e0, taskB → e1
+    np.testing.assert_allclose(v_a, np.eye(8)[0])
+    np.testing.assert_allclose(v_b, np.eye(8)[1])
+
+
+def test_get_linear_direction_missing_raises(tmp_path: pathlib.Path):
+    """NPZ without linear_direction keys must raise a helpful KeyError."""
+    path = tmp_path / "legacy.npz"
+    np.savez(path, **{"taskA__L11__0.1__C_contrastive": np.eye(8, dtype=np.float32)})
+    npz = steering.load_conceptor_npz(path)
+    with pytest.raises(KeyError, match="predate"):
+        steering.get_linear_direction(npz, "taskA", 11)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SteeredPolicyWrapper — end-to-end dispatch across all 5 strategies
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _payload(task: str, strategy: str, alpha: float = 0.1, beta: float = 0.3) -> dict:
+    return {"task": task, "layer": 11, "alpha": alpha, "beta": beta, "strategy": strategy}
+
+
+def test_wrapper_dispatches_positive_only(mini_npz: pathlib.Path):
+    p = _StubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=mini_npz, device="cpu")
+    w.infer({"__steering__": _payload("taskA", "positive_only")})
+    assert p.steering_calls == 1
+    layer_idx, hook = p.last_steering_hooks[0]
+    assert layer_idx == 11
+    assert isinstance(hook, ConceptorSteeringHook)
+
+
+def test_wrapper_dispatches_random_matched(mini_npz: pathlib.Path):
+    p = _StubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=mini_npz, device="cpu")
+    w.infer({"__steering__": _payload("taskA", "random_matched")})
+    assert p.steering_calls == 1
+    _, hook = p.last_steering_hooks[0]
+    assert isinstance(hook, ConceptorSteeringHook)
+
+
+def test_wrapper_random_matched_deterministic_across_calls(mini_npz: pathlib.Path):
+    """Same (task, layer, α, β, strategy) → same random matrix on cache hit."""
+    p = _StubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=mini_npz, device="cpu")
+    w.infer({"__steering__": _payload("taskA", "random_matched")})
+    first = p.last_steering_hooks[0][1]
+    w.infer({"__steering__": _payload("taskA", "random_matched")})
+    second = p.last_steering_hooks[0][1]
+    assert first is second  # cache hit
+
+
+def test_wrapper_dispatches_linear(mini_npz: pathlib.Path):
+    p = _StubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=mini_npz, device="cpu")
+    w.infer({"__steering__": _payload("taskA", "linear", alpha=0.5)})
+    assert p.steering_calls == 1
+    layer_idx, hook = p.last_steering_hooks[0]
+    assert layer_idx == 11
+    assert isinstance(hook, steering.LinearSteeringHook)
+    # Fixture's taskA direction is e0; alpha=0.5 → hook.alpha == 0.5
+    assert hook.alpha == 0.5
+
+
+def test_wrapper_all_five_strategies_cache_separately(mini_npz: pathlib.Path):
+    """Different strategies at same (task, layer, α, β) yield 5 distinct hooks."""
+    p = _StubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=mini_npz, device="cpu")
+    for strat in ("global", "per_step_0", "positive_only", "random_matched", "linear"):
+        w.infer({"__steering__": _payload("taskA", strat)})
+    assert len(w._hook_cache) == 5  # noqa: SLF001
     assert steering.DEFAULT_STEERING_STRATEGY in ALLOWED_STRATEGIES

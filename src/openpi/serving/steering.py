@@ -41,7 +41,23 @@ DEFAULT_STEERING_LAYER = 11
 DEFAULT_STEERING_ALPHA = 0.1
 DEFAULT_STEERING_BETA = 0.3
 DEFAULT_STEERING_STRATEGY = "global"
-ALLOWED_STRATEGIES: tuple[str, ...] = ("global", "per_step_0", "per_step_9")
+# Strategies:
+#   global          — h' = (1-β)h + β(h @ C_contrastive.T), α selects aperture
+#   per_step_{0,9}  — same but C is per-denoise-step (α baked into NPZ)
+#   positive_only   — h' = (1-β)h + β(h @ C_success.T), α selects aperture
+#   random_matched  — h' = (1-β)h + β(h @ C_rand.T), C_rand has same spectrum
+#                     as C_contrastive at α but random eigenvectors; seed derived
+#                     from (task, layer, α, β)
+#   linear          — h' = h + α · v, where v is the unit direction
+#                     (mean_success - mean_failure). β is ignored.
+ALLOWED_STRATEGIES: tuple[str, ...] = (
+    "global",
+    "per_step_0",
+    "per_step_9",
+    "positive_only",
+    "random_matched",
+    "linear",
+)
 
 # On-wire magic key — matches the __collect__ / __finalize_episode__ pattern.
 STEERING_KEY = "__steering__"
@@ -73,19 +89,49 @@ def get_conceptor_matrix(
     layer: int,
     alpha: float,
     strategy: str,
+    *,
+    random_seed: int | None = None,
 ) -> np.ndarray:
-    """Look up a conceptor matrix from the .npz.
+    """Look up or derive a conceptor matrix from the .npz.
 
-    For ``strategy == "global"``, the key is ``{task}__L{layer}__{alpha}__C_contrastive``.
-    For ``strategy == "per_step_N"``, the key is ``{task}__L{layer}__per_step_N__C_contrastive``
-    (alpha is ignored per the miranda-v2 convention — per-step conceptors are
-    computed at a fixed alpha baked into the NPZ).
+    Keyed lookups (zero compute):
+      - ``global``          → ``{task}__L{layer}__{alpha}__C_contrastive``
+      - ``per_step_N``      → ``{task}__L{layer}__per_step_N__C_contrastive``
+                              (alpha ignored — miranda-v2 convention)
+      - ``positive_only``   → ``{task}__L{layer}__{alpha}__C_success``
+
+    Derived at call time:
+      - ``random_matched``  → build from ``C_contrastive`` at (task, layer, α)
+                              via ``random_matched_conceptor``. Spectrum
+                              matches, eigenvectors are random. The caller
+                              must pass ``random_seed`` to get deterministic
+                              output; SteeredPolicyWrapper derives the seed
+                              from the full cache key.
+
+    ``linear`` is not a matrix strategy — use ``get_linear_direction`` instead.
     """
+    from openpi.serving.conceptors import random_matched_conceptor
+
     if strategy == "global":
         key = _conceptor_key(task, layer, str(alpha), "C_contrastive")
     elif strategy.startswith("per_step_"):
         step = strategy.split("_")[-1]
         key = _conceptor_key(task, layer, f"per_step_{step}", "C_contrastive")
+    elif strategy == "positive_only":
+        key = _conceptor_key(task, layer, str(alpha), "C_success")
+    elif strategy == "random_matched":
+        # Derived from C_contrastive — spectrum match, random eigenvectors.
+        ref_key = _conceptor_key(task, layer, str(alpha), "C_contrastive")
+        if ref_key not in npz:
+            raise KeyError(
+                f"random_matched: reference key {ref_key!r} not in NPZ. "
+                f"Available: {[k for k in npz.files if k.startswith(task)][:5]}..."
+            )
+        if random_seed is None:
+            raise ValueError("random_matched strategy requires a random_seed")
+        return random_matched_conceptor(np.asarray(npz[ref_key]), seed=random_seed)
+    elif strategy == "linear":
+        raise ValueError("strategy='linear' returns a vector; call get_linear_direction instead")
     else:
         raise ValueError(f"Unknown steering strategy {strategy!r}. Allowed: {ALLOWED_STRATEGIES}")
 
@@ -96,6 +142,26 @@ def get_conceptor_matrix(
             f"{[k for k in npz.files if k.startswith(task)][:5]}... (truncated)"
         )
     return np.asarray(npz[key])
+
+
+def get_linear_direction(npz: Any, task: str, layer: int) -> np.ndarray:
+    """Look up the linear-steering direction for a (task, layer).
+
+    Returns a unit vector (shape ``(d,)``) produced by
+    ``compute_linear_direction`` at NPZ build time. Used by the ``linear``
+    strategy: at inference ``h' = h + α · v``.
+    """
+    key = f"{task}__L{layer}__linear_direction"
+    if key not in npz:
+        raise KeyError(
+            f"Linear direction key {key!r} not in NPZ. "
+            f"This NPZ may predate the linear strategy — rebuild with "
+            f"experiments/{{env}}/compute_conceptors.py."
+        )
+    v = np.asarray(npz[key])
+    if v.ndim != 1:
+        raise ValueError(f"Expected 1-D linear direction, got shape {v.shape}")
+    return v
 
 
 def available_tasks(npz: Any) -> set[str]:
@@ -161,6 +227,48 @@ def compute_random_conceptor(d: int = 1024, alpha: float = 0.5, seed: int = 42) 
     raw = np.sort(rng.exponential(1.0, size=d))[::-1]
     eigs = raw / (raw + alpha**-2)
     return (Q @ np.diag(eigs) @ Q.T).astype(np.float32)
+
+
+class LinearSteeringHook:
+    """PyTorch forward hook that applies h' = h + alpha * v.
+
+    Additive ActAdd-style intervention, in contrast to the multiplicative
+    matrix blending in ``ConceptorSteeringHook``. ``v`` is a unit direction
+    vector (e.g. from ``compute_linear_direction``); ``alpha`` is the
+    magnitude. No β parameter — the interpolation weight is baked into ``alpha``.
+    """
+
+    def __init__(self, direction: np.ndarray, alpha: float = 1.0, device: str = "cuda") -> None:
+        if direction.ndim != 1:
+            raise ValueError(f"LinearSteeringHook expects 1-D direction, got shape {direction.shape}")
+        self.alpha = float(alpha)
+        self.current_denoise_step = 0
+        # Broadcasts against (batch, seq, d) additions.
+        self.v = torch.from_numpy(np.ascontiguousarray(direction)).to(dtype=torch.float32, device=device)
+        self.intervention_norms: list[float] = []
+
+    def __call__(self, module, input, output):
+        if isinstance(output, tuple):
+            h, rest = output[0], output[1:]
+        else:
+            h, rest = output, None
+        v = self.v.to(dtype=h.dtype)
+        delta = self.alpha * v  # (d,); broadcasts to h
+        h_steered = h + delta
+        self.intervention_norms.append(torch.norm(h_steered - h).item())
+        if rest is not None:
+            return (h_steered, *rest)
+        return h_steered
+
+    def set_denoise_step(self, t: int) -> None:
+        self.current_denoise_step = int(t)
+
+    def reset_logs(self) -> None:
+        self.intervention_norms = []
+
+    def __repr__(self) -> str:
+        d = self.v.shape[0]
+        return f"LinearSteeringHook(dim={d}, alpha={self.alpha})"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -280,9 +388,11 @@ class SteeredPolicyWrapper:
         self._npz = load_conceptor_npz(conceptor_npz_path)
         self._available_tasks = available_tasks(self._npz)
         self._device = device
-        self._hook_cache: dict[tuple[str, int, float, float, str], ConceptorSteeringHook] = {}
+        # Cache key = (task, layer, alpha, beta, strategy). Hook value is either
+        # a ConceptorSteeringHook (matrix strategies) or a LinearSteeringHook.
+        self._hook_cache: dict[tuple[str, int, float, float, str], Any] = {}
 
-    def _get_or_build_hook(self, payload: dict) -> tuple[int, ConceptorSteeringHook]:
+    def _get_or_build_hook(self, payload: dict) -> tuple[int, Any]:
         key = (
             payload["task"],
             int(payload["layer"]),
@@ -292,16 +402,39 @@ class SteeredPolicyWrapper:
         )
         hook = self._hook_cache.get(key)
         if hook is None:
-            C = get_conceptor_matrix(
-                self._npz,
-                task=key[0],
-                layer=key[1],
-                alpha=key[2],
-                strategy=key[4],
-            )
-            hook = ConceptorSteeringHook(C, beta=key[3], device=self._device)
+            strategy = key[4]
+            if strategy == "linear":
+                # Linear: h' = h + alpha * v. Beta is ignored (but kept in the cache
+                # key for consistency so (linear, α=0.1, β=0.3) and (linear, α=0.1, β=0.1)
+                # share the hook via re-entry — which is fine because the hook's
+                # behavior only depends on (α, v)).
+                v = get_linear_direction(self._npz, task=key[0], layer=key[1])
+                hook = LinearSteeringHook(v, alpha=key[2], device=self._device)
+            elif strategy == "random_matched":
+                # Deterministic seed from the full cache key so repeat requests
+                # produce the same random matrix.
+                seed = abs(hash(key)) % (2**31)
+                C = get_conceptor_matrix(
+                    self._npz,
+                    task=key[0],
+                    layer=key[1],
+                    alpha=key[2],
+                    strategy=strategy,
+                    random_seed=seed,
+                )
+                hook = ConceptorSteeringHook(C, beta=key[3], device=self._device)
+            else:
+                # global, per_step_*, positive_only — all matrix strategies.
+                C = get_conceptor_matrix(
+                    self._npz,
+                    task=key[0],
+                    layer=key[1],
+                    alpha=key[2],
+                    strategy=strategy,
+                )
+                hook = ConceptorSteeringHook(C, beta=key[3], device=self._device)
             self._hook_cache[key] = hook
-            logger.info("Built steering hook %s (cache size=%d)", key, len(self._hook_cache))
+            logger.info("Built steering hook %s [%s] (cache size=%d)", key, type(hook).__name__, len(self._hook_cache))
         else:
             hook.reset_logs()
         return key[1], hook

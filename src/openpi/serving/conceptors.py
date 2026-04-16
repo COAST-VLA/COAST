@@ -40,6 +40,7 @@ Output NPZ keys (string-exact for miranda-v2 compat):
     {task}__L{layer}__per_step_{t}__C_success   (per-step)
     {task}__L{layer}__per_step_{t}__C_failure
     {task}__L{layer}__per_step_{t}__C_contrastive
+    {task}__L{layer}__linear_direction           (unit vector, linear strategy)
 """
 
 # ruff: noqa: E741, N803, N806, RUF001, RUF002, RUF003
@@ -145,6 +146,66 @@ def contrastive_conceptor(C_success: np.ndarray, C_failure: np.ndarray) -> np.nd
     subspace that is in successful rollouts AND not in failed rollouts.
     """
     return boolean_and(C_success, boolean_not(C_failure))
+
+
+def compute_linear_direction(X_success: np.ndarray, X_failure: np.ndarray) -> np.ndarray:
+    """Unit vector pointing from mean_failure to mean_success.
+
+    Used by the ``linear`` steering strategy (ActAdd-style): at inference we apply
+    ``h' = h + alpha * v`` where ``v`` is this unit vector and ``alpha`` controls
+    the intervention magnitude. Baseline against the full conceptor machinery.
+
+    Args:
+        X_success: (N_s, d) — flattened success-class activations
+        X_failure: (N_f, d) — flattened failure-class activations
+    Returns:
+        v: (d,) float32 unit vector. Zero vector if the mean difference is
+           numerically zero (degenerate case).
+    """
+    if X_success.ndim != 2 or X_failure.ndim != 2:
+        raise ValueError(f"compute_linear_direction expects 2D inputs, got {X_success.shape} and {X_failure.shape}")
+    if X_success.shape[1] != X_failure.shape[1]:
+        raise ValueError(f"hidden dim mismatch: success d={X_success.shape[1]}, failure d={X_failure.shape[1]}")
+    if X_success.shape[0] == 0 or X_failure.shape[0] == 0:
+        raise ValueError("compute_linear_direction: empty success or failure set")
+
+    mean_s = X_success.astype(np.float64, copy=False).mean(axis=0)
+    mean_f = X_failure.astype(np.float64, copy=False).mean(axis=0)
+    diff = mean_s - mean_f
+    norm = float(np.linalg.norm(diff))
+    if norm < 1e-12:
+        logger.warning("compute_linear_direction: mean difference has near-zero norm; returning zero vector")
+        return np.zeros_like(diff, dtype=np.float32)
+    return (diff / norm).astype(np.float32)
+
+
+def random_matched_conceptor(C_reference: np.ndarray, seed: int) -> np.ndarray:
+    """Build a random-eigenvector conceptor with the same eigenvalue spectrum as C_reference.
+
+    Control baseline: keeps the "strength" (eigenvalue spectrum) of a reference
+    conceptor but replaces the eigenvectors with a random orthogonal basis. If
+    steering with this random matrix helps the task, the benefit was not from
+    the learned direction — it was from the matrix's overall shape.
+
+    Args:
+        C_reference: (d, d) symmetric conceptor matrix
+        seed: random seed for the orthogonal basis
+    Returns:
+        C_random: (d, d) float32 symmetric matrix with same eigenvalues as C_reference
+    """
+    if C_reference.ndim != 2 or C_reference.shape[0] != C_reference.shape[1]:
+        raise ValueError(f"random_matched_conceptor expects square matrix, got {C_reference.shape}")
+    d = C_reference.shape[0]
+    # Symmetrize before eigendecomposition to suppress float32 asymmetry.
+    Cd = C_reference.astype(np.float64, copy=False)
+    Cd = 0.5 * (Cd + Cd.T)
+    eigvals = np.linalg.eigvalsh(Cd)  # ascending order, real
+
+    rng = np.random.default_rng(seed)
+    Q, _ = np.linalg.qr(rng.standard_normal((d, d)))
+    # Q is orthogonal; C_rand = Q @ diag(eigvals) @ Q.T has same spectrum.
+    C_rand = (Q * eigvals[None, :]) @ Q.T
+    return C_rand.astype(np.float32)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -292,6 +353,11 @@ def compute_task_conceptors(
                 out[f"L{layer}__{alpha}__C_success"] = C_s
                 out[f"L{layer}__{alpha}__C_failure"] = C_f
                 out[f"L{layer}__{alpha}__C_contrastive"] = C_c
+
+            # Linear direction — one per layer (no α dependence, it's the unit
+            # mean difference). Used by the ``linear`` steering strategy.
+            v = compute_linear_direction(X_s_global, X_f_global)
+            out[f"L{layer}__linear_direction"] = v
 
         # Per-step — conceptors computed at a single denoise step, fixed α.
         # Miranda-v2 convention: per_step uses α=1.0 baked in. We store the

@@ -29,12 +29,26 @@ All sweep scripts import from `src/openpi/serving/steering.py` (runtime) and
 `src/openpi/serving/conceptors.py` (offline computation):
 
 - `SteeredPolicyWrapper`: dispatches on `obs["__steering__"]`
-- `ConceptorSteeringHook`: pre-builds `M = (1-β)I + β·C`
-- `load_conceptor_npz`, `get_conceptor_matrix`: NPZ helpers
+- `ConceptorSteeringHook` / `LinearSteeringHook`: pre-built forward hooks
+- `load_conceptor_npz`, `get_conceptor_matrix`, `get_linear_direction`: NPZ helpers
 - `DEFAULT_STEERING_{LAYER,ALPHA,BETA,STRATEGY}`: single source of truth for defaults
 - `compute_all_conceptors`: offline pipeline for rebuilding the NPZ from fresh
   activations (canonical NPZs are shipped via HuggingFace; rebuild only when
   the checkpoint changes)
+
+## Supported steering strategies
+
+Six strategies sweep across the same (`layer`, `alpha`, `beta`) grid. See the
+per-env README's **Running with Steering → Steering strategies** table for the
+math. Short summary:
+
+| Strategy | What it does |
+|---|---|
+| `global` | Contrastive conceptor `C_s ∧ NOT(C_f)` (the default) |
+| `per_step_0`, `per_step_9` | Per-denoise-step contrastive conceptors |
+| `positive_only` | Success-only conceptor `C_s` (ablation) |
+| `random_matched` | Random-eigenvector conceptor with matched spectrum (control) |
+| `linear` | Additive `h + α·v` using unit mean-difference direction (ActAdd baseline) |
 
 ## Prereqs (common)
 

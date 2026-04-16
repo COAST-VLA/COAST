@@ -419,7 +419,7 @@ block if present, or the CLI scalar flags otherwise.
 | `--steering_layer`     | 11        | Action-expert transformer layer index     |
 | `--steering_alpha`     | 0.1       | Conceptor aperture                        |
 | `--steering_beta`      | 0.3       | Interpolation weight (β=0 is no-op)       |
-| `--steering_strategy`  | "global"  | "global", "per_step_0", or "per_step_9"   |
+| `--steering_strategy`  | "global"  | See strategy table below                  |
 | `--steering_task`      | None      | Override NPZ task key (default: LIBERO task name) |
 
 `eval_all.py` adds:
@@ -427,6 +427,17 @@ block if present, or the CLI scalar flags otherwise.
 | Flag                 | Default | Notes                                            |
 |----------------------|---------|--------------------------------------------------|
 | `--steering_config`  | None    | Path to `best_configs.json` (per-task overrides) |
+
+### Steering strategies
+
+| Strategy          | Math                                               | Params used                  | Notes |
+|-------------------|----------------------------------------------------|------------------------------|-------|
+| `global`          | `h' = (1−β)h + β(h @ C_contrastive.T)`             | `layer`, `alpha`, `beta`     | Default. Contrastive conceptor `C_s ∧ NOT(C_f)` at aperture α. |
+| `per_step_0`      | Same as `global` but uses per-step conceptor at t=0 | `layer`, `beta` (α baked in) | Separate conceptor per flow-matching step. |
+| `per_step_9`      | Same, at t=9                                       | `layer`, `beta` (α baked in) | |
+| `positive_only`   | `h' = (1−β)h + β(h @ C_success.T)`                 | `layer`, `alpha`, `beta`     | Ablation dropping the `NOT(C_failure)` term. |
+| `random_matched`  | Same as `global` but with a random-eigenvector conceptor whose spectrum matches `C_contrastive` | `layer`, `alpha`, `beta` | Control. If this helps, the benefit wasn't from the learned direction. Seed derived from `(task, layer, α, β)` for reproducibility. |
+| `linear`          | `h' = h + α · v`, where `v` = unit(μ_success − μ_failure) | `layer`, `alpha` (β ignored) | ActAdd-style additive baseline. Requires `linear_direction` key in NPZ (rebuild via `experiments/{env}/compute_conceptors.py` if missing). |
 
 ### Error behavior
 

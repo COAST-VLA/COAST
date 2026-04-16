@@ -48,7 +48,14 @@ logger = logging.getLogger(__name__)
 #   [libero_spatial/pick_up.../task_00] success_rate=1.00 (1/1)
 SUCCESS_RATE_RE = re.compile(r"success_rate=([0-9.]+)")
 
-_ALLOWED_STRATEGIES = ("global", "per_step_0", "per_step_9")
+_ALLOWED_STRATEGIES = (
+    "global",
+    "per_step_0",
+    "per_step_9",
+    "positive_only",
+    "random_matched",
+    "linear",
+)
 
 
 def _load_and_validate_steering_config(path: str) -> Dict[str, Any]:

@@ -65,7 +65,14 @@ class Args:
     layers: tuple[int, ...] = (11,)
     alphas: tuple[float, ...] = (0.1, 0.5, 1.0)
     betas: tuple[float, ...] = (0.1, 0.3)
-    strategies: tuple[str, ...] = ("global", "per_step_0", "per_step_9")
+    strategies: tuple[str, ...] = (
+        "global",
+        "per_step_0",
+        "per_step_9",
+        "positive_only",
+        "random_matched",
+        "linear",
+    )
 
     task_suite_name: str = "libero_10"
     num_episodes: int = 10
