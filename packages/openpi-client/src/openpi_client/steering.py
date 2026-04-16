@@ -1,9 +1,9 @@
 """Client-side steering protocol and schema validators.
 
 This module is the single source of truth for the on-wire steering protocol:
-the set of allowed strategy names, the magic-key constant, the default scalar
-values, and the ``best_configs.json`` schema. It has zero openpi or torch
-dependencies — pure stdlib + numpy-optional — so it imports cleanly from:
+the set of allowed strategy names, the magic-key constant, and the
+``best_configs.json`` schema. It has zero openpi or torch dependencies —
+pure stdlib — so it imports cleanly from:
 
 - The main ``openpi`` package (root venv, Python 3.11) where the server lives.
 - ``examples/libero_env`` (Python 3.8 sub-venv).
@@ -61,13 +61,6 @@ ALLOWED_STRATEGIES = (
     "random_matched",
     "linear",
 )
-
-# Default scalar values. Used by sub-venv main.py scripts as Args field defaults
-# (and as the "fallback" when a steering_config doesn't cover a task).
-DEFAULT_STEERING_LAYER = 11
-DEFAULT_STEERING_ALPHA = 0.1
-DEFAULT_STEERING_BETA = 0.3
-DEFAULT_STEERING_STRATEGY = "global"
 
 
 def build_steering_payload(

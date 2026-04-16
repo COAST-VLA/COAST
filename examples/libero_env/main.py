@@ -30,14 +30,7 @@ from libero.libero.envs import OffScreenRenderEnv
 from openpi_client import image_tools
 from openpi_client import websocket_client_policy as _websocket_client_policy
 from openpi_client.collection_session import CollectionSession
-from openpi_client.steering import (
-    DEFAULT_STEERING_ALPHA,
-    DEFAULT_STEERING_BETA,
-    DEFAULT_STEERING_LAYER,
-    DEFAULT_STEERING_STRATEGY,
-    STEERING_KEY,
-    build_steering_payload,
-)
+from openpi_client.steering import STEERING_KEY, build_steering_payload
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
@@ -102,13 +95,12 @@ class Args:
     # ── Steering (requires server started with --steer). ──────────────────────
     # When True, attach obs[STEERING_KEY] = {task, layer, alpha, beta, strategy}
     # to every inference call so the server applies a conceptor steering hook.
-    # Defaults come from openpi_client.steering (single source of truth).
     steer: bool = False
-    steering_layer: int = DEFAULT_STEERING_LAYER
-    steering_alpha: float = DEFAULT_STEERING_ALPHA
-    steering_beta: float = DEFAULT_STEERING_BETA
+    steering_layer: int = 11
+    steering_alpha: float = 0.1
+    steering_beta: float = 0.3
     # One of "global", "per_step_0", "per_step_9", "positive_only", "random_matched", "linear".
-    steering_strategy: str = DEFAULT_STEERING_STRATEGY
+    steering_strategy: str = "global"
     # Override the conceptor task key (default: the current LIBERO task name).
     steering_task: Optional[str] = None
 

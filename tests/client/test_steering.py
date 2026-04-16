@@ -12,10 +12,6 @@ import pathlib
 
 from openpi_client import steering as client_steering
 from openpi_client.steering import ALLOWED_STRATEGIES
-from openpi_client.steering import DEFAULT_STEERING_ALPHA
-from openpi_client.steering import DEFAULT_STEERING_BETA
-from openpi_client.steering import DEFAULT_STEERING_LAYER
-from openpi_client.steering import DEFAULT_STEERING_STRATEGY
 from openpi_client.steering import STEERING_KEY
 from openpi_client.steering import build_steering_payload
 from openpi_client.steering import load_and_validate_steering_config
@@ -42,16 +38,6 @@ def test_allowed_strategies_expected_set():
         "random_matched",
         "linear",
     }
-
-
-def test_defaults_are_plain_literals():
-    """Sub-venv main.py scripts use these as dataclass field defaults, so they
-    must stay simple JSON-serializable literals."""
-    assert isinstance(DEFAULT_STEERING_LAYER, int)
-    assert isinstance(DEFAULT_STEERING_ALPHA, float)
-    assert isinstance(DEFAULT_STEERING_BETA, float)
-    assert isinstance(DEFAULT_STEERING_STRATEGY, str)
-    assert DEFAULT_STEERING_STRATEGY in ALLOWED_STRATEGIES
 
 
 def test_server_and_client_strategies_agree():
@@ -199,10 +185,6 @@ def test_module_exports():
     expected_attrs = [
         "STEERING_KEY",
         "ALLOWED_STRATEGIES",
-        "DEFAULT_STEERING_LAYER",
-        "DEFAULT_STEERING_ALPHA",
-        "DEFAULT_STEERING_BETA",
-        "DEFAULT_STEERING_STRATEGY",
         "build_steering_payload",
         "load_and_validate_steering_config",
         "resolve_steering_for_task",
