@@ -3,14 +3,12 @@
 This module is the single source of truth for steering primitives:
 
     ConceptorSteeringHook      PyTorch forward hook h' = (1-β)h + β(C @ h)
+    LinearSteeringHook         PyTorch forward hook h' = h + α · v
     SteeredPolicyWrapper       Policy wrapper dispatching on an obs["__steering__"] key
     load_conceptor_npz         Load the pre-computed conceptor .npz
     get_conceptor_matrix       Look up a (task, layer, alpha, strategy) conceptor
+    get_linear_direction       Look up the unit-direction vector for the linear strategy
     validate_steering_payload  Schema check for the on-wire __steering__ dict
-    validate_best_configs_json Schema check for experiments/{env}/best_configs.json
-
-Both the server (scripts/serve_policy.py --steer) and the experiment sweep
-driver (experiments/{env}/find_best_configs.py) import from here.
 
 The on-wire protocol mirrors activation_collector.py's __collect__ magic key:
 the client attaches obs["__steering__"] = {...}; the wrapper pops it off and
@@ -21,46 +19,20 @@ routes through Policy.infer_with_steering.
 from __future__ import annotations
 
 from collections.abc import Iterable
-import json
 import logging
 import pathlib
 from typing import Any
 
 import numpy as np
+
+# Re-export the single source of truth for the protocol (defined in
+# openpi_client.steering so sub-venv clients can import the same values).
+# See that module for the math docstring per strategy.
+from openpi_client.steering import ALLOWED_STRATEGIES
+from openpi_client.steering import STEERING_KEY as _STEERING_KEY
 import torch
 
 logger = logging.getLogger(__name__)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Defaults — single source of truth
-# Duplicated in examples/{libero,robocasa}_env/main.py because those scripts
-# run in sub-venvs without openpi. Keep the values in sync.
-# ──────────────────────────────────────────────────────────────────────────────
-
-DEFAULT_STEERING_LAYER = 11
-DEFAULT_STEERING_ALPHA = 0.1
-DEFAULT_STEERING_BETA = 0.3
-DEFAULT_STEERING_STRATEGY = "global"
-# Strategies:
-#   global          — h' = (1-β)h + β(h @ C_contrastive.T), α selects aperture
-#   per_step_{0,9}  — same but C is per-denoise-step (α baked into NPZ)
-#   positive_only   — h' = (1-β)h + β(h @ C_success.T), α selects aperture
-#   random_matched  — h' = (1-β)h + β(h @ C_rand.T), C_rand has same spectrum
-#                     as C_contrastive at α but random eigenvectors; seed derived
-#                     from (task, layer, α, β)
-#   linear          — h' = h + α · v, where v is the unit direction
-#                     (mean_success - mean_failure). β is ignored.
-ALLOWED_STRATEGIES: tuple[str, ...] = (
-    "global",
-    "per_step_0",
-    "per_step_9",
-    "positive_only",
-    "random_matched",
-    "linear",
-)
-
-# On-wire magic key — matches the __collect__ / __finalize_episode__ pattern.
-STEERING_KEY = "__steering__"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -312,60 +284,6 @@ def validate_steering_payload(payload: Any, available: Iterable[str]) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# best_configs.json validation (client-side, startup-time)
-# ──────────────────────────────────────────────────────────────────────────────
-
-_REQUIRED_CONFIG_FIELDS: dict[str, type | tuple[type, ...]] = {
-    "layer": int,
-    "alpha": (int, float),
-    "beta": (int, float),
-    "strategy": str,
-}
-
-
-def validate_best_configs_json(path: str | pathlib.Path) -> dict:
-    """Load and validate a ``best_configs.json`` file.
-
-    Returns the parsed dict. Raises ``ValueError`` with a specific message on
-    schema violations so the eval_all caller can fail fast before spawning any
-    subprocesses.
-    """
-    path = pathlib.Path(path)
-    if not path.exists():
-        raise FileNotFoundError(f"best_configs file not found: {path}")
-
-    with open(path) as f:
-        cfg = json.load(f)
-
-    if not isinstance(cfg, dict):
-        raise ValueError(f"best_configs.json root must be a dict, got {type(cfg).__name__}")
-    if "tasks" not in cfg or not isinstance(cfg["tasks"], dict):
-        raise ValueError("best_configs.json must have a 'tasks' dict")
-
-    for task_name, task_cfg in cfg["tasks"].items():
-        if not isinstance(task_cfg, dict):
-            raise ValueError(f"tasks[{task_name!r}] must be a dict")
-        for key, expected in _REQUIRED_CONFIG_FIELDS.items():
-            if key not in task_cfg:
-                raise ValueError(f"tasks[{task_name!r}] missing field {key!r}")
-            if not isinstance(task_cfg[key], expected):  # type: ignore[arg-type]
-                raise ValueError(f"tasks[{task_name!r}].{key} must be {expected}, got {type(task_cfg[key]).__name__}")
-        if task_cfg["strategy"] not in ALLOWED_STRATEGIES:
-            raise ValueError(f"tasks[{task_name!r}].strategy {task_cfg['strategy']!r} not in {ALLOWED_STRATEGIES}")
-
-    if "defaults" in cfg:
-        for key, expected in _REQUIRED_CONFIG_FIELDS.items():
-            if key not in cfg["defaults"]:
-                raise ValueError(f"defaults missing field {key!r}")
-            if not isinstance(cfg["defaults"][key], expected):  # type: ignore[arg-type]
-                raise ValueError(f"defaults.{key} must be {expected}, got {type(cfg['defaults'][key]).__name__}")
-        if cfg["defaults"]["strategy"] not in ALLOWED_STRATEGIES:
-            raise ValueError(f"defaults.strategy {cfg['defaults']['strategy']!r} not in {ALLOWED_STRATEGIES}")
-
-    return cfg
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # SteeredPolicyWrapper — on-wire __steering__ dispatch
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -440,7 +358,7 @@ class SteeredPolicyWrapper:
         return key[1], hook
 
     def infer(self, obs: dict) -> dict:
-        payload = obs.pop(STEERING_KEY, None) if isinstance(obs, dict) else None
+        payload = obs.pop(_STEERING_KEY, None) if isinstance(obs, dict) else None
         if payload is None:
             return self._policy.infer(obs)
         validate_steering_payload(payload, self._available_tasks)

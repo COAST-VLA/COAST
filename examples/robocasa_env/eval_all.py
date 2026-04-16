@@ -49,6 +49,10 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import robocasa  # noqa: F401
 import tyro
+from openpi_client.steering import (
+    load_and_validate_steering_config,
+    resolve_steering_for_task,
+)
 from robocasa.utils.dataset_registry import TASK_SET_REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -116,7 +120,7 @@ class Args:
     # ── Steering (requires server started with --steer). ──────────────────────
     steer: bool = False
     # Path to a best_configs.json (see src/openpi/serving/steering.py
-    # validate_best_configs_json). Per-env_name entries override scalar flags.
+    # the standalone validator below). Per-env_name entries override scalar flags.
     steering_config: Optional[str] = None
     steering_layer: int = 11
     steering_alpha: float = 0.1
@@ -124,69 +128,13 @@ class Args:
     steering_strategy: str = "global"
 
 
-_ALLOWED_STRATEGIES = (
-    "global",
-    "per_step_0",
-    "per_step_9",
-    "positive_only",
-    "random_matched",
-    "linear",
-)
-
-
-def _load_and_validate_steering_config(path: str) -> Dict[str, Any]:
-    """Parse and schema-check a best_configs.json (standalone; no openpi import)."""
-    cfg_path = pathlib.Path(path)
-    if not cfg_path.exists():
-        raise FileNotFoundError(f"steering_config not found: {cfg_path}")
-    with open(cfg_path) as f:
-        cfg = json.load(f)
-    if not isinstance(cfg, dict) or not isinstance(cfg.get("tasks"), dict):
-        raise ValueError(f"{cfg_path}: root must be a dict with a 'tasks' dict")
-    required = {
-        "layer": int,
-        "alpha": (int, float),
-        "beta": (int, float),
-        "strategy": str,
-    }
-    for name, entry in cfg["tasks"].items():
-        if not isinstance(entry, dict):
-            raise ValueError(f"{cfg_path}: tasks[{name!r}] must be a dict")
-        for k, t in required.items():
-            if k not in entry:
-                raise ValueError(f"{cfg_path}: tasks[{name!r}] missing {k!r}")
-            if not isinstance(entry[k], t):
-                raise ValueError(f"{cfg_path}: tasks[{name!r}].{k} wrong type")
-        if entry["strategy"] not in _ALLOWED_STRATEGIES:
-            raise ValueError(
-                f"{cfg_path}: tasks[{name!r}].strategy not in {_ALLOWED_STRATEGIES}"
-            )
-    if "defaults" in cfg:
-        for k, t in required.items():
-            if k not in cfg["defaults"] or not isinstance(cfg["defaults"][k], t):
-                raise ValueError(f"{cfg_path}: defaults.{k} missing or wrong type")
-    return cfg
-
-
-def _resolve_steering_for_task(
-    args: Any, config: Optional[Dict[str, Any]], task_name: str
-) -> Dict[str, Any]:
-    fallback = {
+def _fallback_from_args(args: Any) -> Dict[str, Any]:
+    return {
         "layer": args.steering_layer,
         "alpha": args.steering_alpha,
         "beta": args.steering_beta,
         "strategy": args.steering_strategy,
     }
-    if config is None:
-        return fallback
-    if task_name in config["tasks"]:
-        return config["tasks"][task_name]
-    if "defaults" in config:
-        return config["defaults"]
-    logger.warning(
-        "Task %s not in steering_config; falling back to CLI defaults", task_name
-    )
-    return fallback
 
 
 def _sanitize_env_name(env_name: str) -> str:
@@ -253,7 +201,7 @@ def _build_command(
     if args.max_steps is not None:
         cmd.extend(["--max_steps", str(args.max_steps)])
     if args.steer:
-        steer_cfg = _resolve_steering_for_task(args, steering_config, env_name)
+        steer_cfg = resolve_steering_for_task(_fallback_from_args(args), steering_config, env_name)
         cmd.extend(
             [
                 "--steer",
@@ -384,7 +332,7 @@ def main(args: Args) -> None:
     # Load steering config once up-front (fail-fast before any subprocesses launch).
     steering_config: Optional[Dict[str, Any]] = None
     if args.steer and args.steering_config:
-        steering_config = _load_and_validate_steering_config(args.steering_config)
+        steering_config = load_and_validate_steering_config(args.steering_config)
         unknown = set(steering_config["tasks"]) - set(env_names)
         if unknown:
             logger.warning(

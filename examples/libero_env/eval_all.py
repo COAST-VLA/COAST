@@ -30,7 +30,6 @@ import json
 import logging
 import math
 import os
-import pathlib
 import re
 import subprocess
 import sys
@@ -38,6 +37,10 @@ from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
 import tyro
+from openpi_client.steering import (
+    load_and_validate_steering_config,
+    resolve_steering_for_task,
+)
 
 from main import get_task_suite
 
@@ -48,75 +51,14 @@ logger = logging.getLogger(__name__)
 #   [libero_spatial/pick_up.../task_00] success_rate=1.00 (1/1)
 SUCCESS_RATE_RE = re.compile(r"success_rate=([0-9.]+)")
 
-_ALLOWED_STRATEGIES = (
-    "global",
-    "per_step_0",
-    "per_step_9",
-    "positive_only",
-    "random_matched",
-    "linear",
-)
 
-
-def _load_and_validate_steering_config(path: str) -> Dict[str, Any]:
-    """Parse and schema-check a best_configs.json.
-
-    Standalone implementation — the libero sub-venv cannot import openpi, so
-    this duplicates the logic in src/openpi/serving/steering.py:validate_best_configs_json.
-    Keep the two in sync.
-    """
-    cfg_path = pathlib.Path(path)
-    if not cfg_path.exists():
-        raise FileNotFoundError(f"steering_config not found: {cfg_path}")
-    with open(cfg_path) as f:
-        cfg = json.load(f)
-    if not isinstance(cfg, dict) or not isinstance(cfg.get("tasks"), dict):
-        raise ValueError(f"{cfg_path}: root must be a dict with a 'tasks' dict")
-    required = {
-        "layer": int,
-        "alpha": (int, float),
-        "beta": (int, float),
-        "strategy": str,
-    }
-    for name, entry in cfg["tasks"].items():
-        if not isinstance(entry, dict):
-            raise ValueError(f"{cfg_path}: tasks[{name!r}] must be a dict")
-        for k, t in required.items():
-            if k not in entry:
-                raise ValueError(f"{cfg_path}: tasks[{name!r}] missing {k!r}")
-            if not isinstance(entry[k], t):
-                raise ValueError(f"{cfg_path}: tasks[{name!r}].{k} wrong type")
-        if entry["strategy"] not in _ALLOWED_STRATEGIES:
-            raise ValueError(
-                f"{cfg_path}: tasks[{name!r}].strategy not in {_ALLOWED_STRATEGIES}"
-            )
-    if "defaults" in cfg:
-        for k, t in required.items():
-            if k not in cfg["defaults"] or not isinstance(cfg["defaults"][k], t):
-                raise ValueError(f"{cfg_path}: defaults.{k} missing or wrong type")
-    return cfg
-
-
-def _resolve_steering_for_task(
-    args: Any, config: Optional[Dict[str, Any]], task_name: str
-) -> Dict[str, Any]:
-    """Return the per-task steering config (layer, alpha, beta, strategy)."""
-    fallback = {
+def _fallback_from_args(args: Any) -> Dict[str, Any]:
+    return {
         "layer": args.steering_layer,
         "alpha": args.steering_alpha,
         "beta": args.steering_beta,
         "strategy": args.steering_strategy,
     }
-    if config is None:
-        return fallback
-    if task_name in config["tasks"]:
-        return config["tasks"][task_name]
-    if "defaults" in config:
-        return config["defaults"]
-    logger.warning(
-        "Task %s not in steering_config; falling back to CLI defaults", task_name
-    )
-    return fallback
 
 
 @dataclasses.dataclass
@@ -178,7 +120,7 @@ class Args:
     # set, per-task overrides from that JSON take precedence.
     steer: bool = False
     # Path to a best_configs.json (see src/openpi/serving/steering.py
-    # validate_best_configs_json). Per-task entries override the scalar flags
+    # the standalone validator below). Per-task entries override the scalar flags
     # below. Tasks missing from the config fall back to the scalar flags
     # (or to `defaults` within the config if present).
     steering_config: Optional[str] = None
@@ -246,7 +188,7 @@ def _build_command(
     if args.steer:
         if task_name is None:
             raise ValueError("_build_command: steer=True requires task_name")
-        steer_cfg = _resolve_steering_for_task(args, steering_config, task_name)
+        steer_cfg = resolve_steering_for_task(_fallback_from_args(args), steering_config, task_name)
         cmd.extend(
             [
                 "--steer",
@@ -375,7 +317,7 @@ def main(args: Args) -> None:
     # Load steering config once up-front (fail-fast before any subprocesses launch).
     steering_config: Optional[Dict[str, Any]] = None
     if args.steer and args.steering_config:
-        steering_config = _load_and_validate_steering_config(args.steering_config)
+        steering_config = load_and_validate_steering_config(args.steering_config)
         suite_task_names = {
             task_metadata[i]["task_name"] for i in range(task_suite.n_tasks)
         }

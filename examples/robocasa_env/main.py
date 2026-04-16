@@ -29,6 +29,14 @@ import tyro
 from openpi_client import image_tools
 from openpi_client import websocket_client_policy as _websocket_client_policy
 from openpi_client.collection_session import CollectionSession
+from openpi_client.steering import (
+    DEFAULT_STEERING_ALPHA,
+    DEFAULT_STEERING_BETA,
+    DEFAULT_STEERING_LAYER,
+    DEFAULT_STEERING_STRATEGY,
+    STEERING_KEY,
+    build_steering_payload,
+)
 from robocasa.utils.dataset_registry_utils import get_task_horizon
 from robocasa.utils.env_utils import convert_action
 from tqdm import tqdm
@@ -80,15 +88,14 @@ class Args:
     output_dir: Optional[str] = None
 
     # ── Steering (requires server started with --steer). ──────────────────────
-    # When True, attach obs["__steering__"] = {task, layer, alpha, beta, strategy}
+    # When True, attach obs[STEERING_KEY] = {task, layer, alpha, beta, strategy}
     # to every inference call so the server applies a conceptor steering hook.
-    # Defaults below are duplicated from src/openpi/serving/steering.py (single
-    # source of truth); this sub-venv cannot import from openpi directly.
+    # Defaults come from openpi_client.steering (single source of truth).
     steer: bool = False
-    steering_layer: int = 11
-    steering_alpha: float = 0.1
-    steering_beta: float = 0.3
-    steering_strategy: str = "global"
+    steering_layer: int = DEFAULT_STEERING_LAYER
+    steering_alpha: float = DEFAULT_STEERING_ALPHA
+    steering_beta: float = DEFAULT_STEERING_BETA
+    steering_strategy: str = DEFAULT_STEERING_STRATEGY
     # Override the conceptor task key (default: args.env_name).
     steering_task: Optional[str] = None
 
@@ -214,13 +221,13 @@ def eval_task(
                             step
                         )
                     if args.steer:
-                        element["__steering__"] = {
-                            "task": args.steering_task or env_name,
-                            "layer": int(args.steering_layer),
-                            "alpha": float(args.steering_alpha),
-                            "beta": float(args.steering_beta),
-                            "strategy": args.steering_strategy,
-                        }
+                        element[STEERING_KEY] = build_steering_payload(
+                            task=args.steering_task or env_name,
+                            layer=args.steering_layer,
+                            alpha=args.steering_alpha,
+                            beta=args.steering_beta,
+                            strategy=args.steering_strategy,
+                        )
                     result = policy.infer(element)
                     action_chunk = result["actions"]  # (action_horizon, action_dim=12)
                     assert action_chunk.ndim == 2, (

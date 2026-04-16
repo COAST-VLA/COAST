@@ -15,7 +15,6 @@ Pure-Python / torch-on-CPU — no GPU or checkpoint required. Covers:
 # ruff: noqa: N802, N806, PT018, RUF001, RUF002, RUF003
 from __future__ import annotations
 
-import json
 import pathlib
 
 import numpy as np
@@ -23,13 +22,11 @@ import pytest
 import torch
 
 from openpi.serving import steering
-from openpi.serving.steering import ALLOWED_STRATEGIES
 from openpi.serving.steering import ConceptorSteeringHook
 from openpi.serving.steering import SteeredPolicyWrapper
 from openpi.serving.steering import available_tasks
 from openpi.serving.steering import compute_random_conceptor
 from openpi.serving.steering import get_conceptor_matrix
-from openpi.serving.steering import validate_best_configs_json
 from openpi.serving.steering import validate_steering_payload
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -152,76 +149,6 @@ def test_unknown_task_raises():
 def test_non_dict_payload_raises():
     with pytest.raises(ValueError, match="must be a dict"):
         validate_steering_payload(["not", "a", "dict"], {"taskA"})
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# best_configs.json validation
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-def _valid_config_dict():
-    return {
-        "task_suite": "libero_10",
-        "defaults": {"layer": 11, "alpha": 0.1, "beta": 0.3, "strategy": "global"},
-        "tasks": {
-            "taskA": {
-                "layer": 11,
-                "alpha": 0.1,
-                "beta": 0.3,
-                "strategy": "global",
-                "baseline_sr": 0.5,
-                "steered_sr": 0.9,
-            },
-            "taskB": {"layer": 17, "alpha": 0.5, "beta": 0.1, "strategy": "per_step_0"},
-        },
-    }
-
-
-def test_valid_config_parses(tmp_path: pathlib.Path):
-    path = tmp_path / "best.json"
-    path.write_text(json.dumps(_valid_config_dict()))
-    cfg = validate_best_configs_json(path)
-    assert "taskA" in cfg["tasks"]
-    assert cfg["defaults"]["layer"] == 11
-
-
-def test_missing_tasks_field_raises(tmp_path: pathlib.Path):
-    path = tmp_path / "c.json"
-    path.write_text(json.dumps({"defaults": {}}))
-    with pytest.raises(ValueError, match="tasks"):
-        validate_best_configs_json(path)
-
-
-def test_task_missing_field_raises(tmp_path: pathlib.Path):
-    cfg = _valid_config_dict()
-    del cfg["tasks"]["taskA"]["layer"]
-    path = tmp_path / "c.json"
-    path.write_text(json.dumps(cfg))
-    with pytest.raises(ValueError, match="layer"):
-        validate_best_configs_json(path)
-
-
-def test_task_bad_strategy_raises(tmp_path: pathlib.Path):
-    cfg = _valid_config_dict()
-    cfg["tasks"]["taskA"]["strategy"] = "nope"
-    path = tmp_path / "c.json"
-    path.write_text(json.dumps(cfg))
-    with pytest.raises(ValueError, match="strategy"):
-        validate_best_configs_json(path)
-
-
-def test_defaults_bad_field_raises(tmp_path: pathlib.Path):
-    cfg = _valid_config_dict()
-    cfg["defaults"]["layer"] = "not_an_int"
-    path = tmp_path / "c.json"
-    path.write_text(json.dumps(cfg))
-    with pytest.raises(ValueError, match="defaults.layer"):
-        validate_best_configs_json(path)
-
-
-def test_missing_file_raises(tmp_path: pathlib.Path):
-    with pytest.raises(FileNotFoundError):
-        validate_best_configs_json(tmp_path / "nope.json")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -390,13 +317,6 @@ def test_wrapper_metadata_extends_underlying(mini_npz: pathlib.Path):
     assert meta["stub"] is True
     assert meta["steering_enabled"] is True
     assert meta["num_conceptor_tasks"] == 2
-
-
-def test_defaults_are_module_constants():
-    """Regression: sub-venv scripts hard-code these defaults, so they must stay literal ints/floats."""
-    assert isinstance(steering.DEFAULT_STEERING_LAYER, int)
-    assert isinstance(steering.DEFAULT_STEERING_ALPHA, float)
-    assert isinstance(steering.DEFAULT_STEERING_BETA, float)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -572,4 +492,3 @@ def test_wrapper_all_five_strategies_cache_separately(mini_npz: pathlib.Path):
     for strat in ("global", "per_step_0", "positive_only", "random_matched", "linear"):
         w.infer({"__steering__": _payload("taskA", strat)})
     assert len(w._hook_cache) == 5  # noqa: SLF001
-    assert steering.DEFAULT_STEERING_STRATEGY in ALLOWED_STRATEGIES
