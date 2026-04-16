@@ -17,6 +17,7 @@ from openpi.policies import policy as _policy
 from openpi.policies import policy_config as _policy_config
 from openpi.serving import websocket_policy_server
 from openpi.serving.activation_collector import CollectingPolicy
+from openpi.serving.steering import SteeredPolicyWrapper
 from openpi.training import config as _config
 
 
@@ -186,8 +187,6 @@ def main(args: Args) -> None:
         )
 
     if args.steer:
-        from openpi.serving.steering import SteeredPolicyWrapper
-
         device = str(policy._pytorch_device)  # noqa: SLF001
         logging.info("Steering enabled: loading conceptor NPZ from %s (device=%s)", args.conceptor_npz, device)
         policy = SteeredPolicyWrapper(policy, conceptor_npz_path=args.conceptor_npz, device=device)

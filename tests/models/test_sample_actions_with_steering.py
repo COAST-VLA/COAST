@@ -7,22 +7,16 @@ raises. Skipped by default; run explicitly with::
     uv run pytest tests/models/test_sample_actions_with_steering.py -m manual -v
 """
 
-import pathlib
-import sys
-
 import numpy as np
 import pytest
 import torch
 
 from openpi.policies import libero_policy
 from openpi.policies import policy_config as _policy_config
+from openpi.serving.steering import ConceptorSteeringHook
 from openpi.training import config as _config
 
-_EXP_DIR = pathlib.Path(__file__).resolve().parents[2] / "experiments" / "pi05_libero"
-if str(_EXP_DIR) not in sys.path:
-    sys.path.insert(0, str(_EXP_DIR))
-
-_CHECKPOINT_DIR = "checkpoints/pi05_libero/libero_b200_bs512/2000"
+_CHECKPOINT_DIR = "checkpoints/openpi-libero-2000"
 
 
 @pytest.fixture(scope="module")
@@ -58,8 +52,6 @@ def _hook_count(layers) -> list[int]:
 @pytest.mark.manual
 def test_hooks_removed_after_successful_call(loaded_policy_and_obs):
     """After sample_actions_with_steering returns, zero user hooks remain."""
-    from conceptor_steering import ConceptorSteeringHook
-
     policy, observation = loaded_policy_and_obs
     layers = _expert_layers(policy)
     before = _hook_count(layers)
