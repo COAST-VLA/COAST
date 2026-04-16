@@ -1,0 +1,4 @@
+# Runtime outputs
+steering_results/
+# Shared checkpoint (not ours to commit)
+checkpoint-120000/
