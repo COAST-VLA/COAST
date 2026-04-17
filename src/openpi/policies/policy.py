@@ -141,7 +141,19 @@ class Policy(BasePolicy):
         else:
             outputs = jax.tree.map(lambda x: np.asarray(x), outputs)
 
-        outputs = self._output_transform(outputs)
+        # pi0-fast returns raw tokens of shape (batch, max_decoding_steps). ExtractFASTActions
+        # decodes one sample at a time, so apply the output transform per sample and re-stack.
+        if outputs["actions"].ndim == 2:
+            per_sample_outputs = [
+                self._output_transform({"state": outputs["state"][i], "actions": outputs["actions"][i]})
+                for i in range(eval_batch_size)
+            ]
+            outputs = {
+                k: np.stack([o[k] for o in per_sample_outputs], axis=0)
+                for k in per_sample_outputs[0]
+            }
+        else:
+            outputs = self._output_transform(outputs)
         outputs["policy_timing"] = {
             "infer_ms": model_time * 1000,
         }
