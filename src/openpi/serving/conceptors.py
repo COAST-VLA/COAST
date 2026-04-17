@@ -293,14 +293,14 @@ def flatten_global(ep_hiddens: list[np.ndarray], layer_axis: int) -> np.ndarray:
     """Flatten episodes into (total_samples, hidden_dim) for the 'global' strategy.
 
     Args:
-        ep_hiddens: list of per-episode arrays, each (T, 10, L, 32, D)
+        ep_hiddens: list of per-episode arrays, each (T, num_denoise, L, num_tokens, D)
         layer_axis: index into L dimension
     Returns:
-        X: (sum_T * 10 * 32, D) float64
+        X: (sum_T * num_denoise * num_tokens, D) float64
     """
     slices = []
     for h in ep_hiddens:
-        # (T, 10, L, 32, D) → slice L → (T, 10, 32, D) → flatten all but last
+        # (T, num_denoise, L, num_tokens, D) → slice L → flatten all but last
         s = h[:, :, layer_axis, :, :]
         slices.append(s.reshape(-1, s.shape[-1]))
     return np.concatenate(slices, axis=0).astype(np.float64, copy=False)
@@ -314,8 +314,7 @@ def flatten_per_step(ep_hiddens: list[np.ndarray], layer_axis: int, denoise_step
     """
     slices = []
     for h in ep_hiddens:
-        # (T, 10, L, 32, D) → pick denoise_step, layer → (T, 32, D) → flatten
-        s = h[:, denoise_step, layer_axis, :, :]
+        s = h[:, denoise_step, layer_axis, :, :]  # (T, num_tokens, D)
         slices.append(s.reshape(-1, s.shape[-1]))
     return np.concatenate(slices, axis=0).astype(np.float64, copy=False)
 
@@ -354,15 +353,10 @@ def compute_task_conceptors(
                 out[f"L{layer}__{alpha}__C_failure"] = C_f
                 out[f"L{layer}__{alpha}__C_contrastive"] = C_c
 
-            # Linear direction — one per layer (no α dependence, it's the unit
-            # mean difference). Used by the ``linear`` steering strategy.
             v = compute_linear_direction(X_s_global, X_f_global)
             out[f"L{layer}__linear_direction"] = v
 
-        # Per-step — conceptors computed at a single denoise step, fixed α.
-        # Miranda-v2 convention: per_step uses α=1.0 baked in. We store the
-        # result without an α in the key so the steering module can look it up
-        # without negotiating aperture.
+        # Per-step — conceptors at a single denoise step, fixed α=1.0.
         per_step_alpha = 1.0
         for t in per_step_indices:
             X_s = flatten_per_step(hiddens_success, layer_axis, t)
