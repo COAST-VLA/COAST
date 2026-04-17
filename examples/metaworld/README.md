@@ -1,6 +1,6 @@
 # MetaWorld Example
 
-[MetaWorld](https://meta-world.github.io/) is a benchmark of 50 simulated robotic manipulation tasks built on MuJoCo. This directory contains every metaworld-specific entry point: the dataset generator (`generate_dataset.py`), the eval clients (`main.py`, `eval_all.py`), and the in-process activation collectors (`collect_activations.py`, `collect_activations_v2.py`).
+[MetaWorld](https://meta-world.github.io/) is a benchmark of 50 simulated robotic manipulation tasks built on MuJoCo. This directory contains every metaworld-specific entry point: the dataset generator (`generate_dataset.py`) and the eval clients (`main.py`, `eval_all.py` — both support an optional `--collect` flag for in-process activation collection).
 
 ## Installation
 
@@ -66,58 +66,68 @@ TrainConfig(
 
 ## Evaluation
 
-We evalute with server-client architecture: the policy server hosts the model and serves actions over WebSocket, while the eval clients run the envs and query the policy for actions at each step. 
+Normal evaluation uses a server-client architecture: `scripts/serve_policy.py` hosts the model and serves actions over WebSocket; `main.py` / `eval_all.py` run the envs and query the server at each step. Both run from the repo root.
 
-### Serving the Policy
+### Download a checkpoint
 
-Serving runs from the repo root and uses the shared `scripts/serve_policy.py` entry point.
+```bash
+hf download brandonyang/openpi-metaworld-5000 --local-dir checkpoints/openpi-metaworld-5000
+# also available: brandonyang/openpi-metaworld-25000
+```
 
-#### JAX (default)
+### Serve the policy (Terminal 1)
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0
+
+# JAX (default):
 uv run scripts/serve_policy.py policy:checkpoint \
     --policy.config=pi05_metaworld \
-    --policy.dir=/path/to/checkpoint
-```
+    --policy.dir=checkpoints/openpi-metaworld-5000
 
-#### PyTorch
-
-Add `--pytorch`. The first run patches the transformers library and converts the JAX checkpoint to `model.safetensors` (cached afterwards).
-
-```bash
+# PyTorch (add --pytorch; first run auto-converts the JAX checkpoint to model.safetensors):
 uv run scripts/serve_policy.py --pytorch policy:checkpoint \
     --policy.config=pi05_metaworld \
-    --policy.dir=/path/to/checkpoint
+    --policy.dir=checkpoints/openpi-metaworld-5000
 ```
 
-### Run Evaluation
+### Run evaluation (Terminal 2)
 
-### Single task
+**Single task** — `main.py`, runs one `env_name` with `num_envs` parallel envs:
 
 ```bash
 MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
-# override the output directory:
+MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3 --num_envs 16
 MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3 --output_dir /tmp/reach_debug
 ```
 
-### All tasks (ML45 split)
+**Full eval** — `eval_all.py`, sweeps all tasks in the ML45 split (train=45 tasks, test=5 held-out tasks):
 
 ```bash
+# All 45 train tasks
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
+
+# All 5 held-out test tasks
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
-# override the output directory (e.g. to keep runs isolated side-by-side):
+
+# Subset of tasks (skips --split)
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --tasks reach-v3 push-v3 pick-place-v3
+
+# Custom output directory (results.json, per-task videos)
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train --output_dir /tmp/ml45_run1
+
+# Larger batch per task
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train --num_envs 16
 ```
 
-`--split train` evaluates the 45 ML45 train tasks; `--split test` evaluates the 5 held-out test tasks. `--output_dir` follows the same contract as the libero and robocasa examples: if set, every artifact (`results.json`, per-task video dirs) lands directly under that path; if omitted, the default is `examples/metaworld/output/ML45-{split}/`.
+`--output_dir` follows the same contract as the libero and robocasa examples: if set, every artifact (`results.json`, per-task video dirs) lands directly under that path; if omitted, the default is `examples/metaworld/output/ML45-{split}/`. `eval_all.py` writes `results.json` incrementally after each task so progress isn't lost on early exit.
 
 ### Parallelism model
 
 Unlike the libero and robocasa examples, metaworld uses **in-process** parallelism via `gym.vector.AsyncVectorEnv(context="spawn")` rather than spawning one subprocess per task. The `--num_envs N` flag (default 15 in `eval_all.py`, 10 in `main.py`) runs N parallel envs of the same task inside a single process and batches their observations into one policy call. This is more efficient for metaworld because:
 
 - Metaworld's MuJoCo + EGL setup is multiprocess-safe in this configuration (see PR #9 — `AsyncVectorEnv(spawn)` gave an 8.6× speedup over sequential env stepping)
-- Batched inference amortizes the policy call cost across all 15 envs
+- Batched inference amortizes the policy call cost across all envs in a task
 - Metaworld env steps are fast (~5 ms), so the WebSocket policy server becomes the bottleneck well before subprocess-level parallelism would help
 
 Libero and robocasa cannot use this approach because their envs can't share EGL contexts in-process, so they fall back to one subprocess per task (see `examples/libero_env/eval_all.py` and `examples/robocasa_env/eval_all.py`, both of which expose a `--num_workers` flag). Metaworld does not have a `--num_workers` flag and does not need one — tune `--num_envs` instead.
@@ -129,198 +139,88 @@ Libero and robocasa cannot use this approach because their envs can't share EGL 
 
 ## Collecting Activations for Mechanistic Interpretability
 
-We provide two activation collection scripts. **V2 is recommended** — it collects richer data (attention weights, adaRMS gates, proprioceptive state) in 65% less storage.
+The same `main.py` and `eval_all.py` accept a `--collect` flag. Unlike the libero and robocasa examples (which route activations through a dedicated collection server), metaworld activation collection runs **in-process**: when `--collect` is set, the script loads the PyTorch policy directly, bypassing the WebSocket server, and saves intermediate activations during rollout. This preserves metaworld's batched `AsyncVectorEnv` inference and enables per-GPU task sharding via `eval_all.py --gpus`.
 
-Unlike `examples/libero_env/` and `examples/robocasa_env/`, metaworld activation collection runs **in-process**: the collection scripts load the policy and the env in the same Python process.
+**No server needed for `--collect`** — do not run `serve_policy.py`. The script loads the policy itself from `--policy.dir`. (The first run auto-converts the JAX checkpoint to `model.safetensors` via `ensure_pytorch_checkpoint`; in multi-GPU mode the conversion happens once in the parent before any subprocess spawns, so concurrent jobs don't race.)
+
+Activations are written to `--collect_output_dir` (default `./activations`) using the same on-disk schema as libero and robocasa collection. Videos and `results.json` are still written to the eval artifact directory (`--output_dir`), unaffected by `--collect`. `--gpus` is only valid together with `--collect`; for normal (WebSocket-served) eval, pin a single GPU with `CUDA_VISIBLE_DEVICES`.
 
 ### Downloading Pre-Collected Activations
 
-Pre-collected activation datasets are available on HuggingFace. Download them to local directories using this naming convention: `pi05-metaworld-activations-v{version}-{num_envs}env`.
+Pre-collected activation datasets are available on HuggingFace if you want to skip collection:
 
 ```bash
-# V2 activations (recommended) — 126 GB, 15 envs per task
-hf download brandonyang/pi05-metaworld-activations-v2-15env --repo-type dataset --local-dir pi05-metaworld-activations-v2-15env
-
-# V1 activations (15 envs per task) — 357 GB
+# 15 envs per task — 357 GB
 hf download brandonyang/pi05-metaworld-activations-v1-15env --repo-type dataset --local-dir pi05-metaworld-activations-v1-15env
 
-# V1 activations (2 envs per task) — 20 GB
+# 2 envs per task — 20 GB
 hf download brandonyang/pi05-metaworld-activations-v1-2env --repo-type dataset --local-dir pi05-metaworld-activations-v1-2env
 ```
 
-> **Note:** The V2 dataset is uploaded as per-task `.tar` files. After downloading, extract them:
-> ```bash
-> cd pi05-metaworld-activations-v2-15env
-> for f in *.tar; do tar xf "$f"; done
-> ```
+### Running Collection
 
-### V2 Collection
-
-Dataset: [brandonyang/pi05-metaworld-activations-v2-15env](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v2-15env)
+**Single task** — `main.py --collect`:
 
 ```bash
-# Single task
-CUDA_VISIBLE_DEVICES=1 MUJOCO_GL=egl uv run examples/metaworld/collect_activations_v2.py \
+CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/main.py \
+    --collect --env_name reach-v3 --num_envs 16 \
     --policy.config=pi05_metaworld \
-    --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
-    --tasks reach-v3 --num_envs 2
-
-# All 45 ML45 train tasks (multi-GPU)
-MUJOCO_GL=egl uv run examples/metaworld/collect_activations_v2.py \
-    --policy.config=pi05_metaworld \
-    --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
-    --split train --num_envs 15 --gpus 1 6
+    --policy.dir=checkpoints/openpi-metaworld-5000
 ```
 
-Check `--help` for common flags.
-
-#### V2 Output Structure
-
-```
-activations_v2/{checkpoint_step}/
-  adarms_cond_global.npz                  # Saved ONCE (deterministic across all episodes)
-    adarms_cond_global: (num_envs, 1024)  #   1024-dim conditioning vector (all rows identical)
-  {task_name}/
-    episode_000_env_000/
-      metadata.json                       # Episode-level metadata (see below)
-      rewards.npz                         # Reward trajectory
-        per_step_reward: (300,) float32   #   Per-environment-step reward
-        cumulative_reward: (300,) float32 #   Running sum
-        success_at_step: (300,) bool      #   Whether task succeeded by this step
-      step_0000/
-        denoising.npz                     # Denoising trajectory (3 of 10 steps: 0, 4, 9)
-          all_x_t: (3, 32, 32) float32   #   Noisy actions at collected denoising steps
-          all_v_t: (3, 32, 32) float32   #   Velocity predictions (model output)
-        suffix_residual.npz               # Action Expert residual streams
-          all_suffix_residual: (3, 2, 32, 1024) float32
-            # (denoise_steps, layers[5,11], action_tokens, hidden_dim)
-        suffix_mlp_hidden.npz             # Action Expert MLP hidden states
-          all_suffix_mlp_hidden: (3, 1, 32, 4096) float32
-            # (denoise_steps, layers[11], action_tokens, mlp_dim)
-        attention_weights.npz             # Action Expert attention patterns
-          all_attention_weights: (3, 2, 8, 32, ~1000) float32
-            # (denoise_steps, layers[5,11], heads, action_tokens, prefix_seq_len)
-            # Shows which image/language tokens each action token attends to
-        adarms_gates.npz                  # Adaptive RMSNorm gate values
-          all_adarms_gates: (3, 18, 2, 1, 1024) float32
-            # (denoise_steps, all_18_layers, 2[attn_gate,mlp_gate], batch, hidden_dim)
-            # Controls per-layer contribution at each denoising timestep
-        metadata.json                     # Step-level metadata (see below)
-      step_0010/
-        ...
-```
-
-#### V2 Episode Metadata (`episode_*/metadata.json`)
-
-```json
-{
-  "task_name": "reach-v3",
-  "episode_id": 0,
-  "env_id": 0,
-  "episode_success": true,
-  "total_reward": 2574.66,
-  "steps_to_success": 34,
-  "total_env_steps": 300,
-  "total_inference_steps": 30,
-  "prompt": "reach the goal position",
-  "checkpoint_dir": "checkpoints/pi05_metaworld/pi05_metaworld_test/5000/",
-  "config_name": "pi05_metaworld",
-  "collection_version": "v2",
-  "collected_denoise_steps": [0, 4, 9],
-  "collected_residual_layers": [5, 11],
-  "collected_mlp_layers": [11],
-  "collected_attention_layers": [5, 11]
-}
-```
-
-#### V2 Step Metadata (`step_*/metadata.json`)
-
-```json
-{
-  "task_name": "reach-v3",
-  "episode_id": 0,
-  "env_id": 0,
-  "step": 0,
-  "inference_step": 0,
-  "prompt": "reach the goal position",
-  "cumulative_reward": 0.0,
-  "success_so_far": false,
-  "reward_since_last_inference": 0.0,
-  "proprio_state": [0.005, 0.601, 0.195, 1.0],
-  "object_positions": [0.002, 0.683, 0.02],
-  "predicted_actions": [-0.04, 1.0, -0.29, 0.006]
-}
-```
-
-| Field | Description |
-|---|---|
-| `cumulative_reward` | Total reward accumulated from episode start to this step |
-| `success_so_far` | Whether the task has been completed by this step |
-| `reward_since_last_inference` | Reward accumulated during the 10 env steps since last inference call |
-| `proprio_state` | Robot proprioceptive state: `[hand_x, hand_y, hand_z, gripper_angle]` |
-| `object_positions` | Task object position from observation: `[obj_x, obj_y, obj_z]` |
-| `predicted_actions` | Actions sent to the environment: `[dx, dy, dz, gripper]` |
-
-#### V2 Storage
-
-~8.7 MB per inference step (vs ~26 MB for V1). Total for 45 tasks × 15 envs: **~126 GB** (vs 357 GB for V1).
-
-#### Validate V2 Activations
+**Full collection** — `eval_all.py --collect`, sweeps all 45 (or 5) tasks:
 
 ```bash
-# Validate a single task
-ACTIVATIONS_V2_DIR=activations_v2/5000/reach-v3 \
-ACTIVATIONS_V2_BASE=activations_v2/5000 \
-  uv run pytest tests/test_activations_v2.py -v
+# All 45 ML45 train tasks, single GPU
+CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+    --collect --split train --num_envs 16 \
+    --policy.config=pi05_metaworld \
+    --policy.dir=checkpoints/openpi-metaworld-5000
 
-# Validate a different task
-ACTIVATIONS_V2_DIR=activations_v2/5000/pick-place-v3 \
-ACTIVATIONS_V2_BASE=activations_v2/5000 \
-  uv run pytest tests/test_activations_v2.py -v
+# Test split (5 held-out tasks)
+CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+    --collect --split test --num_envs 16 \
+    --policy.config=pi05_metaworld \
+    --policy.dir=checkpoints/openpi-metaworld-5000
+
+# Subset of tasks
+CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+    --collect --tasks reach-v3 push-v3 pick-place-v3 --num_envs 16 \
+    --policy.dir=checkpoints/openpi-metaworld-5000
+
+# Multi-GPU: round-robin task sharding across GPUs 0 and 1
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+    --collect --split train --num_envs 16 --gpus 0 1 \
+    --policy.config=pi05_metaworld \
+    --policy.dir=checkpoints/openpi-metaworld-5000
+
+# Custom activation root
+CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+    --collect --split train --num_envs 16 \
+    --collect_output_dir /scratch/my_activations \
+    --policy.dir=checkpoints/openpi-metaworld-5000
 ```
 
----
+### Tuning `--num_envs`
 
-### V1 Collection (Original)
+`--num_envs 16` is a good default for a 46 GB GPU with the 5000-step checkpoint. Each env contributes a batch element to the captured activation tensors; memory pressure scales roughly linearly with `num_envs`. If you OOM, drop to 8 or 4. The per-inference-step memory peak is dominated by the captured `suffix_mlp_hidden` tensor (shape `(10, 4, num_envs, 32, 4096)` float32) plus the attention kernels during the denoising loop.
 
-Datasets:
-- [brandonyang/pi05-metaworld-activations-v1-2env](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v1-2env) — 2 envs per task
-- [brandonyang/pi05-metaworld-activations-v1-15env](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v1-15env) — 15 envs per task
+`--collect` automatically sets `XLA_PYTHON_CLIENT_PREALLOCATE=false` so JAX doesn't grab most of the GPU on import (openpi pulls in JAX even in PyTorch-inference mode). If you want to override this, export the env var yourself before launching.
 
-```bash
-# Single task
-CUDA_VISIBLE_DEVICES=1 MUJOCO_GL=egl uv run examples/metaworld/collect_activations.py \
-    --policy.config=pi05_metaworld \
-    --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
-    --tasks reach-v3 --num_envs 2
-
-# All 45 ML45 train tasks
-CUDA_VISIBLE_DEVICES=1 MUJOCO_GL=egl uv run examples/metaworld/collect_activations.py \
-    --policy.config=pi05_metaworld \
-    --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
-    --split train --num_envs 2
-
-# Multi-GPU
-MUJOCO_GL=egl uv run examples/metaworld/collect_activations.py \
-    --policy.config=pi05_metaworld \
-    --policy.dir=checkpoints/pi05_metaworld/pi05_metaworld_test/5000/ \
-    --split train --num_envs 2 --gpus 0 1
-```
-
-#### V1 Output Structure
+### Output Structure
 
 ```
-activations/{checkpoint_step}/{task_name}/
-  episode_000_env_000/
+{collect_output_dir}/{checkpoint_step}/{task_name}/
+  episode_NNN_env_NNN/
     metadata.json                         # Episode-level metadata
       # task_name, episode_id, env_id, episode_success, total_reward,
       # steps_to_success, total_env_steps, total_inference_steps, prompt,
       # checkpoint_dir, config_name
     rewards.npz                           # Reward trajectory
-      per_step_reward: (300,) float32
-      cumulative_reward: (300,) float32
-      success_at_step: (300,) bool
-    step_0000/
+      per_step_reward: (N,) float32
+      cumulative_reward: (N,) float32
+      success_at_step: (N,) bool
+    step_NNNN/
       denoising.npz                       # All 10 denoising steps
         all_x_t: (10, 32, 32) float32    #   Noisy action states
         all_v_t: (10, 32, 32) float32    #   Velocity predictions
@@ -335,17 +235,15 @@ activations/{checkpoint_step}/{task_name}/
       metadata.json                       # Step-level metadata
         # task_name, episode_id, env_id, step, inference_step, prompt,
         # cumulative_reward, success_so_far, reward_since_last_inference
-    step_0010/
+    step_NNNN+replan_steps/
       ...
 ```
 
-#### V1 Storage
+Storage: ~26 MB per inference step. Total for 45 tasks × 15 envs: **~357 GB**.
 
-~26 MB per inference step. Total for 45 tasks × 15 envs: **~357 GB**.
+### Validate Activations
 
-#### Validate V1 Activations
-
-The schema validators are env-agnostic — they work for any directory written by these scripts (or by any other env that follows the same on-disk format).
+The schema validators are env-agnostic — they work on any directory matching the layout above.
 
 ```bash
 # Validate a single task

@@ -53,30 +53,31 @@ If the path doesn't exist, show available checkpoints and ask the user.
 
 ## Step 4: Run Collection
 
-### MetaWorld — In-Process (single command)
+### MetaWorld — In-Process (single command, NO server)
 
-MetaWorld loads the policy directly. No server needed.
+MetaWorld loads the policy directly via `main.py --collect` (single task) or `eval_all.py --collect` (all tasks). Do **not** run `serve_policy.py`. Recommended `--num_envs 16` on a 46 GB GPU; drop to 8 if you OOM.
 
-**V2 (recommended):**
+**All tasks in a split:**
 ```bash
 export CUDA_VISIBLE_DEVICES=<GPU>
-MUJOCO_GL=egl uv run examples/metaworld/collect_activations_v2.py \
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+    --collect --split <SPLIT> --num_envs 16 \
     --policy.config=pi05_metaworld \
-    --policy.dir=<CHECKPOINT> \
-    --split <SPLIT> --num_envs <N>
+    --policy.dir=<CHECKPOINT>
 ```
 
-**V1:**
+**Single task:**
 ```bash
 export CUDA_VISIBLE_DEVICES=<GPU>
-MUJOCO_GL=egl uv run examples/metaworld/collect_activations.py \
+MUJOCO_GL=egl uv run examples/metaworld/main.py \
+    --collect --env_name <TASK> --num_envs 16 \
     --policy.config=pi05_metaworld \
-    --policy.dir=<CHECKPOINT> \
-    --split <SPLIT> --num_envs <N>
+    --policy.dir=<CHECKPOINT>
 ```
 
-For specific tasks, use `--tasks reach-v3 push-v3 ...` instead of `--split`.
-For multi-GPU, use `--gpus 0 1` instead of `CUDA_VISIBLE_DEVICES`.
+For a task subset, use `--tasks reach-v3 push-v3 ...` on `eval_all.py` (skips `--split`).
+For multi-GPU, use `--gpus 0 1` on `eval_all.py` instead of `CUDA_VISIBLE_DEVICES`.
+`--collect_output_dir` (default `./activations`) overrides the activation root.
 
 ### LIBERO — Server + Client (two commands, two venvs)
 

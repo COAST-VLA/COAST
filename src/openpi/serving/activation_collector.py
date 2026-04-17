@@ -1,6 +1,6 @@
 """Shared activation-collection utilities used by both the metaworld
-collect_activations.py script and the WebSocket policy server's
-collection mode.
+``main.py --collect`` / ``eval_all.py --collect`` entrypoints and the
+WebSocket policy server's collection mode.
 
 The on-disk schema (file names, dtypes, metadata.json fields, directory layout)
 is the source of truth for downstream mech-interp tooling. Both metaworld and
@@ -31,8 +31,9 @@ def save_step_activations(
 
     Slices the env_id-th example out of the batch dimension of each intermediate
     array, then writes one .npz per activation kind plus metadata.json. The
-    output schema must stay byte-identical to examples/metaworld/collect_activations.py
-    so existing analysis tooling keeps working.
+    output schema must stay byte-identical to what the metaworld entrypoints
+    (main.py --collect / eval_all.py --collect) write, so existing analysis
+    tooling keeps working.
     """
     step_dir.mkdir(parents=True, exist_ok=True)
 
