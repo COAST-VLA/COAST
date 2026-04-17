@@ -52,6 +52,51 @@ def save_step_activations(
         json.dump(step_metadata, f, indent=2)
 
 
+def save_step_activations_fast(
+    step_dir: pathlib.Path,
+    intermediates: dict,
+    env_id: int,
+    step_metadata: dict,
+) -> None:
+    """Save per-env, per-step activation data for pi0-fast (autoregressive) models.
+
+    On-disk schema:
+    - tokens.npz: generated_tokens (num_tokens,) int32 — sampled action token IDs
+    - hidden_states.npz: token_pre_logits (num_tokens-1, width) float16 — per-token
+      last hidden state (one fewer than tokens because the final token's forward pass
+      isn't needed for the next prediction)
+    - token_logprobs.npz: token_logprobs (num_tokens,) float32
+    - metadata.json: step metadata + num_tokens
+    """
+    step_dir.mkdir(parents=True, exist_ok=True)
+
+    generated_tokens = intermediates["generated_tokens"][:, env_id]  # (num_tokens,)
+    token_logprobs = intermediates["token_logprobs"][:, env_id]  # (num_tokens,)
+    num_tokens = int(intermediates["num_tokens"])
+
+    np.savez(
+        step_dir / "tokens.npz",
+        generated_tokens=np.asarray(generated_tokens, dtype=np.int32),
+    )
+    np.savez(
+        step_dir / "token_logprobs.npz",
+        token_logprobs=np.asarray(token_logprobs, dtype=np.float32),
+    )
+
+    token_pre_logits = intermediates["token_pre_logits"]
+    if token_pre_logits.shape[0] > 0:
+        np.savez(
+            step_dir / "hidden_states.npz",
+            token_pre_logits=np.asarray(token_pre_logits[:, env_id], dtype=np.float16),
+        )
+
+    step_metadata = dict(step_metadata)
+    step_metadata["num_tokens"] = num_tokens
+    step_metadata["collection_version"] = "fast_v1"
+    with open(step_dir / "metadata.json", "w") as f:
+        json.dump(step_metadata, f, indent=2)
+
+
 def save_episode_files(
     episode_dir: pathlib.Path,
     episode_metadata: dict,

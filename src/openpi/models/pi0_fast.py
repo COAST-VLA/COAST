@@ -311,3 +311,111 @@ class Pi0FAST(_model.BaseModel):
             cond, step, (rng, last_logit, output_tokens, kv_cache, False, 0)
         )
         return output_tokens
+
+    def sample_actions_with_intermediates(
+        self,
+        rng: at.KeyArrayLike,
+        observation: _model.Observation,
+        *,
+        max_decoding_steps: int = 256,
+        temperature: float = 0.0,
+    ) -> tuple[_model.Actions, dict]:
+        """Like sample_actions but returns per-token intermediates.
+
+        Uses a Python for-loop instead of jax.lax.while_loop so we can
+        capture hidden states at each decoding step. Not JIT-compatible
+        but fine for activation collection where throughput is secondary.
+
+        Returns:
+            (output_tokens, intermediates) where intermediates is a dict with:
+            - "generated_tokens": int32 (num_tokens, batch)
+            - "token_pre_logits": float32 (num_tokens-1, batch, width)
+            - "token_logprobs": float32 (num_tokens, batch)
+            - "prefix_pre_logits": float32 (batch, prefix_len, width)
+            - "num_tokens": int
+        """
+        observation = _model.preprocess_observation(
+            None, observation, train=False, image_keys=list(observation.images.keys())
+        )
+
+        prefix_token_embeddings, prefix_mask, prefix_ar_mask = self.embed_inputs(observation)
+        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
+
+        prefix_token_embeddings, prefix_mask, prefix_attn_mask = left_to_right_align(
+            prefix_token_embeddings, prefix_mask, prefix_attn_mask
+        )
+        prefill_size = prefix_token_embeddings.shape[1]
+        prefill_len = jnp.sum(prefix_mask, axis=-1)
+        prefix_start = prefill_size - prefill_len
+
+        prefix_attn_mask = jnp.pad(prefix_attn_mask, ((0, 0), (0, 0), (0, max_decoding_steps)))
+        prefix_positions = jnp.cumsum(prefix_mask, axis=-1) - 1
+        prefix_pre_logits, kv_cache, _ = self.PaliGemma.llm(
+            embedded_prefix=prefix_token_embeddings,
+            mask=prefix_attn_mask,
+            positions=prefix_positions,
+            decode=True,
+            return_prelogits=True,
+        )
+
+        first_logit, _ = self.PaliGemma.llm(pre_logits=prefix_pre_logits[:, -1:])
+        last_logit = first_logit
+        batch_size = last_logit.shape[0]
+
+        output_tokens = jnp.zeros((batch_size, max_decoding_steps))
+        collected_tokens = []
+        collected_pre_logits = []
+        collected_logprobs = []
+
+        for step_idx in range(max_decoding_steps):
+            rng, rng_step = jax.random.split(rng)
+            if temperature > 0.0:
+                token = jax.random.categorical(rng_step, last_logit / temperature, axis=-1)
+            else:
+                token = jnp.argmax(last_logit, axis=-1)
+
+            log_probs = jax.nn.log_softmax(last_logit, axis=-1)
+            token_logprob = jnp.take_along_axis(log_probs[:, 0, :], token[:, 0:1], axis=-1)[:, 0]
+
+            collected_tokens.append(token[:, 0])
+            collected_logprobs.append(token_logprob)
+
+            output_tokens = put_along_last_axis(output_tokens, jnp.broadcast_to(step_idx, (batch_size, 1)), token)
+
+            has_eos = jnp.any(token == PALIGEMMA_EOS_TOKEN, axis=-1)
+            if bool(jnp.all(has_eos)):
+                break
+
+            token_embedding = self.PaliGemma.llm(token, embed_only=True)
+            positions = prefill_len[:, None] + step_idx + 1
+            mask = jnp.logical_and(
+                jnp.arange(prefill_size + max_decoding_steps)[None, None, :] >= prefix_start[:, None, None],
+                jnp.arange(prefill_size + max_decoding_steps)[None, None, :]
+                < (jnp.broadcast_to(prefill_size + step_idx + 1, (prefix_start.shape[0], 1, 1))),
+            )
+            step_pre_logits, kv_cache, _ = self.PaliGemma.llm(
+                embedded_prefix=token_embedding,
+                mask=mask,
+                positions=positions,
+                decode=True,
+                kv_cache=kv_cache,
+                return_prelogits=True,
+            )
+            collected_pre_logits.append(step_pre_logits[:, 0, :])
+
+            last_logit, _ = self.PaliGemma.llm(pre_logits=step_pre_logits)
+
+        num_tokens = len(collected_tokens)
+        intermediates = {
+            "generated_tokens": jnp.stack(collected_tokens, axis=0),
+            "token_pre_logits": (
+                jnp.stack(collected_pre_logits, axis=0)
+                if collected_pre_logits
+                else jnp.zeros((0, batch_size, prefix_pre_logits.shape[-1]))
+            ),
+            "token_logprobs": jnp.stack(collected_logprobs, axis=0),
+            "prefix_pre_logits": prefix_pre_logits,
+            "num_tokens": num_tokens,
+        }
+
+        return output_tokens, intermediates
