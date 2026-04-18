@@ -8,7 +8,7 @@ This is a fork of Physical Intelligence's openpi repository for **activation col
 
 | Client | Architecture | Venv | Activation Collection |
 |--------|-------------|------|----------------------|
-| **MetaWorld** | In-process (loads policy directly) | Root venv | In-process (`collect_activations.py`, `collect_activations_v2.py`) |
+| **MetaWorld** | In-process (loads policy directly) | Root venv | In-process (`main.py --collect`, `eval_all.py --collect`) |
 | **LIBERO** | Server-client over WebSocket | **Separate venv (Python 3.8)** in `examples/libero_env/` | Server-side (`--collect_activations` on server, `--collect` on client) |
 | **RoboCasa** | Server-client over WebSocket | **Separate venv (Python 3.11)** in `examples/robocasa_env/` | Server-side (same protocol as LIBERO) |
 
@@ -112,6 +112,30 @@ Three-stage: **repack** (dataset-specific -> common) -> **normalize** (z-score/q
 
 ### Serving & Collection (`src/openpi/serving/`)
 WebSocket policy server. Collection-mode server (`--collect_activations`) saves per-step activations to disk via PyTorch hooks. Clients use `openpi-client` package.
+
+## HuggingFace Downloads
+
+Always use the `hf download` CLI and download into the project tree — never into `~/.cache/huggingface` or any user-global cache.
+
+```bash
+# Datasets (e.g., activation datasets) — local dir mirrors the repo basename
+hf download brandonyang/pi05-metaworld-activations-v2-15env \
+    --repo-type dataset --local-dir pi05-metaworld-activations-v2-15env
+
+# Checkpoints — place under checkpoints/, optionally --include a subpath
+hf download robocasa/robocasa365_checkpoints \
+    --include "pi05_pretrain_human300/multitask_learning/75000/*" \
+    --local-dir checkpoints
+
+# Discover flags / subcommands
+hf download --help
+```
+
+Rules:
+- Always pass `--local-dir <path>`.
+- Datasets require `--repo-type dataset`; models are the default.
+- Run from the directory where the asset will be consumed (repo root for shared assets, `examples/{client}/` for client-specific ones).
+- When unsure about flags, run `hf download --help` rather than guessing.
 
 ## Key Conventions
 

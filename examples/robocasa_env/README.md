@@ -101,6 +101,15 @@ Same payload, same client, either server.
 
 ## Activation Collection
 
+For mech-interp work you can have the policy server save per-step intermediate
+activations to disk while a robocasa rollout runs. This uses the same
+"collection-mode" policy server as the libero example: it wraps the policy in
+`CollectingPolicy` and writes the same on-disk format as
+`examples/metaworld/main.py --collect` (metaworld's in-process collector).
+Activations live entirely on the
+**server's** filesystem — the robocasa client never touches them, so the
+client and server can be on different machines.
+
 ### Download Pre-Collected Activations
 
 Both activation datasets: 7 robocasa tasks × 15 episodes (`CloseFridge`, `CoffeeSetupMug`, `OpenDrawer`, `OpenStandMixerHead`, `PickPlaceCounterToCabinet`, `PickPlaceCounterToStove`, `TurnOnElectricKettle`).

@@ -22,6 +22,7 @@ def create_trained_policy(
     default_prompt: str | None = None,
     norm_stats: dict[str, transforms.NormStats] | None = None,
     pytorch_device: str | None = None,
+    use_pytorch: bool | None = None,
 ) -> _policy.Policy:
     """Create a policy from a trained checkpoint.
 
@@ -45,9 +46,18 @@ def create_trained_policy(
     repack_transforms = repack_transforms or transforms.Group()
     checkpoint_dir = download.maybe_download(str(checkpoint_dir))
 
-    # Check if this is a PyTorch model by looking for model.safetensors
+    # Caller can force a backend via use_pytorch; otherwise auto-detect by the
+    # presence of model.safetensors.
     weight_path = os.path.join(checkpoint_dir, "model.safetensors")
-    is_pytorch = os.path.exists(weight_path)
+    if use_pytorch is None:
+        is_pytorch = os.path.exists(weight_path)
+    else:
+        is_pytorch = use_pytorch
+        if is_pytorch and not os.path.exists(weight_path):
+            raise FileNotFoundError(
+                f"use_pytorch=True but model.safetensors not found at {weight_path}. "
+                "Run ensure_pytorch_checkpoint() first, or drop the flag."
+            )
 
     logging.info("Loading model...")
     if is_pytorch:
