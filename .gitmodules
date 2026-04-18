@@ -11,3 +11,6 @@
 	path = third_party/robocasa
 	url = https://github.com/robocasa/robocasa
 	ignore = untracked
+[submodule "third_party/Isaac-GR00T"]
+	path = third_party/Isaac-GR00T
+	url = https://github.com/NVIDIA/Isaac-GR00T.git
