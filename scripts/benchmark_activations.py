@@ -33,7 +33,8 @@ from openpi.training import config as _config
 
 logger = logging.getLogger(__name__)
 
-# Inline imports from collect_activations to avoid 'scripts' package issue
+# Helpers inlined (rather than imported from examples/metaworld/main.py) so this
+# script can run standalone from the 'scripts' package without path hackery.
 CAMERA_IDS = {"topview": 0, "corner": 1, "corner2": 2, "corner3": 3, "corner4": 4, "behindGripper": 5, "gripperPOV": 6}
 
 TASK_TO_PROMPT = {"reach-v3": "reach the goal position", "door-open-v3": "open the door"}

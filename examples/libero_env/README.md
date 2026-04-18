@@ -136,8 +136,8 @@ hf download brandonyang/pi05-libero-activations-v1-2000-15env --repo-type datase
 For mech-interp work you can have the policy server save per-step intermediate
 activations to disk while a libero rollout runs. This uses a separate
 "collection-mode" policy server that wraps the policy in `CollectingPolicy`
-and writes the same on-disk format as `examples/metaworld/collect_activations.py`
-(metaworld's collector). Activations live entirely on the **server's**
+and writes the same on-disk format as `examples/metaworld/main.py --collect`
+(metaworld's in-process collector). Activations live entirely on the **server's**
 filesystem — the libero client never touches them, so the client and server
 can be on different machines.
 

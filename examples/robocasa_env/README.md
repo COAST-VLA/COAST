@@ -1,37 +1,35 @@
 # Robocasa Client Example
 
-Since [Robocasa](https://robocasa.ai/docs/build/html/index.html) has weird dependencies that we cannot resolve with `openpi`, we need to create a separate virtual env in `examples/robocasa_env`. Thus, the simulation (client) and the model (server) uses websocket to communicate.
+[Robocasa](https://robocasa.ai/docs/build/html/index.html) has dependencies incompatible with the root `openpi` venv, so this directory is a **separate venv**. The sim (client, here) and the model (server, in the root venv or `groot_env/`) talk over WebSocket.
+
+The client is **backend-agnostic** — `main.py` / `eval_all.py` can target either a **pi05 server** (`scripts/serve_policy.py`) or an **NVIDIA GR00T N1.5 server** ([`groot_env/serve.py`](../../groot_env/README.md)) with no client-side changes; just point `--host` / `--port` at whichever is running.
 
 ## Installation
 
-This is a modified version of the [original setup guide](https://robocasa.ai/docs/build/html/introduction/installation.html).
+Adapted from the [Robocasa setup guide](https://robocasa.ai/docs/build/html/introduction/installation.html):
 
 ```bash
 cd examples/robocasa_env
 uv sync
+uv run python -m robocasa.scripts.setup_macros
+uv run python -m robocasa.scripts.download_kitchen_assets   # ~10GB
 ```
 
-Install the package and download assets:
+## Serving
+
+### pi05 (root venv)
+
+Download + path surgery:
 
 ```bash
-cd examples/robocasa_env
-uv run python -m robocasa.scripts.setup_macros              # Set up system variables.
-uv run python -m robocasa.scripts.download_kitchen_assets   # Caution: Assets to be downloaded are around 10GB.
-```
-
-## Serving the Robocasa Policy
-
-### Prepare the Checkpoint
-
-```bash
-hf download robocasa/robocasa365_checkpoints --include "pi05_pretrain_human300/multitask_learning/75000/*"  --local-dir checkpoints
-
-# Do some path surgery to match the expected structure of the policy server
+hf download robocasa/robocasa365_checkpoints \
+    --include "pi05_pretrain_human300/multitask_learning/75000/*" --local-dir checkpoints
 mkdir -p checkpoints/pi05_pretrain_human300/multitask_learning/75000/assets/robocasa
-mv checkpoints/pi05_pretrain_human300/multitask_learning/75000/assets/norm_stats.json checkpoints/pi05_pretrain_human300/multitask_learning/75000/assets/robocasa
+mv checkpoints/pi05_pretrain_human300/multitask_learning/75000/assets/norm_stats.json \
+   checkpoints/pi05_pretrain_human300/multitask_learning/75000/assets/robocasa
 ```
 
-### Start the Server
+Serve (add `--pytorch` to use the Torch backend; first run converts the JAX checkpoint to `model.safetensors` and caches it):
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0
@@ -40,72 +38,66 @@ uv run scripts/serve_policy.py policy:checkpoint \
     --policy.dir=checkpoints/pi05_pretrain_human300/multitask_learning/75000
 ```
 
-To use the PyTorch backend instead of JAX, add `--pytorch`. The first run converts the JAX checkpoint to `model.safetensors` (cached, so later runs are fast):
+### GR00T N1.5 (groot_env venv)
+
+N1.5 pins `torch==2.5.1`, so it lives in its own venv at [`groot_env/`](../../groot_env/README.md). Full setup is documented there; minimum to serve:
 
 ```bash
-uv run scripts/serve_policy.py --pytorch policy:checkpoint \
-    --policy.config=pi05_robocasa \
-    --policy.dir=checkpoints/pi05_pretrain_human300/multitask_learning/75000
+cd groot_env && GIT_LFS_SKIP_SMUDGE=1 uv sync
+uv pip install --no-build-isolation flash-attn==2.7.1.post4
+uv run hf download robocasa/robocasa365_checkpoints \
+    --include "gr00t_n1-5/multitask_learning/checkpoint-120000/*" --local-dir ../checkpoints/groot_n15
+
+export CUDA_VISIBLE_DEVICES=0
+uv run python serve.py --port 8000     # defaults to the checkpoint path above
 ```
 
-The client (`main.py` / `eval_all.py`) is unchanged — the WebSocket protocol is the same for both backends.
+## Evaluation
 
-### Run Evaluation
+Two entry points, identical regardless of backend:
 
-There are two evaluation entry points:
+1. **`main.py`** — one task (one `env_name`), current process.
+2. **`eval_all.py`** — every task in a task set (`atomic_seen`, `composite_seen`, `composite_unseen`, `pretrain50`), one `main.py` subprocess per env via a `ThreadPoolExecutor`.
 
-1. **`main.py`** — evaluate a single task (one `env_name`) in the current process.
-2. **`eval_all.py`** — evaluate every task in a task set (e.g. `atomic_seen`, `composite_seen`, `composite_unseen`, `pretrain50`) in parallel by launching one `main.py` subprocess per env.
-
-Both default to `--split pretrain` (in-distribution object instances). Each episode's video is built by tiling the env's three cameras (`agentview_left`, `agentview_right`, `eye_in_hand`) into one grid frame.
-
-RoboCasa does **not** support parallel envs inside one process (EGL/OpenGL contexts are not shareable across threads in a single process, and `gym.vector.AsyncVectorEnv`'s fork model trips over MuJoCo's GL init), so the per-env grid tiles multiple cameras of a single env rather than multiple parallel envs as in the metaworld example. `eval_all.py` sidesteps this by giving each task its own `main.py` subprocess: every subprocess has its own EGL context, which **is** safe.
-
-#### Single environment
+Both default to `--split pretrain`. RoboCasa can't share EGL contexts across threads in one process, so in-process parallelism isn't possible; `eval_all.py` gets around this by giving each task its own subprocess. Env stepping is ~400ms/step, so 5–10 workers gives a real wall-clock win. `--num_workers 1` runs sequentially with inline tracebacks.
 
 ```bash
 cd examples/robocasa_env
 MUJOCO_GL=egl uv run python main.py --env_name CloseBlenderLid
+MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen --num_episodes 15 --num_workers 5
 ```
 
-#### All tasks in a task set (parallel subprocesses)
-
-```bash
-cd examples/robocasa_env
-MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen
-MUJOCO_GL=egl uv run python eval_all.py --task_set composite_seen --num_episodes 3 --num_workers 5
-MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen --output_dir /tmp/mech_interp_run1
-```
-
-`eval_all.py` submits one `main.py` subprocess per env in the task set to a `ThreadPoolExecutor` with `--num_workers` max concurrency. Because RoboCasa env stepping is roughly 10x slower than libero (~400 ms per step), parallelism buys a substantial wall-clock win; 5–10 workers is the sweet spot. Pass `--num_workers 1` to fall back to fully sequential execution with inline stack traces on crash.
-
-Everything one run produces lives under a single top-level directory (by default `examples/robocasa_env/output/<task_set>-<split>/`, or whatever `--output_dir` points at). No split between results and videos; no `single-` prefix leaking out:
+Output layout (default `output/<task_set>-<split>/`, override with `--output_dir`):
 
 ```
 <output_dir>/
-├── results.json                         # per-task + mean success rate summary
-├── parallel_logs/
-│   ├── task_00_CloseBlenderLid.log      # per-subprocess stdout+stderr
-│   ├── task_01_OpenCabinet.log
-│   └── ...
-├── CloseBlenderLid/
-│   ├── episode_000.mp4
-│   └── ...
-├── OpenCabinet/
-│   └── episode_000.mp4
-└── ...
+├── results.json                        # per-task + mean success rate, written incrementally
+├── parallel_logs/task_NN_<env>.log     # per-subprocess stdout/stderr
+└── <env_name>/episode_NNN.mp4          # per-episode video (tiles agentview_left/right + eye_in_hand)
 ```
 
-`results.json` is updated incrementally after each task finishes so progress is preserved on early exit. The final summary is sorted by success rate, descending.
+### Published results (pi05, 15 ep/task)
 
-### Evaluation Results with Released Checkpoints
-
-Original evaluation results are published [here](https://robocasa.ai/docs/build/html/benchmarking/multitask_learning.html#benchmark-results-and-checkpoints). We perform our own evaluation with the provided checkpoint.
-
-Results below are from the public `pi05_pretrain_human300/multitask_learning/75000` checkpoint, evaluated on the `pretrain` split with 15 episodes per task (`eval_all.py --num_workers 5 --num_episodes 15`). Raw per-task numbers are in [`figures/results_75000.json`](figures/results_75000.json).
+`pi05_pretrain_human300/multitask_learning/75000` on the `pretrain` split; raw numbers in [`figures/results_75000.json`](figures/results_75000.json). Robocasa's own numbers: [multitask_learning page](https://robocasa.ai/docs/build/html/benchmarking/multitask_learning.html#benchmark-results-and-checkpoints).
 
 ![Mean success rate per task set](figures/compare_means_75000.png)
 ![Per-task success rates](figures/compare_per_task_75000.png)
+
+### Published results (GR00T N1.5)
+
+https://robocasa.ai/docs/build/html/benchmarking/multitask_learning.html
+
+### Camera payload (pi05 vs GR00T)
+
+The client always emits three camera keys; each server reads what it needs:
+
+| Key | pi05 | GR00T N1.5 |
+|---|:-:|:-:|
+| `observation/image` (agentview_left) | ✓ | ✓ |
+| `observation/image2` (agentview_right) | ignored | ✓ (trained with it) |
+| `observation/wrist_image` (eye_in_hand) | ✓ | ✓ |
+
+Same payload, same client, either server.
 
 ## Activation Collection
 
@@ -113,50 +105,81 @@ For mech-interp work you can have the policy server save per-step intermediate
 activations to disk while a robocasa rollout runs. This uses the same
 "collection-mode" policy server as the libero example: it wraps the policy in
 `CollectingPolicy` and writes the same on-disk format as
-`examples/metaworld/collect_activations.py`. Activations live entirely on the
+`examples/metaworld/main.py --collect` (metaworld's in-process collector).
+Activations live entirely on the
 **server's** filesystem — the robocasa client never touches them, so the
 client and server can be on different machines.
 
-Start the collection-mode server from the repo root in one terminal:
+### Download Pre-Collected Activations
+
+Both activation datasets: 7 robocasa tasks × 15 episodes (`CloseFridge`, `CoffeeSetupMug`, `OpenDrawer`, `OpenStandMixerHead`, `PickPlaceCounterToCabinet`, `PickPlaceCounterToStove`, `TurnOnElectricKettle`).
+
+| Backend | Activation Dataset | Source checkpoint |
+|---|---|---|
+| pi05 | [`ksb21st/robocasa-activations-75000`](https://huggingface.co/datasets/ksb21st/robocasa-activations-75000) | [`pi05_pretrain_human300/multitask_learning/75000`](https://huggingface.co/robocasa/robocasa365_checkpoints/tree/main/pi05_pretrain_human300/multitask_learning/75000) |
+| GR00T N1.5 | [`brandonyang/groot_n15-robocasa-activations-v1-15env`](https://huggingface.co/datasets/brandonyang/groot_n15-robocasa-activations-v1-15env) | [`gr00t_n1-5/multitask_learning/checkpoint-120000`](https://huggingface.co/robocasa/robocasa365_checkpoints/tree/main/gr00t_n1-5/multitask_learning/checkpoint-120000) |
 
 ```bash
-# Terminal 1 (main openpi venv) — server pinned to GPU 0
+hf download ksb21st/robocasa-activations-75000 --repo-type dataset --local-dir pi05-robocasa-activations-75000
+hf download brandonyang/groot_n15-robocasa-activations-v1-15env --repo-type dataset --local-dir groot_n15-robocasa-activations-v1-15env
+```
+
+### Collecting your own
+
+The policy server can save per-step intermediate activations to disk during a rollout. Activations live on the **server's** filesystem (client and server can be on different hosts). The client side is identical for both backends — same `--collect` flag, same `CollectionSession` helper, same wire protocol (`__collect__` / `__finalize_episode__` magic keys); only the server command differs.
+
+Client (either backend):
+
+```bash
+cd examples/robocasa_env
+MUJOCO_GL=egl uv run python main.py --env_name CloseBlenderLid --collect
+MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen --collect --num_workers 5
+```
+
+Server — pick one:
+
+```bash
+# pi05 (root venv). --pytorch is required: infer_with_intermediates is Torch-only.
 export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py --pytorch --collect_activations \
     --output-dir ./activations \
     policy:checkpoint --policy.config=pi05_robocasa \
     --policy.dir=checkpoints/pi05_pretrain_human300/multitask_learning/75000
+
+# GR00T (groot_env venv). serve.py is PyTorch-only; no equivalent flag needed.
+export CUDA_VISIBLE_DEVICES=0
+cd groot_env && uv run python serve.py --port 8000 --collect-activations \
+    --output-dir ../groot_n15-robocasa-activations-v1-15env
 ```
 
-Then run a robocasa rollout with `--collect` from this directory:
+Output layout (either backend): `<output-dir>/<checkpoint_step>/<env_name>/episode_NNN_env_000/step_NNNN/`.
+
+| File | pi05 | GR00T N1.5 (analog) |
+|---|---|---|
+| `denoising.npz` | ✓ | ✓ |
+| `adarms_cond.npz` | ✓ | `backbone_cond.npz` (different shape — see [`groot_env/README.md`](../../groot_env/README.md)) |
+| `suffix_residual.npz` | ✓ | `dit_hidden_states.npz` |
+| `suffix_mlp_hidden.npz` | ✓ | `dit_mlp_hidden.npz` |
+| `metadata.json` | ✓ | ✓ |
+
+### Notes
+
+- A collection-mode server **rejects** plain inference requests. Run a separate non-collection server on another port if you also want eval.
+- Each `eval_all.py` subprocess creates its own `CollectionSession` keyed on `env_name`, so tasks write to disjoint dirs with no cross-process coordination. The server's asyncio dispatch already serializes inference; `CollectingPolicy`'s lock makes that invariant explicit.
+- Client uses `env_name` as `task_name`; `task_id` is fixed at 0; `episode_id` cycles `0..num_episodes-1` per env.
+- Full wire-level protocol spec: see `examples/libero_env/README.md` (**Protocol** section).
+
+### Verifying collected activations
+
+Env-var-driven pytest suite; skipped in CI when `ACTIVATIONS_DIR` is unset.
 
 ```bash
-# Terminal 2 (robocasa_env venv)
-cd examples/robocasa_env
-MUJOCO_GL=egl uv run python main.py --env_name CloseBlenderLid --collect
+# GR00T
+cd groot_env
+ACTIVATIONS_DIR=../groot_n15-robocasa-activations-v1-15env/checkpoint-120000/OpenDrawer \
+    uv run pytest tests/test_groot_activations.py -v
 
-# or for a whole task set (parallel subprocesses, each with its own CollectionSession):
-MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen --collect --num_workers 5
+# pi05 (repo root)
+ACTIVATIONS_DIR=./activations/75000/CloseBlenderLid \
+    uv run pytest tests/test_activations.py -v
 ```
-
-Each `eval_all.py` subprocess creates its own `CollectionSession` keyed on its distinct `env_name`, so the shared collection-mode server writes activations to disjoint output directories with no cross-subprocess coordination. The server's single-threaded asyncio dispatch serializes the underlying hook-based `infer_with_intermediates` call automatically, and `CollectingPolicy`'s explicit lock documents the invariant for future executor-based optimizations.
-
-Notes:
-- Collection mode requires `--pytorch` on the server. `infer_with_intermediates`
-  is implemented for the PyTorch backend only.
-- A collection-mode server **rejects** plain inference requests. If you want to
-  also run regular eval, start a separate non-collection server on a different
-  port.
-- The server's `--output-dir` is on the **server's** filesystem. With
-  `--output-dir ./activations`, files land at
-  `./activations/<checkpoint_step>/<env_name>/episode_NNN_env_000/step_NNNN/`
-  relative to wherever the server was launched from.
-- The robocasa client uses `env_name` (e.g. `CloseBlenderLid`) as the
-  `task_name` in the collection metadata. The `task_id` field is fixed at 0
-  since each robocasa env is its own standalone task. The `episode_id` cycles
-  through `0..num_episodes-1` per env.
-- See `examples/libero_env/README.md` (the **Protocol** section under
-  Activation Collection) for the full wire-level spec of the `__collect__`
-  and `__finalize_episode__` payloads. The same `openpi_client.collection_session.CollectionSession`
-  helper handles the bookkeeping for libero, robocasa, and any future client.
-

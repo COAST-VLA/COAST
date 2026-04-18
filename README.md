@@ -1,6 +1,6 @@
 # openpi-metaworld
 
-This is a fork of [Physical Intelligence's openpi](https://github.com/Physical-Intelligence/openpi) with three sim environment examples wired up end-to-end. Each example has its own README covering setup, dataset generation (where applicable), training, serving, evaluation, and (for metaworld) activation collection for mechanistic interpretability.
+This is a fork of [Physical Intelligence's openpi](https://github.com/Physical-Intelligence/openpi) with three sim environment examples wired up end-to-end, plus a pluggable policy-server layer so you can swap the pi0/pi0.5 server for NVIDIA's GR00T without touching any client. For GR00T setup steps, please follow the [groot_env/README.md](groot_env/README.md). The setup steps below are for the original openpi and the pi0/pi0.5 models.
 
 ## Installation
 
@@ -21,11 +21,20 @@ The base install above is everything `examples/metaworld/` needs. `examples/libe
 | **LIBERO** | [`examples/libero_env/README.md`](examples/libero_env/README.md) | WebSocket client/server LIBERO benchmark. Has its own Python 3.8 venv (`examples/libero_env/.venv`). |
 | **Robocasa** | [`examples/robocasa_env/README.md`](examples/robocasa_env/README.md) | RoboCasa kitchen tasks. Has its own venv (`examples/robocasa_env/.venv`) because robosuite/robocasa conflict with the parent venv. Uses a client/server WebSocket eval pattern. |
 
+## Servers
+
+| Model | Entry point | Venv | Notes |
+|---|---|---|---|
+| **pi0 / pi0-FAST / pi0.5** | [`scripts/serve_policy.py`](scripts/serve_policy.py) | root (`uv sync`) | Primary openpi server. Serves any `pi05_*` / `pi0_*` training config. Supports `--collect_activations` for mech-interp. |
+| **NVIDIA GR00T N1.5** | [`groot_env/serve.py`](groot_env/README.md) | `groot_env/.venv` (Python 3.10) | Serves `nvidia/GR00T-N1.5-3B` or any robocasa365 fine-tuned checkpoint. Has its own venv — N1.5 pins torch 2.5.1 which conflicts with the root openpi env. Same WebSocket protocol as `serve_policy.py`, so existing clients hit it unchanged. |
+
 ## Repo Layout
 
 - `src/openpi/` — model code (JAX primary, PyTorch in `models_pytorch/`), training configs, policies, and the WebSocket policy server.
 - `scripts/` — shared training and serving entry points (`train.py`, `train_pytorch.py`, `serve_policy.py`, `compute_norm_stats.py`). Env-specific scripts live under each `examples/<env>/` directory.
-- `examples/` — per-environment quickstarts. See the table above.
+- `examples/` — per-environment client quickstarts. See the Clients table above.
+- `groot_env/` — isolated-venv NVIDIA GR00T N1.5 server. See [`groot_env/README.md`](groot_env/README.md) for setup.
+- `third_party/Isaac-GR00T/` — submodule pinned to `n1.5-release`; installed editable from `groot_env/`.
 - `tests/` — pytest suite. Run with `uv run pytest --strict-markers -m "not manual"` for CI-equivalent (env tests requiring GPU + EGL are marked `manual` and skipped).
 - `docs/` — design notes and historical implementation docs.
 - `CLAUDE.md` — guidance for Claude Code agents working in this repo.

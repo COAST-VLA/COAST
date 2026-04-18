@@ -1,95 +1,50 @@
 """
-Evaluate all tasks in ML45 train or test split using the same approach as main.py.
-Each task gets its own set of parallel environments.
+Evaluate all tasks in an ML45 split (train or test).
 
-Train tasks (45):
+Normal eval (WebSocket server):
     MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
 
-Test tasks (5):
-    MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
+Activation collection, single GPU:
+    CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \\
+        --collect --split train --num_envs 16 \\
+        --policy.config=pi05_metaworld \\
+        --policy.dir=checkpoints/openpi-metaworld-5000
+
+Activation collection, multi-GPU (round-robin task sharding):
+    MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \\
+        --collect --split train --num_envs 16 --gpus 0 1 \\
+        --policy.config=pi05_metaworld \\
+        --policy.dir=checkpoints/openpi-metaworld-5000
 """
 
-import collections
 import dataclasses
 import json
 import logging
-import math
 import os
+import pathlib
+import subprocess
+import sys
 from typing import Literal
 
-import gymnasium as gym
-import imageio.v3 as iio
+# Reuse helpers from main.py so single-task and multi-task eval cannot diverge.
+# main.py is a sibling module; running via "uv run examples/metaworld/eval_all.py"
+# puts its directory on sys.path[0], so "from main import ..." resolves correctly.
+from main import CAMERA_IDS  # noqa: F401
+from main import TASK_TO_PROMPT  # noqa: F401
+from main import Args as _MainArgs
+from main import MetaworldCollectState  # noqa: F401
+from main import MultiCameraWrapper  # noqa: F401
+from main import PolicyArgs
+from main import load_policy
+from main import make_env
+from main import run_episode
+from main import tile_frames  # noqa: F401
 import metaworld
 import numpy as np
-from openpi_client import websocket_client_policy as _websocket_client_policy
 from tqdm import tqdm
 import tyro
 
 logger = logging.getLogger(__name__)
-
-# https://metaworld.farama.org/rendering/rendering/#render-from-a-specific-camera
-CAMERA_IDS = {
-    "topview": 0,
-    "corner": 1,
-    "corner2": 2,
-    "corner3": 3,
-    "corner4": 4,
-    "behindGripper": 5,
-    "gripperPOV": 6,
-}
-
-TASK_TO_PROMPT = {
-    "assembly-v3": "pick up the nut and place it onto the peg",
-    "disassemble-v3": "pick up the nut and remove it from the peg",
-    "basketball-v3": "dunk the basketball into the hoop",
-    "soccer-v3": "kick the soccer ball into the goal",
-    "bin-picking-v3": "pick up the object and place it into the bin",
-    "box-close-v3": "grasp the cover and close the box",
-    "button-press-v3": "press the button",
-    "button-press-topdown-v3": "press the button from the top",
-    "button-press-topdown-wall-v3": "press the button on the wall from the top",
-    "button-press-wall-v3": "press the button on the wall",
-    "coffee-button-v3": "push the button on the coffee machine",
-    "coffee-pull-v3": "pull the mug away from the coffee machine",
-    "coffee-push-v3": "push the mug under the coffee machine",
-    "dial-turn-v3": "rotate the dial",
-    "lever-pull-v3": "pull the lever down",
-    "door-close-v3": "close the door",
-    "door-lock-v3": "lock the door by rotating the lock",
-    "door-open-v3": "open the door",
-    "door-unlock-v3": "unlock the door by rotating the lock",
-    "drawer-close-v3": "push the drawer closed",
-    "drawer-open-v3": "pull the drawer open",
-    "faucet-close-v3": "rotate the faucet handle to close it",
-    "faucet-open-v3": "rotate the faucet handle to open it",
-    "hammer-v3": "hammer the nail into the board",
-    "hand-insert-v3": "insert the gripper into the hole",
-    "handle-press-v3": "press the handle down",
-    "handle-press-side-v3": "press the handle down sideways",
-    "handle-pull-v3": "pull the handle up",
-    "handle-pull-side-v3": "pull the handle sideways",
-    "peg-insert-side-v3": "insert the peg into the hole sideways",
-    "peg-unplug-side-v3": "unplug the peg from the hole sideways",
-    "pick-out-of-hole-v3": "pick the object out of the hole",
-    "pick-place-v3": "pick up the object and place it at the goal",
-    "pick-place-wall-v3": "pick up the object and place it at the goal behind the wall",
-    "plate-slide-v3": "slide the plate to the goal",
-    "plate-slide-back-v3": "slide the plate backwards to the goal",
-    "plate-slide-back-side-v3": "slide the plate backwards and sideways to the goal",
-    "plate-slide-side-v3": "slide the plate sideways to the goal",
-    "push-v3": "push the object to the goal",
-    "push-back-v3": "push the object backwards to the goal",
-    "push-wall-v3": "push the object around the wall to the goal",
-    "reach-v3": "reach the goal position",
-    "reach-wall-v3": "reach the goal position behind the wall",
-    "shelf-place-v3": "pick up the object and place it on the shelf",
-    "stick-pull-v3": "use the stick to pull the object",
-    "stick-push-v3": "use the stick to push the object",
-    "sweep-v3": "sweep the object off the table",
-    "sweep-into-v3": "sweep the object into the hole",
-    "window-close-v3": "push the window closed",
-    "window-open-v3": "push the window open",
-}
 
 
 # Curated subset of 10 ML45-train tasks (tasks whose success rate varies
@@ -110,11 +65,15 @@ SUBSET = [
 
 @dataclasses.dataclass
 class Args:
+    # WebSocket server (ignored when --collect is set).
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # Which ML45 split or curated subset to evaluate.
+    # Which ML45 split or curated subset to evaluate (ignored if --tasks is non-empty).
     split: Literal["train", "test", "subset"] = "subset"
+    # Subset of task names to evaluate. If empty, uses --split.
+    tasks: list[str] = dataclasses.field(default_factory=list)
+
     # Number of parallel environments per task.
     num_envs: int = 15
     # Number of episodes per task.
@@ -135,80 +94,59 @@ class Args:
     fps: int = 24
     seed: int = 69_420
 
-    # Override the output directory. If None, defaults to
-    # ``examples/metaworld/output/ML45-{split}/``. Relative paths are resolved
-    # against the user's shell cwd, matching the libero and robocasa examples.
+    # Override the eval-artifact directory (videos, results.json). If None, defaults to
+    # ``examples/metaworld/output/ML45-{split}/``. Relative paths are resolved against
+    # the user's shell cwd, matching the libero and robocasa examples.
     output_dir: str | None = None
 
-
-class MultiCameraWrapper(gym.Wrapper):
-    """Wrapper that renders multiple cameras and includes images in info dict."""
-
-    def __init__(self, env: gym.Env, camera_names: list[str]):
-        super().__init__(env)
-        self.camera_names = camera_names
-
-    def _render_cameras(self) -> dict[str, np.ndarray]:
-        renderer = self.unwrapped.mujoco_renderer
-        images = {}
-        for cam_name in self.camera_names:
-            # HACK (branyang02): Very Very Very Hacky
-            # Take a look at gymnasium.envs.muojoco.mujoco_rendering.MujocoRenderer.render()
-            # Implemented solutions from:
-            # https://github.com/Farama-Foundation/Metaworld/issues/448
-            # https://github.com/Farama-Foundation/Gymnasium/issues/736
-            viewer = renderer._get_viewer(render_mode="rgb_array")  # noqa: SLF001
-            if len(renderer._viewers.keys()) >= 1:  # noqa: SLF001
-                viewer.make_context_current()
-            img = viewer.render(render_mode="rgb_array", camera_id=CAMERA_IDS[cam_name])
-            images[cam_name] = img[::-1].copy()  # flip vertically
-        return images
-
-    def reset(self, **kwargs):
-        obs, info = super().reset(**kwargs)
-        info["cameras"] = self._render_cameras()
-        return obs, info
-
-    def step(self, action):
-        obs, reward, terminated, truncated, info = super().step(action)
-        info["cameras"] = self._render_cameras()
-        return obs, reward, terminated, truncated, info
+    # --- Activation collection ---
+    # When True, load the policy in-process (no WebSocket) and save intermediate
+    # activations during rollout. Requires a PyTorch checkpoint.
+    collect: bool = False
+    # In-process policy config and checkpoint. Only consulted when --collect.
+    policy: PolicyArgs = dataclasses.field(default_factory=PolicyArgs)
+    # Root directory for saved activations; see main.py for the full path template.
+    collect_output_dir: str = "./activations"
+    # Round-robin task sharding across GPUs. Each subprocess loads its own policy
+    # copy on one GPU. Only valid with --collect. Use CUDA_VISIBLE_DEVICES to pin
+    # a single GPU for the normal-eval path.
+    gpus: list[int] = dataclasses.field(default_factory=list)
 
 
-def tile_frames(frames: list[np.ndarray]) -> np.ndarray:
-    """Arrange N frames into a grid image.
-
-    Grid layout: cols = ceil(sqrt(N)), rows = ceil(N / cols).
-    Empty slots are filled with black.
-    """
-    n = len(frames)
-    h, w, c = frames[0].shape
-    cols = math.ceil(math.sqrt(n))
-    rows = math.ceil(n / cols)
-
-    grid = np.zeros((rows * h, cols * w, c), dtype=frames[0].dtype)
-    for idx, frame in enumerate(frames):
-        r, col = divmod(idx, cols)
-        grid[r * h : (r + 1) * h, col * w : (col + 1) * w] = frame
-
-    return grid
+def _resolve_tasks(args: Args) -> list[str]:
+    if args.tasks:
+        return list(args.tasks)
+    if args.split == "subset":
+        return list(SUBSET)
+    ml45 = metaworld.ML45()
+    return list(ml45.train_classes.keys()) if args.split == "train" else list(ml45.test_classes.keys())
 
 
-def make_env(env_name: str, num_envs: int, width: int, height: int, seed: int, camera_names: list[str]) -> gym.Env:
-    env_fns = [
-        lambda i=i: MultiCameraWrapper(
-            gym.make("Meta-World/MT1", env_name=env_name, seed=seed + i, width=width, height=height),
-            camera_names,
-        )
-        for i in range(num_envs)
-    ]
-    return gym.vector.AsyncVectorEnv(env_fns)
+def _per_task_args(env_name: str, args: Args, task_output_dir: str) -> _MainArgs:
+    """Build a ``main.Args`` for ``run_episode`` to consume for a given task."""
+    return _MainArgs(
+        host=args.host,
+        port=args.port,
+        env_name=env_name,
+        num_envs=args.num_envs,
+        num_episodes=args.num_episodes,
+        max_steps=args.max_steps,
+        replan_steps=args.replan_steps,
+        width=args.width,
+        height=args.height,
+        policy_cameras=list(args.policy_cameras),
+        render_camera=args.render_camera,
+        fps=args.fps,
+        seed=args.seed,
+        output_dir=task_output_dir,
+        collect=args.collect,
+        policy=args.policy,
+        collect_output_dir=args.collect_output_dir,
+    )
 
 
-def eval_task(env_name: str, policy, args: Args, output_dir: str) -> dict[str, float]:
-    """Evaluate a single task over num_episodes and return per-episode success rates."""
-    prompt = TASK_TO_PROMPT.get(env_name, f"complete the {env_name} task")
-
+def eval_task(env_name: str, policy, args: Args, output_dir: str, collect_extras: dict) -> dict[str, float]:
+    """Evaluate a single task over ``num_episodes`` and return mean success rate."""
     env = make_env(
         env_name=env_name,
         num_envs=args.num_envs,
@@ -217,120 +155,139 @@ def eval_task(env_name: str, policy, args: Args, output_dir: str) -> dict[str, f
         seed=args.seed,
         camera_names=args.policy_cameras,
     )
-    num_envs = env.num_envs
 
     task_output_dir = os.path.join(output_dir, env_name)
     os.makedirs(task_output_dir, exist_ok=True)
 
-    episode_success_rates = []
+    task_args = _per_task_args(env_name, args, task_output_dir)
 
-    for episode in range(args.num_episodes):
-        obs, info = env.reset(seed=args.seed + episode)
-        camera_views = info["cameras"]
-        success = np.zeros(num_envs, dtype=bool)
-        total_reward = np.zeros(num_envs)
-        action_plan = collections.deque()
+    episode_success_rates: list[float] = []
+    try:
+        for episode in range(args.num_episodes):
+            _, success = run_episode(env, policy, task_args, episode, task_output_dir, collect_extras)
+            episode_success_rates.append(float(success.mean()))
+    finally:
+        env.close()
 
-        video_path = os.path.join(task_output_dir, f"episode_{episode:03d}.mp4")
-        with iio.imopen(video_path, "w", plugin="pyav") as video:
-            video.init_video_stream("h264", fps=args.fps)
-
-            pbar = tqdm(
-                range(args.max_steps),
-                desc=f"[{env_name}] Episode {episode + 1}/{args.num_episodes}",
-                leave=False,
-            )
-            for _step in pbar:
-                grid_frame = tile_frames(list(camera_views[args.render_camera]))
-                video.write_frame(grid_frame)
-
-                if not action_plan:
-                    result = policy.infer(
-                        {
-                            "observation/image": camera_views["corner4"],
-                            "observation/wrist_image": camera_views["gripperPOV"],
-                            "observation/state": obs.astype(np.float32)[
-                                ..., :4
-                            ],  # first 4 dims are the true observable state in Metaworld.
-                            "prompt": [prompt] * num_envs,
-                        }
-                    )
-                    action_chunk = np.clip(result["actions"], -1.0, 1.0).astype(
-                        np.float32
-                    )  # (num_envs, action_horizon, action_dim)
-                    assert action_chunk.shape[1] >= args.replan_steps, (
-                        f"Model must output at least replan_steps actions, got {action_chunk.shape[1]} < {args.replan_steps}"
-                    )
-                    for t in range(args.replan_steps):
-                        action_plan.append(action_chunk[:, t, :])
-
-                action = action_plan.popleft()  # (num_envs, action_dim=4)
-
-                obs, reward, terminated, truncated, info = env.step(action)
-                camera_views = info["cameras"]
-                total_reward += reward
-                success |= np.asarray(info.get("success", np.zeros(num_envs)), dtype=bool)
-                if success.all():
-                    break
-
-                pbar.set_postfix(reward=f"{total_reward.mean():.1f}", success=f"{success.mean():.0%}")
-
-        rate = float(success.mean())
-        episode_success_rates.append(rate)
-        logger.info(
-            f"[{env_name}] Episode {episode + 1}/{args.num_episodes}: "
-            f"mean_reward={total_reward.mean():.2f}, success_rate={rate:.2f}, "
-            f"video={video_path}"
-        )
-
-    env.close()
     return {"success_rate": float(np.mean(episode_success_rates))}
 
 
-def main(args: Args) -> None:
-    policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
-    logger.info(f"Server metadata: {policy.get_server_metadata()}")
-
+def run_local(args: Args) -> None:
+    """Single-process task loop (normal eval, or single-GPU / pinned-GPU collection)."""
     if args.output_dir is not None:
         output_dir = os.path.abspath(args.output_dir)
     else:
         output_dir = os.path.join(os.path.dirname(__file__), "output", f"ML45-{args.split}")
     os.makedirs(output_dir, exist_ok=True)
 
-    if args.split == "subset":
-        env_names = list(SUBSET)
-    else:
-        ml45 = metaworld.ML45()
-        env_names = list(ml45.train_classes.keys()) if args.split == "train" else list(ml45.test_classes.keys())
+    env_names = _resolve_tasks(args)
+    logger.info(f"Evaluating {len(env_names)} tasks")
 
-    logger.info(f"Evaluating {len(env_names)} tasks from ML45-{args.split}")
+
+    policy, collect_extras = load_policy(args)
 
     results_path = os.path.join(output_dir, "results.json")
     results: dict[str, float] = {}
     for env_name in tqdm(env_names, desc=f"ML45-{args.split}"):
-        task_result = eval_task(env_name, policy, args, output_dir)
+        task_result = eval_task(env_name, policy, args, output_dir, collect_extras)
         results[env_name] = task_result["success_rate"]
         logger.info(f"[{env_name}] success_rate={results[env_name]:.2f}")
-
-        # Save incrementally so progress isn't lost on early exit.
         with open(results_path, "w") as f:
             json.dump(results, f, indent=2)
 
-    # Summary
-    mean_success = float(np.mean(list(results.values())))
+    mean_success = float(np.mean(list(results.values()))) if results else 0.0
     summary = {
         "mean_success_rate": mean_success,
         "per_task": dict(sorted(results.items(), key=lambda x: x[1], reverse=True)),
     }
     with open(results_path, "w") as f:
         json.dump(summary, f, indent=2)
-    logger.info(f"Results saved to {results_path}")
 
+    logger.info(f"Results saved to {results_path}")
     logger.info("=" * 60)
     logger.info(f"Overall mean success rate: {mean_success:.2f} ({mean_success:.0%})")
     logger.info("Per-task results:")
     for env_name, rate in sorted(results.items(), key=lambda x: x[1], reverse=True):
         logger.info(f"  {env_name:<40s} {rate:.2f}")
+
+    if args.collect:
+        logger.info(f"Activations saved under {collect_extras['base_output_dir']}")
+
+
+def run_multi_gpu(args: Args) -> None:
+    """Launch one subprocess per GPU, each running this script on a subset of tasks.
+
+    ``bash -c`` is used so that ``CUDA_VISIBLE_DEVICES`` is exported before any
+    Python/CUDA initialization in the subprocess.
+    """
+    tasks = _resolve_tasks(args)
+
+    # Ensure PyTorch checkpoint exists before spawning; avoids N subprocesses
+    # racing on the one-time conversion step.
+    from openpi.models_pytorch.convert import ensure_pytorch_checkpoint
+
+    ensure_pytorch_checkpoint(args.policy.dir, args.policy.config)
+
+    task_chunks: list[list[str]] = [[] for _ in args.gpus]
+    for i, task in enumerate(tasks):
+        task_chunks[i % len(args.gpus)].append(task)
+
+    log_dir = pathlib.Path(args.collect_output_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    for gpu_id, chunk in zip(args.gpus, task_chunks, strict=True):
+        logger.info(f"GPU {gpu_id}: {len(chunk)} tasks — {chunk}")
+
+    processes: list[tuple[int, subprocess.Popen, object]] = []
+    for gpu_id, chunk in zip(args.gpus, task_chunks, strict=True):
+        if not chunk:
+            continue
+        tasks_str = " ".join(chunk)
+        inner_cmd = (
+            f"CUDA_VISIBLE_DEVICES={gpu_id} MUJOCO_GL=egl"
+            f" {sys.executable} {__file__}"
+            f" --collect"
+            f" --policy.config={args.policy.config}"
+            f" --policy.dir={args.policy.dir}"
+            f" --num_envs={args.num_envs}"
+            f" --num_episodes={args.num_episodes}"
+            f" --max_steps={args.max_steps}"
+            f" --replan_steps={args.replan_steps}"
+            f" --collect_output_dir={args.collect_output_dir}"
+            f" --seed={args.seed}"
+            f" --split={args.split}"
+            f" --gpus {gpu_id}"
+            f" --tasks {tasks_str}"
+        )
+        log_file = log_dir / f"gpu_{gpu_id}.log"
+        log_fh = open(log_file, "w")  # noqa: SIM115
+        logger.info(f"Starting GPU {gpu_id} (log: {log_file})")
+        proc = subprocess.Popen(["bash", "-c", inner_cmd], stdout=log_fh, stderr=log_fh)
+        processes.append((gpu_id, proc, log_fh))
+
+    for gpu_id, proc, log_fh in processes:
+        proc.wait()
+        log_fh.close()
+        if proc.returncode != 0:
+            logger.error(f"GPU {gpu_id} exited with code {proc.returncode}. See {log_dir / f'gpu_{gpu_id}.log'}")
+        else:
+            logger.info(f"GPU {gpu_id} completed successfully")
+
+
+def main(args: Args) -> None:
+    if args.gpus and not args.collect:
+        raise ValueError(
+            "--gpus is only valid with --collect. For normal eval, pin a single GPU with CUDA_VISIBLE_DEVICES instead."
+        )
+
+    if len(args.gpus) > 1:
+        run_multi_gpu(args)
+        return
+
+    if len(args.gpus) == 1:
+        # Pin before any torch import (load_policy does lazy import inside run_local).
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpus[0])
+    run_local(args)
 
 
 if __name__ == "__main__":
