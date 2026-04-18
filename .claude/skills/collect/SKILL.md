@@ -55,7 +55,7 @@ If the path doesn't exist, show available checkpoints and ask the user.
 
 ### MetaWorld — In-Process (single command, NO server)
 
-MetaWorld loads the policy directly via `main.py --collect` (single task) or `eval_all.py --collect` (all tasks). Do **not** run `serve_policy.py`. Recommended `--num_envs 16` on a 46 GB GPU; drop to 8 if you OOM.
+MetaWorld loads the policy directly via `main.py --collect` (single task) or `eval_all.py --collect` (all tasks). Do **not** run `serve_policy.py`. Start with `--num_envs 16` and halve if you OOM.
 
 **All tasks in a split:**
 ```bash
