@@ -271,7 +271,11 @@ def test_multi_gpu_subprocess_cmd_has_required_flags(monkeypatch, tmp_path):
 
 
 def test_load_policy_collect_passes_use_pytorch_true(monkeypatch):
-    """The --collect path must explicitly request the PyTorch backend."""
+    """The --collect path must explicitly request the PyTorch backend.
+
+    Patch attributes on the real openpi modules instead of swapping sys.modules,
+    so the test is robust to other tests having already cached openpi imports.
+    """
     captured_kwargs = {}
 
     def _fake_create_trained_policy(train_config, policy_dir, **kwargs):
@@ -282,17 +286,13 @@ def test_load_policy_collect_passes_use_pytorch_true(monkeypatch):
 
         return _FakePolicy()
 
-    fake_config_mod = types.ModuleType("openpi.training.config")
-    fake_config_mod.get_config = lambda name: object()
-    monkeypatch.setitem(sys.modules, "openpi.training.config", fake_config_mod)
+    import openpi.models_pytorch.convert as _convert
+    import openpi.policies.policy_config as _pc
+    import openpi.training.config as _tc
 
-    fake_pc_mod = types.ModuleType("openpi.policies.policy_config")
-    fake_pc_mod.create_trained_policy = _fake_create_trained_policy
-    monkeypatch.setitem(sys.modules, "openpi.policies.policy_config", fake_pc_mod)
-
-    fake_convert = types.ModuleType("openpi.models_pytorch.convert")
-    fake_convert.ensure_pytorch_checkpoint = lambda *a, **kw: None
-    monkeypatch.setitem(sys.modules, "openpi.models_pytorch.convert", fake_convert)
+    monkeypatch.setattr(_tc, "get_config", lambda name: object())
+    monkeypatch.setattr(_pc, "create_trained_policy", _fake_create_trained_policy)
+    monkeypatch.setattr(_convert, "ensure_pytorch_checkpoint", lambda *a, **kw: None)
 
     args = mw_main.Args(collect=True)
     args.policy.dir = "/tmp/some-ckpt"
