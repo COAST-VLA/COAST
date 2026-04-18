@@ -1,5 +1,7 @@
 """
-Tests for collected activation data from examples/metaworld/collect_activations.py.
+Tests for collected activation data from ``examples/metaworld/main.py --collect``
+(or ``eval_all.py --collect``). The schema is env-agnostic — these tests also
+validate collections produced by the libero/robocasa collection server.
 
 Run after collecting activations:
     ACTIVATIONS_DIR=activations/5000/reach-v3 uv run pytest tests/test_activations.py -v
