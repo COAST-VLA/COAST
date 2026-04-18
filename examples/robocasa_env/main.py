@@ -195,6 +195,21 @@ def eval_task(
                             args.resize_size,
                         )
                     )
+                    # Second side-view camera. pi0's RobocasaInputs only reads
+                    # `observation/image` and `observation/wrist_image`, so this
+                    # extra key is silently ignored on the pi05 server. GR00T
+                    # N1.5's robocasa head was trained with TWO distinct side
+                    # views (agentview_left + agentview_right); the GR00T
+                    # adapter picks this up and feeds it into
+                    # `video.robot0_agentview_right`. Falls back to duplicating
+                    # `observation/image` if the key is missing (older clients).
+                    img2 = image_tools.convert_to_uint8(
+                        image_tools.resize_with_pad(
+                            obs[CAMERA_KEYS["agentview_right"]],
+                            args.resize_size,
+                            args.resize_size,
+                        )
+                    )
                     wrist_img = image_tools.convert_to_uint8(
                         image_tools.resize_with_pad(
                             obs[CAMERA_KEYS["eye_in_hand"]],
@@ -204,6 +219,7 @@ def eval_task(
                     )
                     element = {
                         "observation/image": img,
+                        "observation/image2": img2,
                         "observation/wrist_image": wrist_img,
                         "observation/state": build_state(obs),
                         "prompt": task_lang,

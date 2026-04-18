@@ -117,7 +117,11 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
 
 
 def create_default_policy(
-    env: EnvMode, *, default_prompt: str | None = None, torch_compile: bool = False
+    env: EnvMode,
+    *,
+    default_prompt: str | None = None,
+    torch_compile: bool = False,
+    use_pytorch: bool = False,
 ) -> _policy.Policy:
     """Create a default policy for the given environment."""
     if checkpoint := DEFAULT_CHECKPOINT.get(env):
@@ -126,6 +130,7 @@ def create_default_policy(
             checkpoint.dir,
             default_prompt=default_prompt,
             torch_compile=torch_compile,
+            use_pytorch=use_pytorch,
         )
     raise ValueError(f"Unsupported environment mode: {env}")
 
@@ -143,9 +148,15 @@ def create_policy(args: Args) -> _policy.Policy:
                 args.policy.dir,
                 default_prompt=args.default_prompt,
                 torch_compile=args.torch_compile,
+                use_pytorch=args.pytorch,
             )
         case Default():
-            return create_default_policy(args.env, default_prompt=args.default_prompt, torch_compile=args.torch_compile)
+            return create_default_policy(
+                args.env,
+                default_prompt=args.default_prompt,
+                torch_compile=args.torch_compile,
+                use_pytorch=args.pytorch,
+            )
 
 
 def main(args: Args) -> None:
