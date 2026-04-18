@@ -85,9 +85,9 @@ class Policy(BasePolicy):
         else:
             # JAX model setup
             self._sample_actions = nnx_utils.module_jit(model.sample_actions)
-            if hasattr(model, "sample_actions_with_intermediates_jit"):
-                self._sample_actions_with_intermediates_jit = nnx_utils.module_jit(
-                    model.sample_actions_with_intermediates_jit
+            if hasattr(model, "sample_actions_with_intermediates"):
+                self._sample_actions_with_intermediates = nnx_utils.module_jit(
+                    model.sample_actions_with_intermediates
                 )
             self._rng = rng or jax.random.key(0)
 
@@ -245,15 +245,17 @@ class Policy(BasePolicy):
             self._rng, sample_rng = jax.random.split(self._rng)
             sample_kwargs = dict(self._sample_kwargs)
             start_time = time.monotonic()
-            actions, intermediates = self._sample_actions_with_intermediates_jit(
+            actions, intermediates = self._sample_actions_with_intermediates(
                 sample_rng, observation, **sample_kwargs
             )
             model_time = time.monotonic() - start_time
-            # JIT version returns fixed-size buffers on the leading axis
-            # (max_decoding_steps). Slice down to num_tokens to match the
-            # Python-loop on-disk format: tokens/logprobs have num_tokens
-            # entries, pre_logits has num_tokens-1 (the EOS-iteration's
-            # pre_logits is not written by the Python-loop version).
+            # JIT returns fixed-size buffers on the leading axis
+            # (max_decoding_steps). Slice down to num_tokens so downstream
+            # consumers see tokens/logprobs of length num_tokens and
+            # pre_logits of length num_tokens-1 (the EOS-trigger iteration's
+            # pre_logits is not meaningful — pre_logits[k] is the hidden
+            # state that produced token[k+1], so once all envs have EOS'd we
+            # don't need another pre_logit).
             intermediates = jax.tree.map(lambda x: np.asarray(x), intermediates)
             num_tokens = int(intermediates["num_tokens"])
             intermediates["generated_tokens"] = intermediates["generated_tokens"][:num_tokens]
