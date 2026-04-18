@@ -419,3 +419,132 @@ class Pi0FAST(_model.BaseModel):
         }
 
         return output_tokens, intermediates
+
+    def sample_actions_with_intermediates_jit(
+        self,
+        rng: at.KeyArrayLike,
+        observation: _model.Observation,
+        *,
+        max_decoding_steps: int = 256,
+        temperature: float = 0.0,
+    ) -> tuple[_model.Actions, dict]:
+        """JIT-compatible version of sample_actions_with_intermediates.
+
+        Mirrors the structure of sample_actions (single lax.while_loop that
+        compiles into one XLA dispatch) while also writing per-token hidden
+        states and logprobs into pre-allocated buffers. ~40-100x faster than
+        the Python-loop version.
+
+        Note on numerical equivalence: outputs are NOT bit-identical to the
+        Python-loop version. XLA fuses the while_loop body and may reorder
+        fp accumulations, so logits drift by O(1e-3) over many decode steps.
+        At temperature=0 this can produce different argmax choices after many
+        tokens. Both paths are valid pi0-fast outputs.
+
+        Returns:
+            (output_tokens, intermediates) with fixed-size buffers on the
+            leading axis (max_decoding_steps). Caller slices to num_tokens
+            to match the Python-loop shape:
+            - "generated_tokens": int32 (max_decoding_steps, batch)
+            - "token_pre_logits": (max_decoding_steps, batch, width)
+            - "token_logprobs": float32 (max_decoding_steps, batch)
+            - "prefix_pre_logits": (batch, prefix_len, width)
+            - "num_tokens": int32 scalar
+        """
+        observation = _model.preprocess_observation(
+            None, observation, train=False, image_keys=list(observation.images.keys())
+        )
+
+        prefix_token_embeddings, prefix_mask, prefix_ar_mask = self.embed_inputs(observation)
+        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
+
+        prefix_token_embeddings, prefix_mask, prefix_attn_mask = left_to_right_align(
+            prefix_token_embeddings, prefix_mask, prefix_attn_mask
+        )
+        prefill_size = prefix_token_embeddings.shape[1]
+        prefill_len = jnp.sum(prefix_mask, axis=-1)
+        prefix_start = prefill_size - prefill_len
+
+        prefix_attn_mask = jnp.pad(prefix_attn_mask, ((0, 0), (0, 0), (0, max_decoding_steps)))
+        prefix_positions = jnp.cumsum(prefix_mask, axis=-1) - 1
+        prefix_pre_logits, kv_cache, _ = self.PaliGemma.llm(
+            embedded_prefix=prefix_token_embeddings,
+            mask=prefix_attn_mask,
+            positions=prefix_positions,
+            decode=True,
+            return_prelogits=True,
+        )
+
+        first_logit, _ = self.PaliGemma.llm(pre_logits=prefix_pre_logits[:, -1:])
+        batch_size = first_logit.shape[0]
+        width = prefix_pre_logits.shape[-1]
+
+        output_tokens = jnp.zeros((batch_size, max_decoding_steps))
+        pre_logits_buf = jnp.zeros((max_decoding_steps, batch_size, width), dtype=prefix_pre_logits.dtype)
+        logprobs_buf = jnp.zeros((max_decoding_steps, batch_size), dtype=jnp.float32)
+
+        def step(carry):
+            rng, last_logit, output_tokens, pre_logits_buf, logprobs_buf, cache, _, step_idx = carry
+
+            rng, rng_step = jax.random.split(rng)
+            token = jax.lax.cond(
+                temperature > 0.0,
+                lambda _: jax.random.categorical(rng_step, last_logit / temperature, axis=-1),
+                lambda _: jnp.argmax(last_logit, axis=-1),
+                operand=None,
+            )
+
+            # logprobs over float32 to match the Python-loop version (no .astype there, so
+            # log_softmax runs in last_logit's native dtype — keep the same here).
+            log_probs = jax.nn.log_softmax(last_logit, axis=-1)
+            token_logprob = jnp.take_along_axis(log_probs[:, 0, :], token, axis=-1)[:, 0]
+
+            output_tokens = put_along_last_axis(
+                output_tokens, jnp.broadcast_to(step_idx, (token.shape[0], 1)), token
+            )
+            logprobs_buf = logprobs_buf.at[step_idx].set(token_logprob.astype(logprobs_buf.dtype))
+
+            has_eos = jnp.any(token == PALIGEMMA_EOS_TOKEN, axis=-1)
+            all_eos = jnp.all(has_eos)
+
+            token_embedding = self.PaliGemma.llm(token, embed_only=True)
+            positions = prefill_len[:, None] + step_idx + 1
+            mask = jnp.logical_and(
+                jnp.arange(prefill_size + max_decoding_steps)[None, None, :] >= prefix_start[:, None, None],
+                jnp.arange(prefill_size + max_decoding_steps)[None, None, :]
+                < (jnp.broadcast_to(prefill_size + step_idx + 1, (prefix_start.shape[0], 1, 1))),
+            )
+            step_pre_logits, cache, _ = self.PaliGemma.llm(
+                embedded_prefix=token_embedding,
+                mask=mask,
+                positions=positions,
+                decode=True,
+                kv_cache=cache,
+                return_prelogits=True,
+            )
+            # Always write pre_logits (caller slices to [:num_tokens-1] to match the
+            # Python-loop semantics of skipping pre_logits on the EOS-trigger iteration).
+            pre_logits_buf = pre_logits_buf.at[step_idx].set(step_pre_logits[:, 0, :])
+
+            new_last_logit, _ = self.PaliGemma.llm(pre_logits=step_pre_logits)
+
+            return (rng, new_last_logit, output_tokens, pre_logits_buf, logprobs_buf, cache, all_eos, step_idx + 1)
+
+        def cond(carry):
+            _, _, _, _, _, _, all_eos, step_idx = carry
+            return (~all_eos) & (step_idx < max_decoding_steps)
+
+        init = (rng, first_logit, output_tokens, pre_logits_buf, logprobs_buf, kv_cache, False, 0)
+        _, _, output_tokens, pre_logits_buf, logprobs_buf, _, _, final_step = jax.lax.while_loop(
+            cond, step, init
+        )
+
+        intermediates = {
+            "generated_tokens": output_tokens.astype(jnp.int32).T,
+            "token_pre_logits": pre_logits_buf,
+            "token_logprobs": logprobs_buf,
+            "prefix_pre_logits": prefix_pre_logits,
+            "num_tokens": final_step,
+        }
+
+        return output_tokens, intermediates

@@ -85,6 +85,10 @@ class Policy(BasePolicy):
         else:
             # JAX model setup
             self._sample_actions = nnx_utils.module_jit(model.sample_actions)
+            if hasattr(model, "sample_actions_with_intermediates_jit"):
+                self._sample_actions_with_intermediates_jit = nnx_utils.module_jit(
+                    model.sample_actions_with_intermediates_jit
+                )
             self._rng = rng or jax.random.key(0)
 
     @override
@@ -241,13 +245,23 @@ class Policy(BasePolicy):
             self._rng, sample_rng = jax.random.split(self._rng)
             sample_kwargs = dict(self._sample_kwargs)
             start_time = time.monotonic()
-            actions, intermediates = self._model.sample_actions_with_intermediates(
+            actions, intermediates = self._sample_actions_with_intermediates_jit(
                 sample_rng, observation, **sample_kwargs
             )
             model_time = time.monotonic() - start_time
+            # JIT version returns fixed-size buffers on the leading axis
+            # (max_decoding_steps). Slice down to num_tokens to match the
+            # Python-loop on-disk format: tokens/logprobs have num_tokens
+            # entries, pre_logits has num_tokens-1 (the EOS-iteration's
+            # pre_logits is not written by the Python-loop version).
+            intermediates = jax.tree.map(lambda x: np.asarray(x), intermediates)
+            num_tokens = int(intermediates["num_tokens"])
+            intermediates["generated_tokens"] = intermediates["generated_tokens"][:num_tokens]
+            intermediates["token_logprobs"] = intermediates["token_logprobs"][:num_tokens]
+            intermediates["token_pre_logits"] = intermediates["token_pre_logits"][: max(num_tokens - 1, 0)]
+            intermediates["num_tokens"] = num_tokens
             # ExtractFASTActions operates per-sample (decodes token sequence to
             # continuous actions), so apply output transforms per sample then re-stack.
-            intermediates = jax.tree.map(lambda x: np.asarray(x), intermediates)
             per_sample_outputs = []
             for i in range(eval_batch_size):
                 single_out = {
