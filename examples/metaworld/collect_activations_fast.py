@@ -167,6 +167,21 @@ ML45_TEST = [
     "hand-insert-v3",
 ]
 
+# Curated subset of 10 ML45-train tasks (tasks whose success rate varies
+# meaningfully across training checkpoints — used for faster iteration).
+SUBSET = [
+    "assembly-v3",
+    "disassemble-v3",
+    "hammer-v3",
+    "handle-pull-side-v3",
+    "lever-pull-v3",
+    "peg-insert-side-v3",
+    "pick-place-wall-v3",
+    "plate-slide-back-side-v3",
+    "plate-slide-back-v3",
+    "stick-push-v3",
+]
+
 
 class MultiCameraWrapper(gym.Wrapper):
     """Wrapper that renders multiple cameras and includes images in info dict."""
@@ -210,7 +225,7 @@ class Args:
     # Tasks to collect activations for. If empty, uses --split to select.
     tasks: list[str] = dataclasses.field(default_factory=list)
     # ML45 split to use when --tasks is empty.
-    split: Literal["train", "test"] = "train"
+    split: Literal["train", "test", "subset"] = "subset"
     # Number of parallel environments per task.
     num_envs: int = 2
     # Maximum steps per episode.
@@ -363,8 +378,10 @@ def run_single_gpu(args: Args) -> None:
         tasks = args.tasks
     elif args.split == "train":
         tasks = ML45_TRAIN
-    else:
+    elif args.split == "test":
         tasks = ML45_TEST
+    else:
+        tasks = SUBSET
 
     train_config = _config.get_config(args.policy.config)
     policy = _policy_config.create_trained_policy(train_config, args.policy.dir)
@@ -391,8 +408,10 @@ def run_multi_gpu(args: Args) -> None:
         tasks = args.tasks
     elif args.split == "train":
         tasks = ML45_TRAIN
-    else:
+    elif args.split == "test":
         tasks = ML45_TEST
+    else:
+        tasks = SUBSET
 
     task_chunks = [[] for _ in gpus]
     for i, task in enumerate(tasks):

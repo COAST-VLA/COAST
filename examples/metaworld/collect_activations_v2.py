@@ -158,6 +158,21 @@ ML45_TEST = [
     "hand-insert-v3",
 ]
 
+# Curated subset of 10 ML45-train tasks (tasks whose success rate varies
+# meaningfully across training checkpoints — used for faster iteration).
+SUBSET = [
+    "assembly-v3",
+    "disassemble-v3",
+    "hammer-v3",
+    "handle-pull-side-v3",
+    "lever-pull-v3",
+    "peg-insert-side-v3",
+    "pick-place-wall-v3",
+    "plate-slide-back-side-v3",
+    "plate-slide-back-v3",
+    "stick-push-v3",
+]
+
 # V2 collection parameters (must match model method defaults)
 COLLECT_DENOISE_STEPS = (0, 4, 9)
 RESIDUAL_LAYERS = (5, 11)
@@ -207,7 +222,7 @@ class Args:
     # Tasks to collect activations for. If empty, uses --split to select.
     tasks: list[str] = dataclasses.field(default_factory=list)
     # ML45 split to use when --tasks is empty.
-    split: Literal["train", "test"] = "train"
+    split: Literal["train", "test", "subset"] = "subset"
     # Number of parallel environments per task.
     num_envs: int = 2
     # Maximum steps per episode.
@@ -448,8 +463,10 @@ def run_single_gpu(args: Args) -> None:
         tasks = args.tasks
     elif args.split == "train":
         tasks = ML45_TRAIN
-    else:
+    elif args.split == "test":
         tasks = ML45_TEST
+    else:
+        tasks = SUBSET
 
     # Load policy in-process
     train_config = _config.get_config(args.policy.config)
@@ -488,8 +505,10 @@ def run_multi_gpu(args: Args) -> None:
         tasks = args.tasks
     elif args.split == "train":
         tasks = ML45_TRAIN
-    else:
+    elif args.split == "test":
         tasks = ML45_TEST
+    else:
+        tasks = SUBSET
 
     # Ensure PyTorch checkpoint exists once before spawning processes.
     from openpi.models_pytorch.convert import ensure_pytorch_checkpoint

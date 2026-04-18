@@ -92,13 +92,29 @@ TASK_TO_PROMPT = {
 }
 
 
+# Curated subset of 10 ML45-train tasks (tasks whose success rate varies
+# meaningfully across training checkpoints — used for faster iteration).
+SUBSET = [
+    "assembly-v3",
+    "disassemble-v3",
+    "hammer-v3",
+    "handle-pull-side-v3",
+    "lever-pull-v3",
+    "peg-insert-side-v3",
+    "pick-place-wall-v3",
+    "plate-slide-back-side-v3",
+    "plate-slide-back-v3",
+    "stick-push-v3",
+]
+
+
 @dataclasses.dataclass
 class Args:
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # Which ML45 split to evaluate.
-    split: Literal["train", "test"] = "train"
+    # Which ML45 split or curated subset to evaluate.
+    split: Literal["train", "test", "subset"] = "subset"
     # Number of parallel environments per task.
     num_envs: int = 15
     # Number of episodes per task.
@@ -281,8 +297,11 @@ def main(args: Args) -> None:
         output_dir = os.path.join(os.path.dirname(__file__), "output", f"ML45-{args.split}")
     os.makedirs(output_dir, exist_ok=True)
 
-    ml45 = metaworld.ML45()
-    env_names = list(ml45.train_classes.keys()) if args.split == "train" else list(ml45.test_classes.keys())
+    if args.split == "subset":
+        env_names = list(SUBSET)
+    else:
+        ml45 = metaworld.ML45()
+        env_names = list(ml45.train_classes.keys()) if args.split == "train" else list(ml45.test_classes.keys())
 
     logger.info(f"Evaluating {len(env_names)} tasks from ML45-{args.split}")
 
