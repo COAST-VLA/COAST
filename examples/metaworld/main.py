@@ -313,11 +313,11 @@ def load_policy(args: Args):
         from openpi.training import config as _config
 
         train_config = _config.get_config(args.policy.config)
+        # --collect requires PyTorch: infer_with_intermediates uses PyTorch forward
+        # hooks to capture per-layer activations, which the JAX path doesn't expose.
         ensure_pytorch_checkpoint(args.policy.dir, args.policy.config)
-        policy = _policy_config.create_trained_policy(train_config, args.policy.dir)
-        if not policy._is_pytorch_model:  # noqa: SLF001
-            raise RuntimeError("--collect requires a PyTorch checkpoint (model.safetensors).")
-        logger.info(f"Policy loaded in-process: pytorch={policy._is_pytorch_model}")  # noqa: SLF001
+        policy = _policy_config.create_trained_policy(train_config, args.policy.dir, use_pytorch=True)
+        logger.info("Policy loaded in-process (PyTorch)")
         checkpoint_step = pathlib.Path(args.policy.dir).name
         base_output_dir = pathlib.Path(args.collect_output_dir) / checkpoint_step
         return policy, {"checkpoint_step": checkpoint_step, "base_output_dir": base_output_dir}

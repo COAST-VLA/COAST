@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import types
 
 import numpy as np
 import pytest
@@ -171,7 +172,135 @@ def test_checkpoint_step_derivation():
     assert Path("5000").name == "5000"
 
 
+# ── Multi-GPU task sharding and dispatch ─────────────────────────────────────
+
+
+def _round_robin_shard(tasks, num_gpus):
+    """Mirrors the logic in eval_all.py::run_multi_gpu lines 212-214 so we can
+    test it without invoking the subprocess dispatch."""
+    chunks = [[] for _ in range(num_gpus)]
+    for i, task in enumerate(tasks):
+        chunks[i % num_gpus].append(task)
+    return chunks
+
+
+def test_task_sharding_balanced_divides_evenly():
+    chunks = _round_robin_shard(["a", "b", "c", "d", "e", "f"], 2)
+    assert chunks == [["a", "c", "e"], ["b", "d", "f"]]
+
+
+def test_task_sharding_uneven_division_last_bucket_smaller():
+    chunks = _round_robin_shard(["a", "b", "c", "d", "e"], 2)
+    assert chunks == [["a", "c", "e"], ["b", "d"]]
+    assert sum(len(c) for c in chunks) == 5  # no tasks lost
+
+
+def test_task_sharding_fewer_tasks_than_gpus_leaves_empty_buckets():
+    chunks = _round_robin_shard(["a", "b"], 4)
+    assert chunks == [["a"], ["b"], [], []]
+
+
+def test_task_sharding_three_gpus_balanced():
+    chunks = _round_robin_shard(list(range(9)), 3)
+    # Round-robin: GPU 0 gets 0,3,6; GPU 1 gets 1,4,7; GPU 2 gets 2,5,8.
+    assert chunks == [[0, 3, 6], [1, 4, 7], [2, 5, 8]]
+
+
+def test_multi_gpu_subprocess_cmd_has_required_flags(monkeypatch, tmp_path):
+    """run_multi_gpu should spawn one subprocess per GPU with the right CLI flags.
+
+    We stub subprocess.Popen + ensure_pytorch_checkpoint to avoid actually
+    launching anything, then capture the built inner_cmd strings.
+    """
+    # Fake Popen that records the command and returns 0.
+    captured_cmds = []
+
+    class _FakeProc:
+        def __init__(self, cmd, **kwargs):
+            captured_cmds.append(cmd)
+            self.returncode = 0
+
+        def wait(self):
+            return 0
+
+    # Stub out the ensure_pytorch_checkpoint call (parent-side one-time prep).
+    import sys as _sys
+
+    fake_convert = types.ModuleType("openpi.models_pytorch.convert")
+    fake_convert.ensure_pytorch_checkpoint = lambda *a, **kw: None
+    monkeypatch.setitem(_sys.modules, "openpi.models_pytorch.convert", fake_convert)
+
+    monkeypatch.setattr(mw_eval_all.subprocess, "Popen", _FakeProc)
+
+    args = mw_eval_all.Args(
+        collect=True,
+        tasks=["reach-v3", "push-v3", "pick-place-v3"],
+        gpus=[0, 1],
+        collect_output_dir=str(tmp_path),
+    )
+    args.policy.dir = "checkpoints/openpi-metaworld-5000"
+
+    mw_eval_all.run_multi_gpu(args)
+
+    assert len(captured_cmds) == 2, f"Expected one Popen per GPU, got {len(captured_cmds)}"
+
+    # Each entry is a ["bash", "-c", inner_cmd] list.
+    gpu0_cmd = captured_cmds[0][2]
+    gpu1_cmd = captured_cmds[1][2]
+
+    # GPU pinning present.
+    assert "CUDA_VISIBLE_DEVICES=0" in gpu0_cmd
+    assert "CUDA_VISIBLE_DEVICES=1" in gpu1_cmd
+
+    # Required flags propagate.
+    for cmd in (gpu0_cmd, gpu1_cmd):
+        assert "--collect" in cmd
+        assert "--policy.dir=checkpoints/openpi-metaworld-5000" in cmd
+        assert "--collect_output_dir=" in cmd
+        assert "MUJOCO_GL=egl" in cmd
+
+    # Round-robin sharding: tasks[0] and tasks[2] on GPU 0, tasks[1] on GPU 1.
+    assert "reach-v3 pick-place-v3" in gpu0_cmd
+    assert "push-v3" in gpu1_cmd
+    # Subprocess receives a single-element --gpus so it takes the pinned-local branch.
+    assert "--gpus 0" in gpu0_cmd
+    assert "--gpus 1" in gpu1_cmd
+
+
 # ── Lazy import contract ──────────────────────────────────────────────────────
+
+
+def test_load_policy_collect_passes_use_pytorch_true(monkeypatch):
+    """The --collect path must explicitly request the PyTorch backend."""
+    captured_kwargs = {}
+
+    def _fake_create_trained_policy(train_config, policy_dir, **kwargs):
+        captured_kwargs.update(kwargs)
+
+        class _FakePolicy:
+            pass
+
+        return _FakePolicy()
+
+    fake_config_mod = types.ModuleType("openpi.training.config")
+    fake_config_mod.get_config = lambda name: object()
+    monkeypatch.setitem(sys.modules, "openpi.training.config", fake_config_mod)
+
+    fake_pc_mod = types.ModuleType("openpi.policies.policy_config")
+    fake_pc_mod.create_trained_policy = _fake_create_trained_policy
+    monkeypatch.setitem(sys.modules, "openpi.policies.policy_config", fake_pc_mod)
+
+    fake_convert = types.ModuleType("openpi.models_pytorch.convert")
+    fake_convert.ensure_pytorch_checkpoint = lambda *a, **kw: None
+    monkeypatch.setitem(sys.modules, "openpi.models_pytorch.convert", fake_convert)
+
+    args = mw_main.Args(collect=True)
+    args.policy.dir = "/tmp/some-ckpt"
+    mw_main.load_policy(args)
+
+    assert captured_kwargs.get("use_pytorch") is True, (
+        "Expected --collect to pass use_pytorch=True to create_trained_policy"
+    )
 
 
 def test_load_policy_normal_eval_does_not_import_openpi(monkeypatch):
