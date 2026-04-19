@@ -40,4 +40,14 @@ if [ $EXIT_CODE -ne 0 ] && [ -n "$OUTPUT" ]; then
   exit 2
 fi
 
+FORMAT_OUTPUT=$(uv run ruff format --check $EXISTING_FILES 2>/dev/null)
+FORMAT_EXIT_CODE=$?
+
+if [ $FORMAT_EXIT_CODE -ne 0 ] && [ -n "$FORMAT_OUTPUT" ]; then
+  FORMAT_ISSUE_COUNT=$(echo "$FORMAT_OUTPUT" | grep -c "^Would reformat:")
+  echo "Ruff format found ${FORMAT_ISSUE_COUNT} formatting issue(s) in file(s). Run \`uv run ruff format $EXISTING_FILES\` to fix, then retry." >&2
+  echo "$FORMAT_OUTPUT" >&2
+  exit 2
+fi
+
 exit 0
