@@ -89,7 +89,15 @@ class Policy(BasePolicy):
         else:
             # JAX model setup
             self._sample_actions = nnx_utils.module_jit(model.sample_actions)
-            if hasattr(model, "sample_actions_with_intermediates"):
+            # Only pi0-fast has a JAX intermediates-capture path (pi0 / pi0.5
+            # expose intermediates through PyTorch forward hooks, not JAX).
+            # Gate the jit + assert existence so a future refactor that silently
+            # drops the method on Pi0FAST surfaces here instead of at first call.
+            if self._model_type == _model.ModelType.PI0_FAST:
+                assert hasattr(model, "sample_actions_with_intermediates"), (
+                    "ModelType.PI0_FAST must define sample_actions_with_intermediates "
+                    "(required by Policy.infer_with_intermediates)"
+                )
                 self._sample_actions_with_intermediates = nnx_utils.module_jit(model.sample_actions_with_intermediates)
             self._rng = rng or jax.random.key(0)
 
