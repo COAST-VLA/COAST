@@ -91,6 +91,7 @@ Videos and `results.json` land under `output/...` exactly as for pi0.5.
 cd groot_env
 export CUDA_VISIBLE_DEVICES=0
 uv run python serve.py --port 8000 --collect_activations \
+    --model-path ../checkpoints/groot_n15/gr00t_n1-5/multitask_learning/checkpoint-120000 \
     --output-dir ../activations/groot_n15-robocasa-activations-v1-15env
 # …then run any client with --collect (see examples/robocasa_env/README.md).
 ```

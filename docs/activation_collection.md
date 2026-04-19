@@ -293,6 +293,7 @@ uv run scripts/serve_policy.py --collect_activations \
 cd groot_env
 export CUDA_VISIBLE_DEVICES=0
 uv run python serve.py --port 8000 --collect_activations \
+    --model-path ../checkpoints/groot_n15/gr00t_n1-5/multitask_learning/checkpoint-120000 \
     --output-dir ../activations/groot_n15-robocasa-activations-v1-15env
 ```
 

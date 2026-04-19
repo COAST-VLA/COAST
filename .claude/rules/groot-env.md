@@ -25,7 +25,7 @@ GIT_LFS_SKIP_SMUDGE=1 uv sync                                    # first-time se
 uv pip install --no-build-isolation flash-attn==2.7.1.post4      # required for N1.5 backbone; not in main deps
 export CUDA_VISIBLE_DEVICES=0
 uv run python serve.py --port 8000                               # serve
-uv run python serve.py --port 8000 --collect_activations --output-dir ../activations/groot_n15-robocasa-activations-v1-15env
+uv run python serve.py --port 8000 --collect_activations --model-path ../checkpoints/groot_n15/gr00t_n1-5/multitask_learning/checkpoint-120000 --output-dir ../activations/groot_n15-robocasa-activations-v1-15env
 ```
 
 ## Activation Collection

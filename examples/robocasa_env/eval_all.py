@@ -309,6 +309,15 @@ def main(args: Args) -> None:
         args.split,
         args.num_workers,
     )
+    logger.info(
+        "Per-task stdout/stderr is captured to %s. Tail a single task with:\n"
+        "    tail -f %s/task_00_<env_name>.log\n"
+        "or follow every task at once with:\n"
+        "    tail -f %s/task_*.log",
+        log_dir,
+        log_dir,
+        log_dir,
+    )
     if args.collect:
         logger.info(
             "Collection mode enabled: each subprocess sends __collect__/__finalize_episode__ "
