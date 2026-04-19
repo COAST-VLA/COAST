@@ -47,14 +47,30 @@ import tyro
 logger = logging.getLogger(__name__)
 
 
+# Curated subset of 10 ML45-train tasks (tasks whose success rate varies
+# meaningfully across training checkpoints — used for faster iteration).
+SUBSET = [
+    "assembly-v3",
+    "disassemble-v3",
+    "hammer-v3",
+    "handle-pull-side-v3",
+    "lever-pull-v3",
+    "peg-insert-side-v3",
+    "pick-place-wall-v3",
+    "plate-slide-back-side-v3",
+    "plate-slide-back-v3",
+    "stick-push-v3",
+]
+
+
 @dataclasses.dataclass
 class Args:
     # WebSocket server (ignored when --collect is set).
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # Which ML45 split to evaluate (ignored if --tasks is non-empty).
-    split: Literal["train", "test"] = "train"
+    # Which ML45 split or curated subset to evaluate (ignored if --tasks is non-empty).
+    split: Literal["train", "test", "subset"] = "subset"
     # Subset of task names to evaluate. If empty, uses --split.
     tasks: list[str] = dataclasses.field(default_factory=list)
 
@@ -100,6 +116,8 @@ class Args:
 def _resolve_tasks(args: Args) -> list[str]:
     if args.tasks:
         return list(args.tasks)
+    if args.split == "subset":
+        return list(SUBSET)
     ml45 = metaworld.ML45()
     return list(ml45.train_classes.keys()) if args.split == "train" else list(ml45.test_classes.keys())
 

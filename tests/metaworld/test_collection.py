@@ -155,7 +155,9 @@ def test_eval_all_args_defaults():
     assert args.collect is False
     assert args.gpus == []
     assert args.tasks == []
-    assert args.split == "train"
+    # Default split is the curated 10-task subset — tasks whose success rate
+    # varies meaningfully across training checkpoints (see eval_all.py::SUBSET).
+    assert args.split == "subset"
     assert args.collect_output_dir == "./activations"
 
 
@@ -270,12 +272,26 @@ def test_multi_gpu_subprocess_cmd_has_required_flags(monkeypatch, tmp_path):
 # ── Lazy import contract ──────────────────────────────────────────────────────
 
 
+def _make_fake_train_config(model_type):
+    """Return a minimal train_config stub compatible with load_policy's checks.
+
+    load_policy reads ``train_config.model.model_type`` to decide which backend
+    to use. Tests supply a SimpleNamespace rather than constructing a real
+    TrainConfig (which would require asset lookup / data config creation).
+    """
+    import types
+
+    return types.SimpleNamespace(model=types.SimpleNamespace(model_type=model_type))
+
+
 def test_load_policy_collect_passes_use_pytorch_true(monkeypatch):
-    """The --collect path must explicitly request the PyTorch backend.
+    """The --collect path must explicitly request the PyTorch backend for pi0/pi0.5.
 
     Patch attributes on the real openpi modules instead of swapping sys.modules,
     so the test is robust to other tests having already cached openpi imports.
     """
+    from openpi.models import model as _model
+
     captured_kwargs = {}
 
     def _fake_create_trained_policy(train_config, policy_dir, **kwargs):
@@ -290,7 +306,8 @@ def test_load_policy_collect_passes_use_pytorch_true(monkeypatch):
     import openpi.policies.policy_config as _pc
     import openpi.training.config as _tc
 
-    monkeypatch.setattr(_tc, "get_config", lambda name: object())
+    # pi0.5 (diffusion) → PyTorch backend
+    monkeypatch.setattr(_tc, "get_config", lambda name: _make_fake_train_config(_model.ModelType.PI05))
     monkeypatch.setattr(_pc, "create_trained_policy", _fake_create_trained_policy)
     monkeypatch.setattr(_convert, "ensure_pytorch_checkpoint", lambda *a, **kw: None)
 
@@ -299,8 +316,48 @@ def test_load_policy_collect_passes_use_pytorch_true(monkeypatch):
     mw_main.load_policy(args)
 
     assert captured_kwargs.get("use_pytorch") is True, (
-        "Expected --collect to pass use_pytorch=True to create_trained_policy"
+        "Expected --collect with pi0.5 to pass use_pytorch=True to create_trained_policy"
     )
+
+
+def test_load_policy_collect_pi0_fast_uses_jax(monkeypatch):
+    """pi0-fast has no PyTorch port — --collect must load via JAX (use_pytorch=False).
+
+    Also asserts ensure_pytorch_checkpoint is NOT called for pi0-fast: the
+    safetensors conversion is meaningless for the autoregressive JAX-only path.
+    """
+    from openpi.models import model as _model
+
+    captured_kwargs = {}
+    ensure_called = []
+
+    def _fake_create_trained_policy(train_config, policy_dir, **kwargs):
+        captured_kwargs.update(kwargs)
+
+        class _FakePolicy:
+            pass
+
+        return _FakePolicy()
+
+    def _fake_ensure(*a, **kw):
+        ensure_called.append((a, kw))
+
+    import openpi.models_pytorch.convert as _convert
+    import openpi.policies.policy_config as _pc
+    import openpi.training.config as _tc
+
+    monkeypatch.setattr(_tc, "get_config", lambda name: _make_fake_train_config(_model.ModelType.PI0_FAST))
+    monkeypatch.setattr(_pc, "create_trained_policy", _fake_create_trained_policy)
+    monkeypatch.setattr(_convert, "ensure_pytorch_checkpoint", _fake_ensure)
+
+    args = mw_main.Args(collect=True)
+    args.policy.dir = "/tmp/some-ckpt"
+    mw_main.load_policy(args)
+
+    assert captured_kwargs.get("use_pytorch") is False, (
+        "Expected --collect with pi0-fast to pass use_pytorch=False (JAX path)"
+    )
+    assert ensure_called == [], "Expected ensure_pytorch_checkpoint NOT to be called for pi0-fast (JAX-only)"
 
 
 def test_load_policy_normal_eval_does_not_import_openpi(monkeypatch):

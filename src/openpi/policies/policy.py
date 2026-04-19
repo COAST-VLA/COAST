@@ -27,10 +27,13 @@ def collate_transformed_singles(singles: list[dict]) -> dict:
     # singles: list[dict] where each dict has keys:
     # state (array), tokenized_prompt (array), tokenized_prompt_mask (array),
     # image (dict[str, array]), image_mask (dict[str, array])
+    # pi0-fast also adds: token_ar_mask, token_loss_mask
     out = {}
 
-    # Stack flat array fields
-    for k in ["state", "tokenized_prompt", "tokenized_prompt_mask"]:
+    # Stack flat array fields (include optional pi0-fast fields if present)
+    flat_keys = ["state", "tokenized_prompt", "tokenized_prompt_mask"]
+    flat_keys.extend(k for k in ["token_ar_mask", "token_loss_mask"] if k in singles[0])
+    for k in flat_keys:
         out[k] = jnp.stack([jnp.asarray(ex[k]) for ex in singles], axis=0)
 
     # Stack nested dict fields
@@ -46,6 +49,7 @@ class Policy(BasePolicy):
         self,
         model: _model.BaseModel,
         *,
+        model_type: _model.ModelType,
         rng: at.KeyArrayLike | None = None,
         transforms: Sequence[_transforms.DataTransformFn] = (),
         output_transforms: Sequence[_transforms.DataTransformFn] = (),
@@ -58,6 +62,8 @@ class Policy(BasePolicy):
 
         Args:
             model: The model to use for action sampling.
+            model_type: Which architecture ``model`` is. Used to dispatch pi0-fast's
+                per-sample FAST-token decode path without probing ``model`` for attributes.
             rng: Random number generator key for JAX models. Ignored for PyTorch models.
             transforms: Input data transformations to apply before inference.
             output_transforms: Output data transformations to apply after inference.
@@ -68,6 +74,7 @@ class Policy(BasePolicy):
             is_pytorch: Whether the model is a PyTorch model. If False, assumes JAX model.
         """
         self._model = model
+        self._model_type = model_type
         self._input_transform = _transforms.compose(transforms)
         self._output_transform = _transforms.compose(output_transforms)
         self._sample_kwargs = sample_kwargs or {}
@@ -82,6 +89,16 @@ class Policy(BasePolicy):
         else:
             # JAX model setup
             self._sample_actions = nnx_utils.module_jit(model.sample_actions)
+            # Only pi0-fast has a JAX intermediates-capture path (pi0 / pi0.5
+            # expose intermediates through PyTorch forward hooks, not JAX).
+            # Gate the jit + assert existence so a future refactor that silently
+            # drops the method on Pi0FAST surfaces here instead of at first call.
+            if self._model_type == _model.ModelType.PI0_FAST:
+                assert hasattr(model, "sample_actions_with_intermediates"), (
+                    "ModelType.PI0_FAST must define sample_actions_with_intermediates "
+                    "(required by Policy.infer_with_intermediates)"
+                )
+                self._sample_actions_with_intermediates = nnx_utils.module_jit(model.sample_actions_with_intermediates)
             self._rng = rng or jax.random.key(0)
 
     @override
@@ -138,7 +155,16 @@ class Policy(BasePolicy):
         else:
             outputs = jax.tree.map(lambda x: np.asarray(x), outputs)
 
-        outputs = self._output_transform(outputs)
+        # pi0-fast returns raw tokens of shape (batch, max_decoding_steps). ExtractFASTActions
+        # decodes one sample at a time, so apply the output transform per sample and re-stack.
+        if self._model_type == _model.ModelType.PI0_FAST:
+            per_sample_outputs = [
+                self._output_transform({"state": outputs["state"][i], "actions": outputs["actions"][i]})
+                for i in range(eval_batch_size)
+            ]
+            outputs = {k: np.stack([o[k] for o in per_sample_outputs], axis=0) for k in per_sample_outputs[0]}
+        else:
+            outputs = self._output_transform(outputs)
         outputs["policy_timing"] = {
             "infer_ms": model_time * 1000,
         }
@@ -189,9 +215,17 @@ class Policy(BasePolicy):
         return outputs
 
     def infer_with_intermediates(self, obs: dict) -> tuple[dict, dict]:
-        """Like infer_batched() but also returns intermediate activations. PyTorch only."""
-        if not self._is_pytorch_model:
-            raise NotImplementedError("infer_with_intermediates is only supported for PyTorch models")
+        """Like infer_batched() but also returns intermediate activations.
+
+        Supports both PyTorch pi0/pi0.5 models (via forward hooks) and JAX pi0-fast
+        models (via unrolled autoregressive decoding).
+        """
+        is_fast = self._model_type == _model.ModelType.PI0_FAST and not self._is_pytorch_model
+
+        if not self._is_pytorch_model and not is_fast:
+            raise NotImplementedError(
+                "infer_with_intermediates requires either a PyTorch model or a JAX pi0-fast model"
+            )
 
         # Make a copy since transformations may modify the inputs in place.
         inputs = jax.tree.map(lambda x: x, obs)
@@ -212,22 +246,53 @@ class Policy(BasePolicy):
         # 3) collate back -> batch dict
         inputs = collate_transformed_singles(singles)
 
-        inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device), inputs)
-
-        observation = _model.Observation.from_dict(inputs)
-        start_time = time.monotonic()
-        actions, intermediates = self._model.sample_actions_with_intermediates(self._pytorch_device, observation)
-        model_time = time.monotonic() - start_time
-
-        outputs = {
-            "state": inputs["state"],
-            "actions": actions,
-        }
-        outputs = jax.tree.map(
-            lambda x: np.asarray(x.detach().cpu()) if isinstance(x, torch.Tensor) else np.asarray(x),
-            outputs,
-        )
-        outputs = self._output_transform(outputs)
+        if is_fast:
+            inputs = jax.tree.map(lambda x: jnp.asarray(x), inputs)
+            observation = _model.Observation.from_dict(inputs)
+            self._rng, sample_rng = jax.random.split(self._rng)
+            sample_kwargs = dict(self._sample_kwargs)
+            start_time = time.monotonic()
+            actions, intermediates = self._sample_actions_with_intermediates(sample_rng, observation, **sample_kwargs)
+            model_time = time.monotonic() - start_time
+            # JIT returns fixed-size buffers on the leading axis
+            # (max_decoding_steps). Slice down to num_tokens so downstream
+            # consumers see tokens/logprobs of length num_tokens and
+            # pre_logits of length num_tokens-1 (the EOS-trigger iteration's
+            # pre_logits is not meaningful — pre_logits[k] is the hidden
+            # state that produced token[k+1], so once all envs have EOS'd we
+            # don't need another pre_logit).
+            intermediates = jax.tree.map(lambda x: np.asarray(x), intermediates)
+            num_tokens = int(intermediates["num_tokens"])
+            intermediates["generated_tokens"] = intermediates["generated_tokens"][:num_tokens]
+            intermediates["token_logprobs"] = intermediates["token_logprobs"][:num_tokens]
+            intermediates["token_pre_logits"] = intermediates["token_pre_logits"][: max(num_tokens - 1, 0)]
+            intermediates["num_tokens"] = num_tokens
+            # ExtractFASTActions operates per-sample (decodes token sequence to
+            # continuous actions), so apply output transforms per sample then re-stack.
+            per_sample_outputs = []
+            for i in range(eval_batch_size):
+                single_out = {
+                    "state": np.asarray(inputs["state"][i]),
+                    "actions": np.asarray(actions[i]),
+                }
+                single_out = self._output_transform(single_out)
+                per_sample_outputs.append(single_out)
+            outputs = {k: np.stack([o[k] for o in per_sample_outputs], axis=0) for k in per_sample_outputs[0]}
+        else:
+            inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device), inputs)
+            observation = _model.Observation.from_dict(inputs)
+            start_time = time.monotonic()
+            actions, intermediates = self._model.sample_actions_with_intermediates(self._pytorch_device, observation)
+            model_time = time.monotonic() - start_time
+            outputs = {
+                "state": inputs["state"],
+                "actions": actions,
+            }
+            outputs = jax.tree.map(
+                lambda x: np.asarray(x.detach().cpu()) if isinstance(x, torch.Tensor) else np.asarray(x),
+                outputs,
+            )
+            outputs = self._output_transform(outputs)
         outputs["policy_timing"] = {"infer_ms": model_time * 1000}
         return outputs, intermediates
 

@@ -308,16 +308,23 @@ def load_policy(args: Args):
         # Must be set before the openpi imports below trigger `import jax`.
         os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
         # Lazy-import so normal-eval path has no torch/JAX startup cost.
-        from openpi.models_pytorch.convert import ensure_pytorch_checkpoint
+        from openpi.models import model as _model
         from openpi.policies import policy_config as _policy_config
         from openpi.training import config as _config
 
         train_config = _config.get_config(args.policy.config)
-        # --collect requires PyTorch: infer_with_intermediates uses PyTorch forward
-        # hooks to capture per-layer activations, which the JAX path doesn't expose.
-        ensure_pytorch_checkpoint(args.policy.dir, args.policy.config)
-        policy = _policy_config.create_trained_policy(train_config, args.policy.dir, use_pytorch=True)
-        logger.info("Policy loaded in-process (PyTorch)")
+        # pi0-fast collection runs in JAX (no PyTorch port of the autoregressive
+        # decode); diffusion models (pi0/pi0.5) collect via PyTorch forward hooks.
+        is_pi0_fast = train_config.model.model_type == _model.ModelType.PI0_FAST
+        if is_pi0_fast:
+            policy = _policy_config.create_trained_policy(train_config, args.policy.dir, use_pytorch=False)
+            logger.info("Policy loaded in-process (JAX pi0-fast)")
+        else:
+            from openpi.models_pytorch.convert import ensure_pytorch_checkpoint
+
+            ensure_pytorch_checkpoint(args.policy.dir, args.policy.config)
+            policy = _policy_config.create_trained_policy(train_config, args.policy.dir, use_pytorch=True)
+            logger.info("Policy loaded in-process (PyTorch)")
         checkpoint_step = pathlib.Path(args.policy.dir).name
         base_output_dir = pathlib.Path(args.collect_output_dir) / checkpoint_step
         return policy, {"checkpoint_step": checkpoint_step, "base_output_dir": base_output_dir}
@@ -343,11 +350,13 @@ def run_episode(
         # Lazy import keeps normal-eval path free of openpi imports.
         from openpi.serving.activation_collector import save_episode_files
         from openpi.serving.activation_collector import save_step_activations
+        from openpi.serving.activation_collector import save_step_activations_fast
 
         collect_state = MetaworldCollectState.new(env.num_envs)
     else:
         save_episode_files = None  # sentinel - never called
         save_step_activations = None
+        save_step_activations_fast = None
         collect_state = None
 
     prompt = TASK_TO_PROMPT[args.env_name]
@@ -380,6 +389,11 @@ def run_episode(
                 if args.collect:
                     result, intermediates = policy.infer_with_intermediates(obs_dict)
                     action_chunk = np.clip(result["actions"], -1.0, 1.0).astype(np.float32)
+                    # pi0-fast intermediates carry autoregressive per-token tensors;
+                    # pi0/pi0.5 intermediates carry diffusion per-denoising-step tensors.
+                    save_fn = (
+                        save_step_activations_fast if "generated_tokens" in intermediates else save_step_activations
+                    )
                     base = collect_extras["base_output_dir"]
                     for env_id in range(num_envs):
                         step_dir = base / args.env_name / f"episode_{episode:03d}_env_{env_id:03d}" / f"step_{step:04d}"
@@ -391,7 +405,7 @@ def run_episode(
                             prompt=prompt,
                             success=bool(success[env_id]),
                         )
-                        save_step_activations(step_dir, intermediates, env_id, step_metadata)
+                        save_fn(step_dir, intermediates, env_id, step_metadata)
                     collect_state.advance_inference_step()
                 else:
                     result = policy.infer(obs_dict)

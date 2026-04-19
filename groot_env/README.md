@@ -71,7 +71,8 @@ The metadata the server reports on connection (`get_server_metadata()`):
   "model_path": "…/checkpoint-120000",
   "embodiment": "robocasa",
   "denoising_steps": 4,
-  "collection_mode": "v1",       // only when --collect-activations
+  "collection_mode": "groot_v1", // only when --collect-activations
+  "model_type": "groot_n15",     // parallels pi0-side "pi0" / "pi05" / "pi0_fast"
   "checkpoint_step": "checkpoint-120000"
 }
 ```
