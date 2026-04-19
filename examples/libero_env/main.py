@@ -87,6 +87,13 @@ class Args:
     # If True, attach activation-collection metadata to every infer call so the
     # server (started with --collect_activations) saves intermediates to its disk.
     collect: bool = False
+    # env_id tag attached to every `__collect__` payload. LIBERO is single-env
+    # per process, so for sequential collection this stays 0. For PARALLEL
+    # collection — multiple main.py subprocesses sharing one collection server
+    # — each subprocess MUST pass a distinct env_id so the server writes to
+    # disjoint ``episode_NNN_env_MMM/`` directories; otherwise concurrent
+    # writers clobber each other's activation files.
+    collect_env_id: int = 0
 
     # Override the per-task output directory (for videos / artifacts). If None,
     # defaults to ``output/single-{task_suite_name}``.
@@ -275,6 +282,7 @@ def eval_task(
                     task_id=task_id,
                     episode_id=episode,
                     prompt=task_description,
+                    env_id=args.collect_env_id,
                 )
 
             with iio.get_writer(video_path, fps=args.fps) as video:
