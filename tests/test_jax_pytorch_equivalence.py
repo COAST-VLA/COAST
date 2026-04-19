@@ -10,6 +10,7 @@ Usage:
 """
 
 import logging
+import os
 import pathlib
 
 import gymnasium as gym
@@ -22,7 +23,8 @@ from openpi.training import config as _config
 
 logger = logging.getLogger(__name__)
 
-CHECKPOINT_DIR = pathlib.Path("checkpoints/pi05_metaworld/pi05_metaworld_test/5000/")
+# Override with PI05_TEST_CKPT when the checkpoint lives elsewhere.
+CHECKPOINT_DIR = pathlib.Path(os.environ.get("PI05_TEST_CKPT", "checkpoints/pi05_metaworld/pi05_metaworld_test/5000/"))
 CONFIG_NAME = "pi05_metaworld"
 
 

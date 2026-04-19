@@ -13,6 +13,7 @@ import socket
 
 import tyro
 
+from openpi.models import model as _model
 from openpi.policies import policy as _policy
 from openpi.policies import policy_config as _policy_config
 from openpi.serving import websocket_policy_server
@@ -97,11 +98,16 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
 }
 
 
-def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) -> _policy.Policy:
+def create_default_policy(
+    env: EnvMode, *, default_prompt: str | None = None, use_pytorch: bool = False
+) -> _policy.Policy:
     """Create a default policy for the given environment."""
     if checkpoint := DEFAULT_CHECKPOINT.get(env):
         return _policy_config.create_trained_policy(
-            _config.get_config(checkpoint.config), checkpoint.dir, default_prompt=default_prompt
+            _config.get_config(checkpoint.config),
+            checkpoint.dir,
+            default_prompt=default_prompt,
+            use_pytorch=use_pytorch,
         )
     raise ValueError(f"Unsupported environment mode: {env}")
 
@@ -115,18 +121,33 @@ def create_policy(args: Args) -> _policy.Policy:
 
                 ensure_pytorch_checkpoint(args.policy.dir, args.policy.config)
             return _policy_config.create_trained_policy(
-                _config.get_config(args.policy.config), args.policy.dir, default_prompt=args.default_prompt
+                _config.get_config(args.policy.config),
+                args.policy.dir,
+                default_prompt=args.default_prompt,
+                use_pytorch=args.pytorch,
             )
         case Default():
-            return create_default_policy(args.env, default_prompt=args.default_prompt)
+            return create_default_policy(args.env, default_prompt=args.default_prompt, use_pytorch=args.pytorch)
 
 
 def main(args: Args) -> None:
     if args.collect_activations:
-        if not args.pytorch:
-            raise ValueError("--collect_activations requires --pytorch (infer_with_intermediates is PyTorch-only).")
         if not isinstance(args.policy, Checkpoint):
             raise ValueError("--collect_activations requires --policy=checkpoint (default policies are not supported).")
+        # pi0 / pi0.5 capture intermediates through PyTorch forward hooks; pi0-fast
+        # has no PyTorch port of the autoregressive decode, so it captures through
+        # JAX. Pick the backend here based on the configured model_type.
+        model_type = _config.get_config(args.policy.config).model.model_type
+        if model_type == _model.ModelType.PI0_FAST and args.pytorch:
+            raise ValueError(
+                "--pytorch cannot be combined with a pi0-fast model — there is no PyTorch port "
+                "of the autoregressive decode. Drop --pytorch and let the server load the JAX checkpoint."
+            )
+        if model_type != _model.ModelType.PI0_FAST and not args.pytorch:
+            raise ValueError(
+                f"--collect_activations requires --pytorch for {model_type.value} "
+                "(infer_with_intermediates uses PyTorch forward hooks for diffusion models)."
+            )
 
     policy = create_policy(args)
 
@@ -134,10 +155,12 @@ def main(args: Args) -> None:
         assert isinstance(args.policy, Checkpoint)  # narrowed above
         checkpoint_step = pathlib.Path(args.policy.dir).name
         output_root = pathlib.Path(args.output_dir).resolve()
+        model_type = _config.get_config(args.policy.config).model.model_type
         logging.info(
-            "Activation collection enabled (checkpoint_step=%s, output_root=%s)",
+            "Activation collection enabled (checkpoint_step=%s, output_root=%s, model_type=%s)",
             checkpoint_step,
             output_root,
+            model_type.value,
         )
         policy = CollectingPolicy(
             policy=policy,
@@ -145,6 +168,7 @@ def main(args: Args) -> None:
             checkpoint_step=checkpoint_step,
             policy_dir=args.policy.dir,
             config_name=args.policy.config,
+            model_type=model_type,
         )
 
     policy_metadata = policy.metadata

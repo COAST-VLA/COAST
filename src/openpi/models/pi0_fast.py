@@ -320,29 +320,33 @@ class Pi0FAST(_model.BaseModel):
         max_decoding_steps: int = 256,
         temperature: float = 0.0,
     ) -> tuple[_model.Actions, dict]:
-        """Like sample_actions but returns per-token intermediates.
+        """Like sample_actions but also writes per-token hidden states and logprobs.
 
-        Uses a Python for-loop instead of jax.lax.while_loop so we can
-        capture hidden states at each decoding step. Not JIT-compatible
-        but fine for activation collection where throughput is secondary.
+        Uses the same single-lax.while_loop structure as sample_actions so
+        the entire decode compiles into one XLA dispatch. Per-token
+        intermediates go into pre-allocated fixed-size buffers; the caller
+        slices to num_tokens at the Python boundary.
 
         Returns:
-            (output_tokens, intermediates) where intermediates is a dict with:
-            - "generated_tokens": int32 (num_tokens, batch) — sampled token IDs
-            - "token_pre_logits": float32 (num_tokens, batch, width) — last hidden state per token
-            - "token_logprobs": float32 (num_tokens, batch) — log-prob of the sampled token
-            - "prefix_pre_logits": float32 (batch, prefix_len, width) — prefix hidden states
-            - "num_tokens": int — number of tokens generated (before EOS/max)
+            (output_tokens, intermediates) where intermediates' leading axis
+            is max_decoding_steps and callers should slice:
+            - "generated_tokens": int32 (max_decoding_steps, batch)
+              — slice to [:num_tokens]
+            - "token_pre_logits": (max_decoding_steps, batch, width)
+              — slice to [:num_tokens-1] to match the "skip pre_logits on
+                the EOS-trigger iteration" semantic
+            - "token_logprobs": float32 (max_decoding_steps, batch)
+              — slice to [:num_tokens]
+            - "prefix_pre_logits": (batch, prefix_len, width)
+            - "num_tokens": int32 scalar
         """
         observation = _model.preprocess_observation(
             None, observation, train=False, image_keys=list(observation.images.keys())
         )
 
-        # Embed inputs
         prefix_token_embeddings, prefix_mask, prefix_ar_mask = self.embed_inputs(observation)
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
 
-        # Left-to-right align
         prefix_token_embeddings, prefix_mask, prefix_attn_mask = left_to_right_align(
             prefix_token_embeddings, prefix_mask, prefix_attn_mask
         )
@@ -350,57 +354,46 @@ class Pi0FAST(_model.BaseModel):
         prefill_len = jnp.sum(prefix_mask, axis=-1)
         prefix_start = prefill_size - prefill_len
 
-        # Prefix forward pass — capture pre_logits
         prefix_attn_mask = jnp.pad(prefix_attn_mask, ((0, 0), (0, 0), (0, max_decoding_steps)))
         prefix_positions = jnp.cumsum(prefix_mask, axis=-1) - 1
-        prefix_pre_logits, kv_cache, prefix_out = self.PaliGemma.llm(
+        prefix_pre_logits, kv_cache, _ = self.PaliGemma.llm(
             embedded_prefix=prefix_token_embeddings,
             mask=prefix_attn_mask,
             positions=prefix_positions,
             decode=True,
             return_prelogits=True,
         )
-        # prefix_pre_logits shape: (batch, prefix_len, width)
 
-        # Decode the first logit from the last prefix position
         first_logit, _ = self.PaliGemma.llm(pre_logits=prefix_pre_logits[:, -1:])
-        last_logit = first_logit
-        batch_size = last_logit.shape[0]
+        batch_size = first_logit.shape[0]
+        width = prefix_pre_logits.shape[-1]
 
         output_tokens = jnp.zeros((batch_size, max_decoding_steps))
-        collected_tokens = []
-        collected_pre_logits = []
-        collected_logprobs = []
+        pre_logits_buf = jnp.zeros((max_decoding_steps, batch_size, width), dtype=prefix_pre_logits.dtype)
+        logprobs_buf = jnp.zeros((max_decoding_steps, batch_size), dtype=jnp.float32)
 
-        all_eos = False
-        for step_idx in range(max_decoding_steps):
-            # Sample token from last logit
+        def step(carry):
+            rng, last_logit, output_tokens, pre_logits_buf, logprobs_buf, cache, _, step_idx = carry
+
             rng, rng_step = jax.random.split(rng)
-            if temperature > 0.0:
-                token = jax.random.categorical(rng_step, last_logit / temperature, axis=-1)
-            else:
-                token = jnp.argmax(last_logit, axis=-1)
-
-            # Compute log-probability of the sampled token
-            log_probs = jax.nn.log_softmax(last_logit, axis=-1)
-            token_logprob = jnp.take_along_axis(
-                log_probs[:, 0, :], token[:, 0:1], axis=-1
-            )[:, 0]  # (batch,)
-
-            collected_tokens.append(token[:, 0])  # (batch,)
-            collected_logprobs.append(token_logprob)  # (batch,)
-
-            output_tokens = put_along_last_axis(
-                output_tokens, jnp.broadcast_to(step_idx, (batch_size, 1)), token
+            token = jax.lax.cond(
+                temperature > 0.0,
+                lambda _: jax.random.categorical(rng_step, last_logit / temperature, axis=-1),
+                lambda _: jnp.argmax(last_logit, axis=-1),
+                operand=None,
             )
 
-            # Check EOS
-            has_eos = jnp.any(token == PALIGEMMA_EOS_TOKEN, axis=-1)
-            all_eos = bool(jnp.all(has_eos))
-            if all_eos:
-                break
+            # logprobs over float32 to match the Python-loop version (no .astype there, so
+            # log_softmax runs in last_logit's native dtype — keep the same here).
+            log_probs = jax.nn.log_softmax(last_logit, axis=-1)
+            token_logprob = jnp.take_along_axis(log_probs[:, 0, :], token, axis=-1)[:, 0]
 
-            # Decode one step — get pre_logits
+            output_tokens = put_along_last_axis(output_tokens, jnp.broadcast_to(step_idx, (token.shape[0], 1)), token)
+            logprobs_buf = logprobs_buf.at[step_idx].set(token_logprob.astype(logprobs_buf.dtype))
+
+            has_eos = jnp.any(token == PALIGEMMA_EOS_TOKEN, axis=-1)
+            all_eos = jnp.all(has_eos)
+
             token_embedding = self.PaliGemma.llm(token, embed_only=True)
             positions = prefill_len[:, None] + step_idx + 1
             mask = jnp.logical_and(
@@ -408,27 +401,35 @@ class Pi0FAST(_model.BaseModel):
                 jnp.arange(prefill_size + max_decoding_steps)[None, None, :]
                 < (jnp.broadcast_to(prefill_size + step_idx + 1, (prefix_start.shape[0], 1, 1))),
             )
-            step_pre_logits, kv_cache, step_out = self.PaliGemma.llm(
+            step_pre_logits, cache, _ = self.PaliGemma.llm(
                 embedded_prefix=token_embedding,
                 mask=mask,
                 positions=positions,
                 decode=True,
-                kv_cache=kv_cache,
+                kv_cache=cache,
                 return_prelogits=True,
             )
-            # step_pre_logits: (batch, 1, width)
-            collected_pre_logits.append(step_pre_logits[:, 0, :])  # (batch, width)
+            # Always write pre_logits (caller slices to [:num_tokens-1] to match the
+            # Python-loop semantics of skipping pre_logits on the EOS-trigger iteration).
+            pre_logits_buf = pre_logits_buf.at[step_idx].set(step_pre_logits[:, 0, :])
 
-            # Decode logits from pre_logits
-            last_logit, _ = self.PaliGemma.llm(pre_logits=step_pre_logits)
+            new_last_logit, _ = self.PaliGemma.llm(pre_logits=step_pre_logits)
 
-        num_tokens = len(collected_tokens)
+            return (rng, new_last_logit, output_tokens, pre_logits_buf, logprobs_buf, cache, all_eos, step_idx + 1)
+
+        def cond(carry):
+            _, _, _, _, _, _, all_eos, step_idx = carry
+            return (~all_eos) & (step_idx < max_decoding_steps)
+
+        init = (rng, first_logit, output_tokens, pre_logits_buf, logprobs_buf, kv_cache, False, 0)
+        _, _, output_tokens, pre_logits_buf, logprobs_buf, _, _, final_step = jax.lax.while_loop(cond, step, init)
+
         intermediates = {
-            "generated_tokens": jnp.stack(collected_tokens, axis=0),  # (num_tokens, batch)
-            "token_pre_logits": jnp.stack(collected_pre_logits, axis=0) if collected_pre_logits else jnp.zeros((0, batch_size, prefix_pre_logits.shape[-1])),  # (num_tokens-1, batch, width)
-            "token_logprobs": jnp.stack(collected_logprobs, axis=0),  # (num_tokens, batch)
-            "prefix_pre_logits": prefix_pre_logits,  # (batch, prefix_len, width)
-            "num_tokens": num_tokens,
+            "generated_tokens": output_tokens.astype(jnp.int32).T,
+            "token_pre_logits": pre_logits_buf,
+            "token_logprobs": logprobs_buf,
+            "prefix_pre_logits": prefix_pre_logits,
+            "num_tokens": final_step,
         }
 
         return output_tokens, intermediates

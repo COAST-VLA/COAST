@@ -52,7 +52,7 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
                     conn = websockets.sync.client.connect(self._uri, **connect_kwargs)
                 metadata = msgpack_numpy.unpackb(conn.recv())
                 return conn, metadata
-            except ConnectionRefusedError:
+            except (ConnectionRefusedError, TimeoutError):
                 logging.info("Still waiting for server...")
                 time.sleep(5)
 

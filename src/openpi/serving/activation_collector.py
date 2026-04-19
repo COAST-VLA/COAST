@@ -1,6 +1,6 @@
 """Shared activation-collection utilities used by both the metaworld
-collect_activations.py script and the WebSocket policy server's
-collection mode.
+``main.py --collect`` / ``eval_all.py --collect`` entrypoints and the
+WebSocket policy server's collection mode.
 
 The on-disk schema (file names, dtypes, metadata.json fields, directory layout)
 is the source of truth for downstream mech-interp tooling. Both metaworld and
@@ -18,6 +18,8 @@ from typing import Any
 import numpy as np
 from openpi_client import base_policy as _base_policy
 
+from openpi.models import model as _model
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,8 +33,9 @@ def save_step_activations(
 
     Slices the env_id-th example out of the batch dimension of each intermediate
     array, then writes one .npz per activation kind plus metadata.json. The
-    output schema must stay byte-identical to examples/metaworld/collect_activations.py
-    so existing analysis tooling keeps working.
+    output schema must stay byte-identical to what the metaworld entrypoints
+    (main.py --collect / eval_all.py --collect) write, so existing analysis
+    tooling keeps working.
     """
     step_dir.mkdir(parents=True, exist_ok=True)
 
@@ -48,6 +51,51 @@ def save_step_activations(
     np.savez(step_dir / "suffix_residual.npz", all_suffix_residual=all_suffix_residual)
     np.savez(step_dir / "suffix_mlp_hidden.npz", all_suffix_mlp_hidden=all_suffix_mlp_hidden)
 
+    with open(step_dir / "metadata.json", "w") as f:
+        json.dump(step_metadata, f, indent=2)
+
+
+def save_step_activations_fast(
+    step_dir: pathlib.Path,
+    intermediates: dict,
+    env_id: int,
+    step_metadata: dict,
+) -> None:
+    """Save per-env, per-step activation data for pi0-fast (autoregressive) models.
+
+    On-disk schema:
+    - tokens.npz: generated_tokens (num_tokens,) int32 — sampled action token IDs
+    - hidden_states.npz: token_pre_logits (num_tokens-1, width) float16 — per-token
+      last hidden state (one fewer than tokens because the final token's forward pass
+      isn't needed for the next prediction)
+    - token_logprobs.npz: token_logprobs (num_tokens,) float32
+    - metadata.json: step metadata + num_tokens
+    """
+    step_dir.mkdir(parents=True, exist_ok=True)
+
+    generated_tokens = intermediates["generated_tokens"][:, env_id]  # (num_tokens,)
+    token_logprobs = intermediates["token_logprobs"][:, env_id]  # (num_tokens,)
+    num_tokens = int(intermediates["num_tokens"])
+
+    np.savez(
+        step_dir / "tokens.npz",
+        generated_tokens=np.asarray(generated_tokens, dtype=np.int32),
+    )
+    np.savez(
+        step_dir / "token_logprobs.npz",
+        token_logprobs=np.asarray(token_logprobs, dtype=np.float32),
+    )
+
+    token_pre_logits = intermediates["token_pre_logits"]
+    if token_pre_logits.shape[0] > 0:
+        np.savez(
+            step_dir / "hidden_states.npz",
+            token_pre_logits=np.asarray(token_pre_logits[:, env_id], dtype=np.float16),
+        )
+
+    step_metadata = dict(step_metadata)
+    step_metadata["num_tokens"] = num_tokens
+    step_metadata["collection_version"] = "fast_v1"
     with open(step_dir / "metadata.json", "w") as f:
         json.dump(step_metadata, f, indent=2)
 
@@ -150,17 +198,21 @@ class CollectingPolicy(_base_policy.BasePolicy):
         checkpoint_step: str,
         policy_dir: str,
         config_name: str,
-        steering_hooks_fn: Any | None = None,
+        model_type: _model.ModelType,
     ) -> None:
         self._policy = policy
         self._output_root = pathlib.Path(output_root)
         self._checkpoint_step = checkpoint_step
         self._policy_dir = policy_dir
         self._config_name = config_name
-        # Optional callable: task_name -> list[(layer_idx, hook_callable)] or None.
-        # When set, activations are collected with steering hooks active so the
-        # saved intermediates reflect post-steering values.
-        self._steering_hooks_fn = steering_hooks_fn
+        self._model_type = model_type
+        # pi0-fast writes per-token autoregressive intermediates (fast_v1 schema);
+        # pi0 / pi0.5 write per-denoising-step diffusion intermediates (v1 schema).
+        # Resolve the writer once so infer() does not probe intermediates shape on
+        # every call.
+        self._save_step_fn = (
+            save_step_activations_fast if model_type == _model.ModelType.PI0_FAST else save_step_activations
+        )
         # Serializes calls into the model's hook-based intermediate collection
         # path. See _handle_collect_infer for the rationale.
         self._intermediates_lock = threading.Lock()
@@ -168,11 +220,16 @@ class CollectingPolicy(_base_policy.BasePolicy):
     @property
     def metadata(self) -> dict:
         underlying = getattr(self._policy, "metadata", {}) or {}
+        # collection_mode is the on-disk schema identifier: "v1" for diffusion
+        # (denoising.npz / adarms_cond.npz / ...), "fast_v1" for pi0-fast
+        # (tokens.npz / hidden_states.npz / token_logprobs.npz).
+        collection_mode = "fast_v1" if self._model_type == _model.ModelType.PI0_FAST else "v1"
         return {
             **underlying,
             "policy_dir": str(self._policy_dir),
             "config_name": self._config_name,
-            "collection_mode": "v1",
+            "collection_mode": collection_mode,
+            "model_type": self._model_type.value,
             "checkpoint_step": self._checkpoint_step,
             "output_root": str(self._output_root),
         }
@@ -239,12 +296,19 @@ class CollectingPolicy(_base_policy.BasePolicy):
         # corrupt the on-disk dataset). Future support for batched collection
         # would require extending the protocol so __collect__ carries a list
         # of per-element metadata dicts.
-        state_arr = np.asarray(batched_obs["observation/state"])
-        if state_arr.ndim != 2 or state_arr.shape[0] != 1:
+        # Find a proprioceptive observation key to verify single-example batch.
+        probe_key = "observation/state"
+        if probe_key not in batched_obs:
+            for key in batched_obs:
+                if key.startswith("observation/") and "image" not in key:
+                    probe_key = key
+                    break
+        probe_arr = np.asarray(batched_obs[probe_key])
+        if probe_arr.ndim != 2 or probe_arr.shape[0] != 1:
             raise ValueError(
                 f"Collection mode only supports single-example inputs "
-                f"(observation/state shape (1, state_dim)), got shape "
-                f"{tuple(state_arr.shape)}. Send one inference call per env."
+                f"({probe_key} shape (1, N)), got shape "
+                f"{tuple(probe_arr.shape)}. Send one inference call per env."
             )
 
         # Serialize calls into infer_with_intermediates: the underlying
@@ -265,21 +329,12 @@ class CollectingPolicy(_base_policy.BasePolicy):
             )
 
         step_dir = self._step_dir(collect_meta)
-        # Detect pi0-fast (autoregressive) vs pi0/pi0.5 (diffusion) from intermediates keys
-        if "generated_tokens" in intermediates:
-            save_step_activations_fast(
-                step_dir=step_dir,
-                intermediates=intermediates,
-                env_id=0,  # batch_size is enforced to 1 above
-                step_metadata=dict(collect_meta),
-            )
-        else:
-            save_step_activations(
-                step_dir=step_dir,
-                intermediates=intermediates,
-                env_id=0,  # batch_size is enforced to 1 above
-                step_metadata=dict(collect_meta),
-            )
+        self._save_step_fn(
+            step_dir=step_dir,
+            intermediates=intermediates,
+            env_id=0,  # batch_size is enforced to 1 above
+            step_metadata=dict(collect_meta),
+        )
 
         # Strip the batch dim from actions so the client receives the same
         # shape it would from a non-collection server (action_horizon, action_dim).
@@ -338,11 +393,22 @@ class CollectingPolicy(_base_policy.BasePolicy):
         sends pre-batched (num_envs, state_dim). Pass through unchanged when
         already batched.
         """
-        state = obs.get("observation/state")
-        if state is None:
+        # Find any observation array to check if already batched. Prefer
+        # "observation/state" (metaworld/libero/robocasa) but fall back to the
+        # first non-image observation key (droid sends observation/joint_position
+        # + observation/gripper_position instead of observation/state).
+        probe_key = None
+        if "observation/state" in obs:
+            probe_key = "observation/state"
+        else:
+            for key in obs:
+                if key.startswith("observation/") and "image" not in key:
+                    probe_key = key
+                    break
+        if probe_key is None:
             return obs
-        state_arr = np.asarray(state)
-        if state_arr.ndim >= 2:
+        probe_arr = np.asarray(obs[probe_key])
+        if probe_arr.ndim >= 2:
             return obs
 
         batched: dict = {}

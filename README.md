@@ -1,6 +1,6 @@
 # openpi-metaworld
 
-This is a fork of [Physical Intelligence's openpi](https://github.com/Physical-Intelligence/openpi) with three sim environment examples wired up end-to-end. Each example has its own README covering setup, dataset generation (where applicable), training, serving, evaluation, and (for metaworld) activation collection for mechanistic interpretability.
+This is a fork of [Physical Intelligence's openpi](https://github.com/Physical-Intelligence/openpi) with three sim environment examples wired up end-to-end, plus a pluggable policy-server layer so you can swap the pi0/pi0.5 server for NVIDIA's GR00T without touching any client. For GR00T setup steps, please follow the [groot_env/README.md](groot_env/README.md). The setup steps below are for the original openpi and the pi0/pi0.5 models.
 
 ## Installation
 
@@ -21,11 +21,57 @@ The base install above is everything `examples/metaworld/` needs. `examples/libe
 | **LIBERO** | [`examples/libero_env/README.md`](examples/libero_env/README.md) | WebSocket client/server LIBERO benchmark. Has its own Python 3.8 venv (`examples/libero_env/.venv`). |
 | **Robocasa** | [`examples/robocasa_env/README.md`](examples/robocasa_env/README.md) | RoboCasa kitchen tasks. Has its own venv (`examples/robocasa_env/.venv`) because robosuite/robocasa conflict with the parent venv. Uses a client/server WebSocket eval pattern. |
 
+## Servers
+
+| Model | Entry point | Venv | Notes |
+|---|---|---|---|
+| **pi0 / pi0-FAST / pi0.5** | [`scripts/serve_policy.py`](scripts/serve_policy.py) | root (`uv sync`) | Primary openpi server. Serves any `pi05_*` / `pi0_*` training config. Supports `--collect_activations` for mech-interp. |
+| **NVIDIA GR00T N1.5** | [`groot_env/serve.py`](groot_env/README.md) | `groot_env/.venv` (Python 3.10) | Serves `nvidia/GR00T-N1.5-3B` or any robocasa365 fine-tuned checkpoint. Has its own venv — N1.5 pins torch 2.5.1 which conflicts with the root openpi env. Same WebSocket protocol as `serve_policy.py`, so existing clients hit it unchanged. |
+
+## Support
+
+What each client + model combination supports today. ❌ means either the
+training config, the input-transform branch, or the serve integration is not
+yet wired up — see the per-example READMEs for how to add one.
+
+### Training
+
+We run fine-tuning in-repo for MetaWorld and LIBERO, and release a series of **intermediate-step checkpoints** for both — a span of checkpoints across training is what lets downstream mech-interp work compare behavior as the policy learns, rather than just inspecting the fully-trained endpoint. For RoboCasa and DROID we skip in-repo training and evaluate against the upstream fully-trained checkpoints directly.
+
+| Client | In-repo training | Dataset | Train configs | Checkpoints |
+|---|---|---|---|---|
+| **MetaWorld** | ✅ | [`brandonyang/metaworld_ml45`](https://huggingface.co/datasets/brandonyang/metaworld_ml45) | `pi05_metaworld`, `pi0_fast_metaworld` | intermediate (released on HF — see `examples/metaworld/README.md`) |
+| **LIBERO** | ✅ | [`physical-intelligence/libero`](https://huggingface.co/datasets/physical-intelligence/libero) | `pi05_libero`, `pi0_fast_libero` | intermediate (released on HF — see `examples/libero_env/README.md`) |
+| **RoboCasa** | ❌ | — | — | upstream [`robocasa/robocasa365_checkpoints`](https://huggingface.co/robocasa/robocasa365_checkpoints) |
+| **DROID** | ❌ | — | — | upstream `gs://openpi-assets/checkpoints/pi05_droid`, `gs://openpi-assets/checkpoints/pi0_fast_droid` |
+
+### Inference (serve + client)
+
+| Client | pi0.5 | pi0-FAST | GR00T-N1.5 |
+|---|---|---|---|
+| **MetaWorld** | ✅ | ✅ | ❌ |
+| **LIBERO** | ✅ | ✅ | ❌ |
+| **RoboCasa** | ✅ | ❌ | ✅ |
+| **DROID** | ✅ | ❌ | ❌ |
+
+### Activation Collection
+
+Schema identifiers (reported on the server's `collection_mode` metadata field): `v1` = diffusion (pi0 / pi0.5 denoising-step tensors), `fast_v1` = pi0-FAST (per-token tensors), `groot_v1` = GR00T N1.5 DiT tensors. MetaWorld runs collection in-process (loads the policy directly); the other clients route through a `--collect_activations` policy server.
+
+| Client | pi0.5 | pi0-FAST | GR00T-N1.5 |
+|---|---|---|---|
+| **MetaWorld** | ✅ `v1` (in-process) | ✅ `fast_v1` (in-process) | ❌ |
+| **LIBERO** | ✅ `v1` (server) | ✅ `fast_v1` (server) | ❌ |
+| **RoboCasa** | ✅ `v1` (server) | ❌ | ✅ `groot_v1` (server) |
+| **DROID** | ✅ `v1` (server) | ❌ | ❌ |
+
 ## Repo Layout
 
 - `src/openpi/` — model code (JAX primary, PyTorch in `models_pytorch/`), training configs, policies, and the WebSocket policy server.
 - `scripts/` — shared training and serving entry points (`train.py`, `train_pytorch.py`, `serve_policy.py`, `compute_norm_stats.py`). Env-specific scripts live under each `examples/<env>/` directory.
-- `examples/` — per-environment quickstarts. See the table above.
+- `examples/` — per-environment client quickstarts. See the Clients table above.
+- `groot_env/` — isolated-venv NVIDIA GR00T N1.5 server. See [`groot_env/README.md`](groot_env/README.md) for setup.
+- `third_party/Isaac-GR00T/` — submodule pinned to `n1.5-release`; installed editable from `groot_env/`.
 - `tests/` — pytest suite. Run with `uv run pytest --strict-markers -m "not manual"` for CI-equivalent (env tests requiring GPU + EGL are marked `manual` and skipped).
 - `docs/` — design notes and historical implementation docs.
 - `CLAUDE.md` — guidance for Claude Code agents working in this repo.
