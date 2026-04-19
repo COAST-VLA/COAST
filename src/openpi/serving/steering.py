@@ -240,7 +240,9 @@ class ConceptorSteeringHook:
         # current_denoise_step is out of bounds, Python's IndexError surfaces —
         # that's a wiring bug (sampler and hook list length don't agree).
         M = self._Ms[self.current_denoise_step] if self._Ms is not None else self.M
-        M = M.to(dtype=h.dtype)
+        # Align both dtype and device to h so the hook is robust to multi-GPU or
+        # CPU-fallback placements; self._device is the construction-time default.
+        M = M.to(device=h.device, dtype=h.dtype)
         h_steered = torch.matmul(h, M.T)
         self.intervention_norms.append(torch.norm(h_steered - h).item())
         if rest is not None:
@@ -293,7 +295,9 @@ class LinearSteeringHook:
             h, rest = output[0], output[1:]
         else:
             h, rest = output, None
-        v = self.v.to(dtype=h.dtype)
+        # Align both dtype and device to h; self._device at init may differ
+        # from h.device under multi-GPU or CPU fallback.
+        v = self.v.to(device=h.device, dtype=h.dtype)
         delta = self.alpha * v  # (d,); broadcasts to h
         h_steered = h + delta
         self.intervention_norms.append(torch.norm(h_steered - h).item())
@@ -341,6 +345,14 @@ def validate_steering_payload(payload: Any, available: Iterable[str]) -> None:
     for key, expected in _REQUIRED_PAYLOAD_FIELDS.items():
         if not isinstance(payload[key], expected):  # type: ignore[arg-type]
             raise ValueError(f"__steering__.{key} must be {expected}, got {type(payload[key]).__name__}")
+
+    # NaN/Inf in alpha/beta would silently poison the hook's M matrix (NaN
+    # propagates through (1-β)I + β·C and then through every forward pass).
+    # Reject at the wire boundary — a misbehaving client shouldn't be able to
+    # wedge the server into producing NaN actions.
+    for numeric_key in ("alpha", "beta"):
+        if not np.isfinite(payload[numeric_key]):
+            raise ValueError(f"__steering__.{numeric_key} must be finite, got {payload[numeric_key]!r}")
 
     if payload["strategy"] not in ALLOWED_STRATEGIES:
         raise ValueError(f"__steering__.strategy {payload['strategy']!r} not in {ALLOWED_STRATEGIES}")
@@ -398,8 +410,14 @@ class SteeredPolicyWrapper:
                 hook = LinearSteeringHook(v, alpha=key[2], device=self._device)
             elif strategy == "random_matched":
                 # Deterministic seed from the full cache key so repeat requests
-                # produce the same random matrix.
-                seed = abs(hash(key)) % (2**31)
+                # produce the same random matrix — IMPORTANT: across server
+                # restarts too, so a control-baseline sweep is reproducible.
+                # Python's built-in hash(str|tuple) is salted per-process (see
+                # PYTHONHASHSEED); a stable hash over repr(key) guarantees the
+                # seed is identical on every run.
+                import hashlib
+
+                seed = int(hashlib.blake2b(repr(key).encode("utf-8"), digest_size=4).hexdigest(), 16)
                 C = get_conceptor_matrix(
                     self._npz,
                     task=key[0],

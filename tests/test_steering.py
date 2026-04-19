@@ -158,6 +158,31 @@ def test_repr_mentions_beta_and_dim():
     assert "32" in s
 
 
+def test_hook_handles_h_on_different_device():
+    """Hook built with device="cpu" must still work when h is explicitly moved
+    to "cpu" after the fact (the `.to(device=h.device, ...)` call should cover
+    any mismatch without raising). Multi-GPU tests require a GPU and live in
+    tests/models/; this one exercises the CPU-CPU path and confirms the
+    device= kwarg is threaded through."""
+    hook = ConceptorSteeringHook(np.eye(4, dtype=np.float32), beta=0.5, device="cpu")
+    h = torch.randn(1, 2, 4).to(device="cpu")
+    out = hook(None, None, h)
+    assert out.device.type == "cpu"
+    torch.testing.assert_close(out, h, atol=1e-6, rtol=1e-5)  # C=I, so h' == h
+
+
+def test_linear_hook_handles_h_on_different_device():
+    direction = np.zeros(4, dtype=np.float32)
+    direction[0] = 1.0
+    from openpi.serving.steering import LinearSteeringHook
+
+    hook = LinearSteeringHook(direction, alpha=0.0, device="cpu")  # alpha=0 → no-op
+    h = torch.randn(1, 2, 4).to(device="cpu")
+    out = hook(None, None, h)
+    assert out.device.type == "cpu"
+    torch.testing.assert_close(out, h, atol=1e-6, rtol=1e-5)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Steering payload validation
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -200,6 +225,35 @@ def test_unknown_task_raises():
 def test_non_dict_payload_raises():
     with pytest.raises(ValueError, match="must be a dict"):
         validate_steering_payload(["not", "a", "dict"], {"taskA"})
+
+
+def test_nan_alpha_rejected():
+    """NaN alpha would poison the M matrix. The wire validator must reject it."""
+    p = _valid_payload()
+    p["alpha"] = float("nan")
+    with pytest.raises(ValueError, match="alpha.*finite"):
+        validate_steering_payload(p, {"taskA"})
+
+
+def test_inf_alpha_rejected():
+    p = _valid_payload()
+    p["alpha"] = float("inf")
+    with pytest.raises(ValueError, match="alpha.*finite"):
+        validate_steering_payload(p, {"taskA"})
+
+
+def test_nan_beta_rejected():
+    p = _valid_payload()
+    p["beta"] = float("nan")
+    with pytest.raises(ValueError, match="beta.*finite"):
+        validate_steering_payload(p, {"taskA"})
+
+
+def test_neg_inf_beta_rejected():
+    p = _valid_payload()
+    p["beta"] = float("-inf")
+    with pytest.raises(ValueError, match="beta.*finite"):
+        validate_steering_payload(p, {"taskA"})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -550,6 +604,44 @@ def test_wrapper_random_matched_deterministic_across_calls(mini_npz: pathlib.Pat
     w.infer({"__steering__": _payload("taskA", "random_matched")})
     second = p.last_steering_hooks[0][1]
     assert first is second  # cache hit
+
+
+def test_wrapper_random_matched_seed_stable_across_processes(mini_npz: pathlib.Path):
+    """The ``random_matched`` seed must be a function of (task, layer, α, β, strategy)
+    that is stable across processes — Python's built-in hash() salts strings per-process
+    under the default PYTHONHASHSEED=random, which would break reproducibility of the
+    control-baseline experiment across server restarts.
+
+    Rather than spawn a subprocess, verify the seed derivation directly: it should
+    use a stable hash (blake2b/hashlib), not Python's salted hash()."""
+    import hashlib
+
+    w1 = SteeredPolicyWrapper(_StubPolicy(), conceptor_npz_path=mini_npz, device="cpu")
+    w2 = SteeredPolicyWrapper(_StubPolicy(), conceptor_npz_path=mini_npz, device="cpu")
+    payload = _payload("taskA", "random_matched")
+    w1.infer({"__steering__": payload})
+    w2.infer({"__steering__": dict(payload)})  # fresh dict to avoid aliasing
+    # Within a single process two wrappers always agree; this is a baseline.
+    M1 = w1._hook_cache[("taskA", 11, 0.1, 0.3, "random_matched")].M  # noqa: SLF001
+    M2 = w2._hook_cache[("taskA", 11, 0.1, 0.3, "random_matched")].M  # noqa: SLF001
+    torch.testing.assert_close(M1, M2, atol=0.0, rtol=0.0)
+
+    # Stronger check: confirm the seed is derived from a stable hash, not builtin
+    # hash(). Reconstruct what the wrapper should have used:
+    key = ("taskA", 11, 0.1, 0.3, "random_matched")
+    expected_seed = int(hashlib.blake2b(repr(key).encode("utf-8"), digest_size=4).hexdigest(), 16)
+    # Regenerate the random_matched matrix with that seed and confirm it matches.
+    from openpi.serving.conceptors import random_matched_conceptor
+
+    npz = steering.load_conceptor_npz(mini_npz)
+    C_ref = np.asarray(npz["taskA__L11__0.1__C_contrastive"])
+    C_expected = random_matched_conceptor(C_ref, seed=expected_seed)
+    # The hook's M = (1-β)I + β·C, so invert that: C_recovered = (M - (1-β)I) / β
+    d = C_expected.shape[0]
+    M_cpu = M1.cpu().numpy()
+    beta = 0.3
+    C_recovered = (M_cpu - (1 - beta) * np.eye(d, dtype=np.float32)) / beta
+    np.testing.assert_allclose(C_recovered, C_expected.astype(np.float32), atol=1e-5)
 
 
 def test_wrapper_dispatches_linear(mini_npz: pathlib.Path):
