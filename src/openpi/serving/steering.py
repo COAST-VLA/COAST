@@ -13,6 +13,19 @@ This module is the single source of truth for steering primitives:
 The on-wire protocol mirrors activation_collector.py's __collect__ magic key:
 the client attaches obs["__steering__"] = {...}; the wrapper pops it off and
 routes through Policy.infer_with_steering.
+
+**Model support.** Steering here targets the PyTorch pi0.5 action expert
+(flow-matching decoder; 10 denoising steps). Other model types are NOT
+supported yet:
+
+    TODO(pi0-fast): autoregressive decoder has a different activation shape
+    (per-token hidden states, not per-denoise-step), so the per_step strategy
+    and the NPZ key schema need rethinking. See examples/metaworld/README.md
+    for the current pi0-fast eval flow.
+
+    TODO(GR00T N1.5): separate server in groot_env/ with a different backbone
+    architecture; the hook attach points and activation dimensionality differ.
+    Separate effort — see groot_env/README.md.
 """
 
 # ruff: noqa: E741, N806, RUF001, RUF002, RUF003

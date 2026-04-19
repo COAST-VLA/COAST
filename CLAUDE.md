@@ -14,7 +14,7 @@ This is a fork of Physical Intelligence's openpi repository for **activation col
 | **DROID** (real robot) | Server-client over WebSocket (interactive operator loop) | Root venv | Server-side (via `CollectionSession`) | ✅ (manual single-condition eval) |
 | **GR00T N1.5** | Separate server (`groot_env/`) | Own Python 3.11 venv in `groot_env/` | Server-side | ❌ (different activation shape; separate effort) |
 
-For steering configuration, see `src/openpi/serving/steering.py` (runtime), `src/openpi/serving/conceptors.py` (offline NPZ builder), and `packages/openpi-client/src/openpi_client/steering.py` (wire protocol). Per-env tuning lives under `experiments/{libero,robocasa,metaworld,droid}/`.
+For steering configuration, see `src/openpi/serving/steering.py` (runtime), `src/openpi/serving/conceptors.py` (offline NPZ builder), and `packages/openpi-client/src/openpi_client/steering.py` (wire protocol). Per-env tuning lives under `experiments/{libero,robocasa,metaworld,droid}/`. Steering currently targets the pi0.5 PyTorch action expert only; TODO: extend to pi0-fast (different autoregressive activation shape) and GR00T N1.5 (different backbone in `groot_env/`).
 
 For workflow details (dataset generation, training configs, eval commands, activation formats), read the respective `examples/{client}/README.md`.
 

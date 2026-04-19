@@ -87,6 +87,9 @@ class Args:
     # src/openpi/serving/steering.py). Implies --pytorch
     # (sample_actions_with_steering is PyTorch-only) and requires
     # --conceptor_npz.
+    # Only pi0.5 (flow-matching, 10-step denoise) is supported. TODO:
+    # extend to pi0-fast (different autoregressive activation shape) and
+    # GR00T N1.5 (different backbone, served from groot_env/).
     steer: bool = False
     # Path to the conceptor NPZ. Required when --steer is set.
     # Download from brandonyang/libero-conceptors or brandonyang/robocasa-conceptors,

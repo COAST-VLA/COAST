@@ -71,5 +71,13 @@ math. Short summary:
 2. A PyTorch-converted checkpoint for the target config.
 3. A free GPU (`nvidia-smi`, then `export CUDA_VISIBLE_DEVICES=<id>`).
 
-Note: GR00T N1.5 (`groot_env/`) is deliberately unsupported — its activation
-shape differs from pi0.5's and steering for it is a separate effort.
+Note: only pi0.5 is currently supported. TODO: extend to
+
+- **pi0-fast**: autoregressive decoder, per-token activations instead of
+  per-denoise-step — the `per_step` strategy and NPZ key schema need
+  rethinking. Checkpoints live at
+  [`brandonyang/pi0fast-metaworld-checkpoints`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints)
+  (see `examples/metaworld/README.md`).
+- **GR00T N1.5** (`groot_env/`): different DiT backbone with different hook
+  attach points and activation dimensionality. Served from its own venv,
+  not from `scripts/serve_policy.py`. See `groot_env/README.md`.
