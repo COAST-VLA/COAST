@@ -59,7 +59,12 @@ logger = logging.getLogger(__name__)
 # Axis-1 index into all_suffix_residual → real transformer layer index.
 DEFAULT_COLLECT_LAYERS: tuple[int, ...] = (0, 5, 11, 17)
 DEFAULT_ALPHAS: tuple[float, ...] = (0.1, 0.5, 1.0, 2.0, 10.0)
-DEFAULT_PER_STEP_INDICES: tuple[int, ...] = (0, 9)
+# All 10 per-step indices for pi0.5's flow-matching schedule. The ``per_step``
+# strategy requires the NPZ to contain ``per_step_0`` .. ``per_step_9`` so the
+# sampler's per-step hook can look up a distinct conceptor at each denoising
+# iteration. Legacy NPZs built with a narrower tuple must be rebuilt to support
+# ``per_step``.
+DEFAULT_PER_STEP_INDICES: tuple[int, ...] = tuple(range(10))
 
 
 # ──────────────────────────────────────────────────────────────────────────────

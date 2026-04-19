@@ -1,27 +1,40 @@
 # Experiments
 
 Each subdirectory holds a single environment's mechanistic-interpretability
-sweep. Read that subdir's `README.md` to reproduce its `best_configs.json`.
+tuning workflow. Read that subdir's `README.md` to reproduce its output.
 
 For instructions on how to **use** steering in a normal eval run, see
-`examples/libero_env/README.md` or `examples/robocasa_env/README.md` instead —
-the `--steer` flag on `main.py` / `eval_all.py` is the end-user entry point.
+`examples/{libero_env,robocasa_env,metaworld,droid}/README.md` — the `--steer`
+flag on `main.py` / `eval_all.py` is the end-user entry point on all four
+clients.
 
 ## Layout
 
 ```
 experiments/
+├── shared/
+│   └── select_parameters.py   # generic overlap-band / quota narrower (used by DROID)
 ├── libero/
-│   ├── find_best_configs.py   # sweep entrypoint
+│   ├── compute_conceptors.py  # rebuild NPZ from a fresh activation tree
+│   ├── find_best_configs.py   # sweep entrypoint (subprocess-per-condition)
 │   ├── best_configs.json      # committed winning (task, layer, α, β, strategy) tuples
 │   ├── steering_results/      # gitignored per-run sweep artifacts
 │   └── README.md
-└── robocasa/
-    ├── find_best_configs.py
-    ├── best_configs.json
-    ├── steering_results/
+├── robocasa/                  # same structure as libero/
+│   └── ...
+├── metaworld/                 # same structure as libero/
+│   └── ...
+└── droid/
+    ├── compute_conceptors.py  # rebuild NPZ from a fresh activation tree
+    ├── select_parameters.py   # diagnostic-based narrower (no sweep — real robot)
+    ├── selected_params.json   # committed shortlist from select_parameters.py
     └── README.md
 ```
+
+**Why DROID has no `find_best_configs.py`**: real-robot evaluation is manual
+(operator labels success after each rollout), so an automated subprocess grid
+search doesn't apply. `select_parameters.py` narrows the grid 10× and the
+operator evaluates conditions by hand.
 
 ## Shared primitives
 
@@ -44,15 +57,19 @@ math. Short summary:
 
 | Strategy | What it does |
 |---|---|
-| `global` | Contrastive conceptor `C_s ∧ NOT(C_f)` (the default) |
-| `per_step_0`, `per_step_9` | Per-denoise-step contrastive conceptors |
+| `global` | Contrastive conceptor `C_s ∧ NOT(C_f)` applied uniformly (the default) |
+| `per_step` | A different contrastive conceptor at each of pi0.5's 10 denoising steps |
 | `positive_only` | Success-only conceptor `C_s` (ablation) |
 | `random_matched` | Random-eigenvector conceptor with matched spectrum (control) |
 | `linear` | Additive `h + α·v` using unit mean-difference direction (ActAdd baseline) |
 
 ## Prereqs (common)
 
-1. Downloaded conceptor NPZs at `conceptors/{libero,robocasa}_conceptors.npz`.
-   See each env's README for the `hf download` command.
+1. Downloaded conceptor NPZs at
+   `conceptors/{libero,robocasa,metaworld,droid}_conceptors.npz`. See each
+   env's README for the `hf download` command.
 2. A PyTorch-converted checkpoint for the target config.
 3. A free GPU (`nvidia-smi`, then `export CUDA_VISIBLE_DEVICES=<id>`).
+
+Note: GR00T N1.5 (`groot_env/`) is deliberately unsupported — its activation
+shape differs from pi0.5's and steering for it is a separate effort.

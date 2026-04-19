@@ -99,7 +99,7 @@ class Args:
     steering_layer: int = 11
     steering_alpha: float = 0.1
     steering_beta: float = 0.3
-    # One of "global", "per_step_0", "per_step_9", "positive_only", "random_matched", "linear".
+    # One of "global", "per_step", "positive_only", "random_matched", "linear".
     steering_strategy: str = "global"
     # Override the conceptor task key (default: the current LIBERO task name).
     steering_task: Optional[str] = None

@@ -32,8 +32,7 @@ def test_steering_key_matches_wire_string():
 def test_allowed_strategies_expected_set():
     assert set(ALLOWED_STRATEGIES) == {
         "global",
-        "per_step_0",
-        "per_step_9",
+        "per_step",
         "positive_only",
         "random_matched",
         "linear",
@@ -67,6 +66,21 @@ def test_build_steering_payload_coerces_types():
     assert isinstance(p["beta"], float) and p["beta"] == 1.0
 
 
+def test_droid_slug_task_name_round_trips():
+    """DROID uses a slugified instruction as its canonical task key on both the
+    client and the server (collection writes directories under the slug; conceptor
+    NPZ is keyed by the same slug). Confirm that payloads built with such a name
+    travel through the builder unmodified — if this regresses, per-task NPZ lookup
+    fails silently in the server."""
+    import re
+
+    instruction = "Pick up the pineapple and put it in the bowl"
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", instruction.strip().lower()).strip("-")
+    assert slug == "pick-up-the-pineapple-and-put-it-in-the-bowl"
+    p = build_steering_payload(task=slug, layer=11, alpha=0.1, beta=0.3, strategy="global")
+    assert p["task"] == slug
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # load_and_validate_steering_config
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -78,7 +92,7 @@ def _valid_config_dict():
         "defaults": {"layer": 11, "alpha": 0.1, "beta": 0.3, "strategy": "global"},
         "tasks": {
             "taskA": {"layer": 11, "alpha": 0.1, "beta": 0.3, "strategy": "global"},
-            "taskB": {"layer": 17, "alpha": 0.5, "beta": 0.1, "strategy": "per_step_0"},
+            "taskB": {"layer": 17, "alpha": 0.5, "beta": 0.1, "strategy": "per_step"},
         },
     }
 
@@ -153,7 +167,7 @@ def test_config_without_defaults_is_valid(tmp_path: pathlib.Path):
 
 
 _FALLBACK = {"layer": 11, "alpha": 0.1, "beta": 0.3, "strategy": "global"}
-_CUSTOM = {"layer": 17, "alpha": 0.5, "beta": 0.1, "strategy": "per_step_0"}
+_CUSTOM = {"layer": 17, "alpha": 0.5, "beta": 0.1, "strategy": "per_step"}
 
 
 def test_resolve_no_config_returns_fallback():

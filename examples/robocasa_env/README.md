@@ -236,7 +236,7 @@ MUJOCO_GL=egl uv run python main.py --env_name CloseFridge --steer
 ```bash
 MUJOCO_GL=egl uv run python main.py --env_name CloseFridge --steer \
     --steering_layer 11 --steering_alpha 0.5 --steering_beta 0.1 \
-    --steering_strategy per_step_0
+    --steering_strategy per_step
 ```
 
 ### Full task_set with per-env tuned configs

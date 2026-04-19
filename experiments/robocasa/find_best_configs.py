@@ -60,8 +60,7 @@ class Args:
     betas: tuple[float, ...] = (0.1, 0.3)
     strategies: tuple[str, ...] = (
         "global",
-        "per_step_0",
-        "per_step_9",
+        "per_step",
         "positive_only",
         "random_matched",
         "linear",

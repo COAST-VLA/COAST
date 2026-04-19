@@ -100,6 +100,57 @@ def test_set_denoise_step():
     assert hook.current_denoise_step == 5
 
 
+def test_hook_per_step_mode_selects_correct_matrix():
+    """Build a hook with 3 distinct matrices; verify each one is applied at its step."""
+    d = 4
+    # Three identity-matrices scaled so their outputs are distinguishable:
+    # M_t = (1-β)I + β(scale_t · I) = (1 - β + β·scale_t) · I
+    # With β=1, M_t = scale_t · I → output = h * scale_t
+    matrices = [np.eye(d, dtype=np.float32) * s for s in (0.1, 0.5, 0.9)]
+    hook = ConceptorSteeringHook(beta=1.0, device="cpu", matrices_per_step=matrices)
+    h = torch.ones(1, 1, d)
+    for t, expected_scale in enumerate((0.1, 0.5, 0.9)):
+        hook.set_denoise_step(t)
+        out = hook(None, None, h)
+        torch.testing.assert_close(out, h * expected_scale)
+
+
+def test_hook_per_step_mode_out_of_bounds_raises():
+    hook = ConceptorSteeringHook(
+        beta=0.3,
+        device="cpu",
+        matrices_per_step=[np.eye(4, dtype=np.float32)] * 3,
+    )
+    hook.set_denoise_step(7)  # list length = 3
+    with pytest.raises(IndexError):
+        hook(None, None, torch.ones(1, 1, 4))
+
+
+def test_hook_rejects_both_args():
+    with pytest.raises(ValueError, match="exactly one"):
+        ConceptorSteeringHook(
+            np.eye(4, dtype=np.float32),
+            beta=0.3,
+            device="cpu",
+            matrices_per_step=[np.eye(4, dtype=np.float32)],
+        )
+
+
+def test_hook_rejects_neither_arg():
+    with pytest.raises(ValueError, match="exactly one"):
+        ConceptorSteeringHook(beta=0.3, device="cpu")
+
+
+def test_hook_repr_per_step_mentions_count():
+    hook = ConceptorSteeringHook(
+        beta=0.3,
+        device="cpu",
+        matrices_per_step=[np.eye(4, dtype=np.float32)] * 5,
+    )
+    s = repr(hook)
+    assert "per_step=5" in s
+
+
 def test_repr_mentions_beta_and_dim():
     hook = ConceptorSteeringHook(np.eye(32, dtype=np.float32), beta=0.42, device="cpu")
     s = repr(hook)
@@ -170,8 +221,10 @@ def mini_npz(tmp_path: pathlib.Path) -> pathlib.Path:
             arrays[f"{task}__L11__{alpha}__C_contrastive"] = np.eye(d, dtype=np.float32) * 0.5
             arrays[f"{task}__L11__{alpha}__C_success"] = np.eye(d, dtype=np.float32) * 0.4
             arrays[f"{task}__L11__{alpha}__C_failure"] = np.eye(d, dtype=np.float32) * 0.35
-        for step in (0, 9):
-            arrays[f"{task}__L11__per_step_{step}__C_contrastive"] = np.eye(d, dtype=np.float32) * 0.3
+        # All 10 per-step conceptors. Distinct scaling per step so
+        # the per_step strategy test can confirm the correct matrix is selected.
+        for step in range(10):
+            arrays[f"{task}__L11__per_step_{step}__C_contrastive"] = np.eye(d, dtype=np.float32) * (0.1 + 0.05 * step)
         # Linear direction: unit vector, distinct per task
         v = np.zeros(d, dtype=np.float32)
         v[0 if task == "taskA" else 1] = 1.0
@@ -198,12 +251,6 @@ def test_get_conceptor_matrix_global(mini_npz: pathlib.Path):
     np.testing.assert_allclose(C, np.eye(8) * 0.5)
 
 
-def test_get_conceptor_matrix_per_step(mini_npz: pathlib.Path):
-    npz = steering.load_conceptor_npz(mini_npz)
-    C = get_conceptor_matrix(npz, "taskB", 11, 0.1, "per_step_9")  # alpha ignored for per_step
-    np.testing.assert_allclose(C, np.eye(8) * 0.3)
-
-
 def test_get_conceptor_matrix_unknown_strategy_raises(mini_npz: pathlib.Path):
     npz = steering.load_conceptor_npz(mini_npz)
     with pytest.raises(ValueError, match="Unknown steering strategy"):
@@ -214,6 +261,38 @@ def test_get_conceptor_matrix_missing_key_raises(mini_npz: pathlib.Path):
     npz = steering.load_conceptor_npz(mini_npz)
     with pytest.raises(KeyError, match="not in NPZ"):
         get_conceptor_matrix(npz, "taskA", 99, 0.1, "global")
+
+
+def test_get_conceptor_matrix_per_step_rejects_direct_lookup(mini_npz: pathlib.Path):
+    """per_step returns a LIST of matrices via get_per_step_conceptor_matrices;
+    routing it through get_conceptor_matrix is a caller bug."""
+    npz = steering.load_conceptor_npz(mini_npz)
+    with pytest.raises(ValueError, match="per_step"):
+        get_conceptor_matrix(npz, "taskA", 11, 0.1, "per_step")
+
+
+def test_get_per_step_conceptor_matrices_returns_all_10(mini_npz: pathlib.Path):
+    """Returns the 10 per-step conceptors in denoising order (t=0 first)."""
+    npz = steering.load_conceptor_npz(mini_npz)
+    mats = steering.get_per_step_conceptor_matrices(npz, "taskA", 11)
+    assert len(mats) == 10
+    # Fixture sets scale = 0.1 + 0.05 * step, so mats[t] = I * (0.1 + 0.05 * t).
+    for t in range(10):
+        np.testing.assert_allclose(mats[t], np.eye(8) * (0.1 + 0.05 * t), atol=1e-7)
+
+
+def test_get_per_step_conceptor_matrices_missing_key_raises(tmp_path: pathlib.Path):
+    """Hit an NPZ that's missing some of the per_step_0..per_step_9 keys."""
+    d = 4
+    arrays = {
+        "taskA__L11__per_step_0__C_contrastive": np.eye(d, dtype=np.float32) * 0.1,
+        "taskA__L11__per_step_9__C_contrastive": np.eye(d, dtype=np.float32) * 0.9,
+    }
+    path = tmp_path / "legacy.npz"
+    np.savez(path, **arrays)
+    npz = steering.load_conceptor_npz(path)
+    with pytest.raises(KeyError, match="missing NPZ key"):
+        steering.get_per_step_conceptor_matrices(npz, "taskA", 11)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -489,6 +568,18 @@ def test_wrapper_all_five_strategies_cache_separately(mini_npz: pathlib.Path):
     """Different strategies at same (task, layer, α, β) yield 5 distinct hooks."""
     p = _StubPolicy()
     w = SteeredPolicyWrapper(p, conceptor_npz_path=mini_npz, device="cpu")
-    for strat in ("global", "per_step_0", "positive_only", "random_matched", "linear"):
+    for strat in ("global", "per_step", "positive_only", "random_matched", "linear"):
         w.infer({"__steering__": _payload("taskA", strat)})
     assert len(w._hook_cache) == 5  # noqa: SLF001
+
+
+def test_wrapper_dispatches_per_step(mini_npz: pathlib.Path):
+    """per_step builds a hook holding all 10 per-step matrices."""
+    p = _StubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=mini_npz, device="cpu")
+    w.infer({"__steering__": _payload("taskA", "per_step")})
+    assert p.steering_calls == 1
+    layer_idx, hook = p.last_steering_hooks[0]
+    assert layer_idx == 11
+    assert isinstance(hook, ConceptorSteeringHook)
+    assert hook._Ms is not None and len(hook._Ms) == 10  # noqa: SLF001

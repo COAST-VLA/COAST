@@ -28,6 +28,7 @@ class EnvMode(enum.Enum):
     ALOHA_SIM = "aloha_sim"
     DROID = "droid"
     LIBERO = "libero"
+    METAWORLD = "metaworld"
 
 
 @dataclasses.dataclass

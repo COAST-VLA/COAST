@@ -68,8 +68,6 @@ def get_conceptor_matrix(
 
     Keyed lookups (zero compute):
       - ``global``          → ``{task}__L{layer}__{alpha}__C_contrastive``
-      - ``per_step_N``      → ``{task}__L{layer}__per_step_N__C_contrastive``
-                              (alpha ignored — miranda-v2 convention)
       - ``positive_only``   → ``{task}__L{layer}__{alpha}__C_success``
 
     Derived at call time:
@@ -80,15 +78,15 @@ def get_conceptor_matrix(
                               output; SteeredPolicyWrapper derives the seed
                               from the full cache key.
 
-    ``linear`` is not a matrix strategy — use ``get_linear_direction`` instead.
+    ``linear`` and ``per_step`` are not single-matrix strategies — use
+    ``get_linear_direction`` and ``get_per_step_conceptor_matrices`` instead.
     """
     from openpi.serving.conceptors import random_matched_conceptor
 
     if strategy == "global":
         key = _conceptor_key(task, layer, str(alpha), "C_contrastive")
-    elif strategy.startswith("per_step_"):
-        step = strategy.split("_")[-1]
-        key = _conceptor_key(task, layer, f"per_step_{step}", "C_contrastive")
+    elif strategy == "per_step":
+        raise ValueError("strategy='per_step' returns a LIST of matrices; call get_per_step_conceptor_matrices instead")
     elif strategy == "positive_only":
         key = _conceptor_key(task, layer, str(alpha), "C_success")
     elif strategy == "random_matched":
@@ -114,6 +112,36 @@ def get_conceptor_matrix(
             f"{[k for k in npz.files if k.startswith(task)][:5]}... (truncated)"
         )
     return np.asarray(npz[key])
+
+
+def get_per_step_conceptor_matrices(
+    npz: Any,
+    task: str,
+    layer: int,
+) -> list[np.ndarray]:
+    """Load all 10 per-step contrastive conceptors for the ``per_step`` strategy.
+
+    pi0.5 uses a 10-step flow-matching schedule. The NPZ built by
+    ``compute_conceptors.py`` (with ``DEFAULT_PER_STEP_INDICES = tuple(range(10))``)
+    ships ``per_step_0`` … ``per_step_9`` for each (task, layer). The caller
+    wraps the returned list in a ``ConceptorSteeringHook`` so it can swap the
+    active conceptor at each denoising step via ``set_denoise_step(t)``.
+
+    Raises ``KeyError`` if any of the 10 keys is missing (legacy NPZs built
+    before ``DEFAULT_PER_STEP_INDICES`` covered all 10 steps must be rebuilt).
+    """
+    _PI05_NUM_STEPS = 10
+    matrices: list[np.ndarray] = []
+    for t in range(_PI05_NUM_STEPS):
+        key = _conceptor_key(task, layer, f"per_step_{t}", "C_contrastive")
+        if key not in npz.files:
+            raise KeyError(
+                f"per_step: missing NPZ key {key!r}. The NPZ must contain "
+                f"per_step_0..per_step_{_PI05_NUM_STEPS - 1} for this task/layer. "
+                "Rebuild via experiments/{env}/compute_conceptors.py."
+            )
+        matrices.append(np.asarray(npz[key]))
+    return matrices
 
 
 def get_linear_direction(npz: Any, task: str, layer: int) -> np.ndarray:
@@ -156,25 +184,63 @@ def available_tasks(npz: Any) -> set[str]:
 class ConceptorSteeringHook:
     """PyTorch forward hook that applies h' = (1-β)h + β(C @ h).
 
-    Pre-computes the interpolated matrix ``M = (1-β)I + β·C`` once at
-    construction so each forward pass is a single matmul.
+    Two modes:
+      - Single-matrix (default): pass one ``conceptor_matrix`` — the hook
+        pre-computes ``M = (1-β)I + β·C`` and applies it at every denoising
+        step. Used by strategies ``global``, ``positive_only``, and
+        ``random_matched`` (the caller chooses which C to build).
+      - Per-step (``matrices_per_step`` arg): pass a list of 10 conceptor
+        matrices — the hook pre-computes one ``M_t`` per entry and selects
+        ``M_t`` at forward time based on ``self.current_denoise_step`` (set by
+        the sampler via ``set_denoise_step(t)``). Used by the ``per_step``
+        strategy. List length must equal the pi0.5 schedule's 10 steps.
     """
 
-    def __init__(self, conceptor_matrix: np.ndarray, beta: float = 0.3, device: str = "cuda") -> None:
+    def __init__(
+        self,
+        conceptor_matrix: np.ndarray | None = None,
+        beta: float = 0.3,
+        device: str = "cuda",
+        *,
+        matrices_per_step: list[np.ndarray] | None = None,
+    ) -> None:
         self.beta = float(beta)
         self.current_denoise_step = 0
-        d = conceptor_matrix.shape[0]
-        I = torch.eye(d, dtype=torch.float32, device=device)
-        C = torch.from_numpy(np.ascontiguousarray(conceptor_matrix)).to(dtype=torch.float32, device=device)
-        self.M = (1.0 - self.beta) * I + self.beta * C
+        self._device = device
         self.intervention_norms: list[float] = []
+
+        if (conceptor_matrix is None) == (matrices_per_step is None):
+            raise ValueError(
+                "Provide exactly one of conceptor_matrix or matrices_per_step "
+                f"(got both={conceptor_matrix is not None and matrices_per_step is not None})"
+            )
+
+        if matrices_per_step is not None:
+            if not matrices_per_step:
+                raise ValueError("matrices_per_step must be non-empty")
+            # Pre-build one M per denoising step — indexed by current_denoise_step.
+            self._Ms: list[torch.Tensor] | None = [self._build_M(C) for C in matrices_per_step]
+            self.M: torch.Tensor | None = None
+        else:
+            self._Ms = None
+            self.M = self._build_M(conceptor_matrix)
+
+    def _build_M(self, C: np.ndarray) -> torch.Tensor:  # noqa: N802, N803
+        d = C.shape[0]
+        I = torch.eye(d, dtype=torch.float32, device=self._device)
+        Ct = torch.from_numpy(np.ascontiguousarray(C)).to(dtype=torch.float32, device=self._device)
+        return (1.0 - self.beta) * I + self.beta * Ct
 
     def __call__(self, module, input, output):
         if isinstance(output, tuple):
             h, rest = output[0], output[1:]
         else:
             h, rest = output, None
-        M = self.M.to(dtype=h.dtype)
+        # Per-step mode picks M_t; single-matrix mode uses self.M. If
+        # current_denoise_step is out of bounds, Python's IndexError surfaces —
+        # that's a wiring bug (sampler and hook list length don't agree).
+        M = self._Ms[self.current_denoise_step] if self._Ms is not None else self.M
+        M = M.to(dtype=h.dtype)
         h_steered = torch.matmul(h, M.T)
         self.intervention_norms.append(torch.norm(h_steered - h).item())
         if rest is not None:
@@ -188,6 +254,9 @@ class ConceptorSteeringHook:
         self.intervention_norms = []
 
     def __repr__(self) -> str:
+        if self._Ms is not None:
+            d = self._Ms[0].shape[0]
+            return f"ConceptorSteeringHook(dim={d}, beta={self.beta}, per_step={len(self._Ms)})"
         d = self.M.shape[0]
         return f"ConceptorSteeringHook(dim={d}, beta={self.beta})"
 
@@ -306,8 +375,7 @@ class SteeredPolicyWrapper:
         self._npz = load_conceptor_npz(conceptor_npz_path)
         self._available_tasks = available_tasks(self._npz)
         self._device = device
-        # Cache key = (task, layer, alpha, beta, strategy). Hook value is either
-        # a ConceptorSteeringHook (matrix strategies) or a LinearSteeringHook.
+        # Cache key = (task, layer, alpha, beta, strategy).
         self._hook_cache: dict[tuple[str, int, float, float, str], Any] = {}
 
     def _get_or_build_hook(self, payload: dict) -> tuple[int, Any]:
@@ -341,8 +409,21 @@ class SteeredPolicyWrapper:
                     random_seed=seed,
                 )
                 hook = ConceptorSteeringHook(C, beta=key[3], device=self._device)
+            elif strategy == "per_step":
+                # Load all 10 per-step conceptors, build a list of 10 M_t matrices
+                # aligned to the pi0.5 sampler's step counter 0..9.
+                matrices = get_per_step_conceptor_matrices(
+                    self._npz,
+                    task=key[0],
+                    layer=key[1],
+                )
+                hook = ConceptorSteeringHook(
+                    beta=key[3],
+                    device=self._device,
+                    matrices_per_step=matrices,
+                )
             else:
-                # global, per_step_*, positive_only — all matrix strategies.
+                # global, positive_only — single-matrix strategies.
                 C = get_conceptor_matrix(
                     self._npz,
                     task=key[0],

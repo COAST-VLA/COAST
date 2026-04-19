@@ -570,8 +570,10 @@ def test_compute_all_conceptors_output_is_steering_compatible(tmp_path):
     assert available_tasks(npz) == {"taskA", "taskB"}
     C = get_conceptor_matrix(npz, "taskA", 11, 0.1, "global")
     assert C.shape == (16, 16)
-    C2 = get_conceptor_matrix(npz, "taskB", 11, 0.1, "per_step_0")
-    assert C2.shape == (16, 16)
+    # per_step keys exist in the NPZ but are not looked up via get_conceptor_matrix —
+    # the per_step strategy returns a LIST via get_per_step_conceptor_matrices. Just
+    # assert the NPZ key is present.
+    assert "taskB__L11__per_step_0__C_contrastive" in npz.files
 
 
 def test_compute_all_conceptors_supports_all_five_strategies(tmp_path):
@@ -587,7 +589,7 @@ def test_compute_all_conceptors_supports_all_five_strategies(tmp_path):
         out_path,
         layers=(11,),
         alphas=(0.1,),
-        per_step_indices=(0, 9),
+        per_step_indices=tuple(range(10)),
     )
 
     # Stub policy that records calls; wrapper dispatches hooks through us.
@@ -610,8 +612,7 @@ def test_compute_all_conceptors_supports_all_five_strategies(tmp_path):
     w = SteeredPolicyWrapper(_Stub(), conceptor_npz_path=out_path, device="cpu")
     expected_hook_types = {
         "global": ConceptorSteeringHook,
-        "per_step_0": ConceptorSteeringHook,
-        "per_step_9": ConceptorSteeringHook,
+        "per_step": ConceptorSteeringHook,
         "positive_only": ConceptorSteeringHook,
         "random_matched": ConceptorSteeringHook,
         "linear": LinearSteeringHook,
@@ -629,6 +630,5 @@ def test_compute_all_conceptors_supports_all_five_strategies(tmp_path):
         assert layer_idx == 11, f"{strategy}: wrong layer"
         assert isinstance(hook, expected_cls), f"{strategy}: got {type(hook).__name__}"
 
-    # Cache should hold exactly 6 entries (5 unique strategies × 1 config, +
-    # per_step_9 distinct from per_step_0).
-    assert len(w._hook_cache) == 6  # noqa: SLF001
+    # Cache should hold exactly 5 entries (one per strategy).
+    assert len(w._hook_cache) == 5  # noqa: SLF001

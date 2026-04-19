@@ -1,0 +1,7 @@
+{
+  "best_layer": 11,
+  "selected_alphas": [0.1],
+  "selected_betas": [0.1, 0.3],
+  "overlap_band": [0.85, 0.95],
+  "diagnostics": {}
+}

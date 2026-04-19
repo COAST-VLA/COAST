@@ -1,17 +1,17 @@
-"""Sweep conceptor steering hyperparameters for LIBERO-10 tasks.
+"""Sweep conceptor steering hyperparameters for MetaWorld ML45 tasks.
 
 Loads the policy once, spins up a steering-capable WebSocket server in a
-background thread, and runs ``examples/libero_env/main.py`` as a subprocess for
+background thread, and runs ``examples/metaworld/main.py`` as a subprocess for
 each (task, condition) pair. Parses ``success_rate=X.YY`` from the subprocess
 log, picks the argmax per task, and writes ``best_configs.json``.
 
 This is the ONLY place sweeps happen. Normal users never run this script —
-they just call ``examples/libero_env/eval_all.py --steer --steering_config
-experiments/libero/best_configs.json`` with the file this script produces.
+they just call ``examples/metaworld/eval_all.py --steer --steering_config
+experiments/metaworld/best_configs.json`` with the file this script produces.
 
 Usage (from repo root)::
 
-    CUDA_VISIBLE_DEVICES=0 uv run python experiments/libero/find_best_configs.py
+    CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run python experiments/metaworld/find_best_configs.py
 """
 
 # ruff: noqa: DTZ003, DTZ005, E741, FBT001, FBT002, N806, PT018, RUF001, RUF002, RUF003
@@ -26,6 +26,7 @@ import pathlib
 import re
 import socket
 import subprocess
+import sys
 import threading
 import time
 from typing import Any
@@ -35,32 +36,27 @@ import tyro
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-CONCEPTOR_NPZ = REPO_ROOT / "conceptors" / "libero_conceptors.npz"
+CONCEPTOR_NPZ = REPO_ROOT / "conceptors" / "metaworld_conceptors.npz"
 
-# Task name → libero_10 task_id (matches the LIBERO benchmark registry).
-LIBERO_10_TASK_IDS: dict[str, int] = {
-    "LIVING_ROOM_SCENE2_put_both_the_alphabet_soup_and_the_tomato_sauce_in_the_basket": 0,
-    "LIVING_ROOM_SCENE2_put_both_the_cream_cheese_box_and_the_butter_in_the_basket": 1,
-    "KITCHEN_SCENE3_turn_on_the_stove_and_put_the_moka_pot_on_it": 2,
-    "KITCHEN_SCENE4_put_the_black_bowl_in_the_bottom_drawer_of_the_cabinet_and_close_it": 3,
-    "LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_yellow_and_white_mug_on_the_right_plate": 4,
-    "STUDY_SCENE1_pick_up_the_book_and_place_it_in_the_back_compartment_of_the_caddy": 5,
-    "LIVING_ROOM_SCENE6_put_the_white_mug_on_the_plate_and_put_the_chocolate_pudding_to_the_right_of_the_plate": 6,
-    "LIVING_ROOM_SCENE1_put_both_the_alphabet_soup_and_the_cream_cheese_box_in_the_basket": 7,
-    "KITCHEN_SCENE8_put_both_moka_pots_on_the_stove": 8,
-    "KITCHEN_SCENE6_put_the_yellow_and_white_mug_in_the_microwave_and_close_it": 9,
-}
-ALL_TASKS = tuple(LIBERO_10_TASK_IDS.keys())
+# Default subset — a small set of ML45 train tasks with decent baseline SR.
+# Pass --tasks to override with any env_name present in your conceptor NPZ.
+DEFAULT_TASKS: tuple[str, ...] = (
+    "reach-v3",
+    "pick-place-v3",
+    "push-v3",
+    "door-open-v3",
+    "drawer-open-v3",
+)
 
 SUCCESS_RATE_RE = re.compile(r"success_rate=([0-9.]+)")
 
 
 @dataclasses.dataclass
 class Args:
-    config: str = "pi05_libero"
-    checkpoint_dir: str = "checkpoints/openpi-libero-2000"
+    config: str = "pi05_metaworld"
+    checkpoint_dir: str = "checkpoints/openpi-metaworld-5000"
 
-    tasks: tuple[str, ...] = ALL_TASKS
+    tasks: tuple[str, ...] = DEFAULT_TASKS
 
     layers: tuple[int, ...] = (11,)
     alphas: tuple[float, ...] = (0.1, 0.5, 1.0)
@@ -73,20 +69,13 @@ class Args:
         "linear",
     )
 
-    task_suite_name: str = "libero_10"
     num_episodes: int = 10
-    port: int = 8003
+    num_envs: int = 10
+    max_steps: int = 300
+    port: int = 8103
 
-    # Top-level output directory. A timestamped subdir is created below it.
-    output_dir: pathlib.Path = pathlib.Path("experiments/libero/steering_results")
-
-    # Where to write the final best_configs.json.
-    best_configs_path: pathlib.Path = pathlib.Path("experiments/libero/best_configs.json")
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Server + eval helpers
-# ──────────────────────────────────────────────────────────────────────────────
+    output_dir: pathlib.Path = pathlib.Path("experiments/metaworld/steering_results")
+    best_configs_path: pathlib.Path = pathlib.Path("experiments/metaworld/best_configs.json")
 
 
 def _wait_for_port(host: str, port: int, timeout: float = 30.0) -> None:
@@ -117,9 +106,10 @@ def _start_server_background(policy: Any, port: int) -> threading.Thread:
 
 
 def _run_one_eval(
-    task: str,
-    task_suite_name: str,
+    env_name: str,
     num_episodes: int,
+    num_envs: int,
+    max_steps: int,
     port: int,
     output_dir: pathlib.Path,
     steer: bool,
@@ -128,18 +118,19 @@ def _run_one_eval(
     beta: float | None = None,
     strategy: str | None = None,
 ) -> float:
-    """Launch examples/libero_env/main.py for one (task, condition) and parse SR."""
-    task_id = LIBERO_10_TASK_IDS[task]
-    libero_env_dir = REPO_ROOT / "examples" / "libero_env"
+    """Launch examples/metaworld/main.py for one (task, condition) and parse SR."""
+    main_py = REPO_ROOT / "examples" / "metaworld" / "main.py"
     cmd = [
-        str(libero_env_dir / ".venv" / "bin" / "python"),
-        "main.py",
-        "--task_suite_name",
-        task_suite_name,
-        "--task_id",
-        str(task_id),
+        sys.executable,
+        str(main_py),
+        "--env_name",
+        env_name,
         "--num_episodes",
         str(num_episodes),
+        "--num_envs",
+        str(num_envs),
+        "--max_steps",
+        str(max_steps),
         "--port",
         str(port),
         "--output_dir",
@@ -159,15 +150,13 @@ def _run_one_eval(
                 "--steering_strategy",
                 strategy,
                 "--steering_task",
-                task,
+                env_name,
             ]
         )
 
     env = os.environ.copy()
     env["MUJOCO_GL"] = "egl"
-    proc = subprocess.run(
-        cmd, cwd=str(libero_env_dir), env=env, capture_output=True, text=True, check=False, timeout=7200
-    )
+    proc = subprocess.run(cmd, cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, check=False, timeout=7200)
     log_text = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0:
         logger.error("Eval returncode=%d. Tail:\n%s", proc.returncode, log_text[-2000:])
@@ -177,11 +166,6 @@ def _run_one_eval(
         logger.error("No success_rate in output. Tail:\n%s", log_text[-1500:])
         return float("nan")
     return float(matches[-1])
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Main
-# ──────────────────────────────────────────────────────────────────────────────
 
 
 def main(args: Args) -> None:
@@ -206,7 +190,6 @@ def main(args: Args) -> None:
     wrapper = SteeredPolicyWrapper(policy, conceptor_npz_path=CONCEPTOR_NPZ, device=device)
     _start_server_background(wrapper, args.port)
 
-    # ── Sweep ─────────────────────────────────────────────────────────────────
     partial_results_path = run_dir / "partial_results.jsonl"
     per_task_results: dict[str, dict[str, float]] = {task: {} for task in args.tasks}
 
@@ -217,8 +200,15 @@ def main(args: Args) -> None:
         logger.info("=" * 70)
         logger.info("TASK: %s", task)
 
-        # Baseline
-        sr = _run_one_eval(task, args.task_suite_name, args.num_episodes, args.port, task_dir / "baseline", steer=False)
+        sr = _run_one_eval(
+            task,
+            args.num_episodes,
+            args.num_envs,
+            args.max_steps,
+            args.port,
+            task_dir / "baseline",
+            steer=False,
+        )
         per_task_results[task]["baseline"] = sr
         with open(partial_results_path, "a") as f:
             f.write(json.dumps({"task": task, "condition": "baseline", "success_rate": sr}) + "\n")
@@ -233,8 +223,9 @@ def main(args: Args) -> None:
                         cond_name = f"{strategy}_L{layer}_a{alpha}_b{beta}"
                         sr = _run_one_eval(
                             task,
-                            args.task_suite_name,
                             args.num_episodes,
+                            args.num_envs,
+                            args.max_steps,
                             args.port,
                             task_dir / cond_name,
                             steer=True,
@@ -261,13 +252,11 @@ def main(args: Args) -> None:
                             )
                         logger.info("[%d/%d] %s: SR=%.3f", cond_idx, total_conditions, cond_name, sr)
 
-        # Save incremental per_task_results after each task
         with open(run_dir / "per_task_results.json", "w") as f:
             json.dump(per_task_results, f, indent=2)
 
-    # ── Pick argmax per task ──────────────────────────────────────────────────
     best_configs: dict[str, Any] = {
-        "task_suite": args.task_suite_name,
+        "task_suite": "metaworld_ml45_train",
         "source_sweep": str(run_dir),
         "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
         "num_episodes_per_condition": args.num_episodes,
@@ -282,12 +271,11 @@ def main(args: Args) -> None:
     for task in args.tasks:
         results = per_task_results[task]
         baseline_sr = results.get("baseline", 0.0)
-        steered = {k: v for k, v in results.items() if k != "baseline" and v == v}  # NaN-safe
+        steered = {k: v for k, v in results.items() if k != "baseline" and v == v}
         if not steered:
             logger.warning("No valid steered results for %s; skipping", task)
             continue
         best_cond, best_sr = max(steered.items(), key=lambda kv: kv[1])
-        # Parse "strategy_L11_a0.1_b0.3" — strategy can contain underscores.
         m = re.match(r"^(.+)_L(\d+)_a([0-9.]+)_b([0-9.]+)$", best_cond)
         if not m:
             logger.warning("Could not parse condition %s", best_cond)

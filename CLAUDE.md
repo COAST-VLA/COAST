@@ -6,11 +6,15 @@ This is a fork of Physical Intelligence's openpi repository for **activation col
 
 ## Evaluation & Collection Clients
 
-| Client | Architecture | Venv | Activation Collection |
-|--------|-------------|------|----------------------|
-| **MetaWorld** | In-process (loads policy directly) | Root venv | In-process (`main.py --collect`, `eval_all.py --collect`) |
-| **LIBERO** | Server-client over WebSocket | **Separate venv (Python 3.8)** in `examples/libero_env/` | Server-side (`--collect_activations` on server, `--collect` on client) |
-| **RoboCasa** | Server-client over WebSocket | **Separate venv (Python 3.11)** in `examples/robocasa_env/` | Server-side (same protocol as LIBERO) |
+| Client | Architecture | Venv | Activation Collection | Steering (`--steer`) |
+|--------|-------------|------|----------------------|----------------------|
+| **MetaWorld** | In-process (loads policy directly) for `--collect`; WebSocket otherwise | Root venv | In-process (`main.py --collect`, `eval_all.py --collect`) | ✅ WebSocket only (incompatible with `--collect`) |
+| **LIBERO** | Server-client over WebSocket | **Separate venv (Python 3.8)** in `examples/libero_env/` | Server-side (`--collect_activations` on server, `--collect` on client) | ✅ |
+| **RoboCasa** | Server-client over WebSocket | **Separate venv (Python 3.11)** in `examples/robocasa_env/` | Server-side (same protocol as LIBERO) | ✅ |
+| **DROID** (real robot) | Server-client over WebSocket (interactive operator loop) | Root venv | Server-side (via `CollectionSession`) | ✅ (manual single-condition eval) |
+| **GR00T N1.5** | Separate server (`groot_env/`) | Own Python 3.11 venv in `groot_env/` | Server-side | ❌ (different activation shape; separate effort) |
+
+For steering configuration, see `src/openpi/serving/steering.py` (runtime), `src/openpi/serving/conceptors.py` (offline NPZ builder), and `packages/openpi-client/src/openpi_client/steering.py` (wire protocol). Per-env tuning lives under `experiments/{libero,robocasa,metaworld,droid}/`.
 
 For workflow details (dataset generation, training configs, eval commands, activation formats), read the respective `examples/{client}/README.md`.
 

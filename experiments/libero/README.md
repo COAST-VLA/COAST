@@ -81,7 +81,7 @@ uv run python experiments/libero/find_best_configs.py \
 
 # Different grid
 uv run python experiments/libero/find_best_configs.py \
-    --layers 5 11 17 --alphas 0.1 1.0 --betas 0.3 --strategies global per_step_0
+    --layers 5 11 17 --alphas 0.1 1.0 --betas 0.3 --strategies global per_step
 
 # Fewer episodes for a fast smoke run
 uv run python experiments/libero/find_best_configs.py --num_episodes 5 \

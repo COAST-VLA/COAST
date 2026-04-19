@@ -18,7 +18,7 @@ env name (e.g., `CloseFridge`) as both the conceptor NPZ key and the
   "task_suite": "robocasa_pretrain",
   "tasks": {
     "CloseFridge": {
-      "layer": 11, "alpha": 0.5, "beta": 0.1, "strategy": "per_step_0",
+      "layer": 11, "alpha": 0.5, "beta": 0.1, "strategy": "per_step",
       "baseline_sr": 0.40, "steered_sr": 0.80
     }
   }
@@ -59,7 +59,7 @@ re-running with `--tasks` restricted to remaining envs.
 ```bash
 uv run python experiments/robocasa/find_best_configs.py \
     --tasks CloseFridge OpenDrawer \
-    --alphas 0.1 1.0 --betas 0.1 0.3 --strategies global per_step_0 \
+    --alphas 0.1 1.0 --betas 0.1 0.3 --strategies global per_step \
     --num_episodes 5
 ```
 

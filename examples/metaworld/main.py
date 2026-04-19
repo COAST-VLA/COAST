@@ -23,6 +23,8 @@ import imageio.v3 as iio
 import metaworld  # noqa: F401
 import numpy as np
 from openpi_client import websocket_client_policy as _websocket_client_policy
+from openpi_client.steering import STEERING_KEY
+from openpi_client.steering import build_steering_payload
 from tqdm import tqdm
 import tyro
 
@@ -142,6 +144,17 @@ class Args:
     # ``{collect_output_dir}/{checkpoint_step}/{env_name}/episode_NNN_env_NNN/step_NNNN/``.
     # Mirrors the libero/robocasa collection-server ``--output-dir`` convention.
     collect_output_dir: str = "./activations"
+
+    # --- Steering (requires WebSocket server started with --steer). ---
+    # Steering is incompatible with --collect (collection runs the policy in-process,
+    # bypassing the server-side SteeredPolicyWrapper); the flag is ignored if both set.
+    steer: bool = False
+    steering_layer: int = 11
+    steering_alpha: float = 0.1
+    steering_beta: float = 0.3
+    steering_strategy: str = "global"
+    # Override the conceptor NPZ task key (default: args.env_name).
+    steering_task: str | None = None
 
 
 class MultiCameraWrapper(gym.Wrapper):
@@ -394,6 +407,14 @@ def run_episode(
                         save_step_activations(step_dir, intermediates, env_id, step_metadata)
                     collect_state.advance_inference_step()
                 else:
+                    if args.steer:
+                        obs_dict[STEERING_KEY] = build_steering_payload(
+                            task=args.steering_task or args.env_name,
+                            layer=args.steering_layer,
+                            alpha=args.steering_alpha,
+                            beta=args.steering_beta,
+                            strategy=args.steering_strategy,
+                        )
                     result = policy.infer(obs_dict)
                     action_chunk = np.clip(result["actions"], -1.0, 1.0).astype(np.float32)
 
@@ -463,11 +484,25 @@ def main(args: Args) -> None:
         camera_names=args.policy_cameras,
     )
 
+    all_successes: list[bool] = []
     try:
         for episode in range(args.num_episodes):
-            run_episode(env, policy, args, episode, output_dir, collect_extras)
+            _, success = run_episode(env, policy, args, episode, output_dir, collect_extras)
+            all_successes.extend(bool(s) for s in success)
     finally:
         env.close()
+
+    if all_successes:
+        sr = float(np.mean(all_successes))
+        num_success = sum(all_successes)
+        # Matches the parse pattern used by experiments/*/find_best_configs.py.
+        logger.info(
+            "[%s] success_rate=%.2f (%d/%d)",
+            args.env_name,
+            sr,
+            num_success,
+            len(all_successes),
+        )
 
     if args.collect:
         logger.info(f"Activations saved under {collect_extras['base_output_dir']}")

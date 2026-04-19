@@ -315,7 +315,9 @@ class Policy(BasePolicy):
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
         actions, diagnostics = self._model.sample_actions_with_steering(
-            self._pytorch_device, observation, steering_hooks=steering_hooks
+            self._pytorch_device,
+            observation,
+            steering_hooks=steering_hooks,
         )
         model_time = time.monotonic() - start_time
 
