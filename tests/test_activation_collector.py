@@ -29,9 +29,11 @@ import numpy as np
 from openpi_client.collection_session import CollectionSession
 import pytest
 
+from openpi.models import model as _model
 from openpi.serving.activation_collector import CollectingPolicy
 from openpi.serving.activation_collector import save_episode_files
 from openpi.serving.activation_collector import save_step_activations
+from openpi.serving.activation_collector import save_step_activations_fast
 
 # ----------------------------------------------------------------------- helpers
 
@@ -61,6 +63,42 @@ class _StubPolicy:
         batch_size = int(np.asarray(obs["observation/state"]).shape[0])
         actions = np.zeros((batch_size, self._action_horizon, self._action_dim), dtype=np.float32)
         return {"actions": actions, "policy_timing": {"infer_ms": 1.23}}, _fake_intermediates(batch=batch_size)
+
+
+class _StubFastPolicy:
+    """Like _StubPolicy but returns pi0-fast shaped intermediates.
+
+    Mimics Policy.infer_with_intermediates for a JAX pi0-fast model after
+    the Python-side slicing in policy.py: generated_tokens / token_logprobs
+    are (num_tokens, batch), token_pre_logits is (num_tokens-1, batch, width),
+    num_tokens is an int.
+    """
+
+    def __init__(self, action_horizon: int = 10, action_dim: int = 7, num_tokens: int = 4, width: int = 64) -> None:
+        self.calls: list[dict] = []
+        self._action_horizon = action_horizon
+        self._action_dim = action_dim
+        self._num_tokens = num_tokens
+        self._width = width
+        self.metadata = {"underlying": "stub-fast"}
+
+    def infer_with_intermediates(self, obs: dict) -> tuple[dict, dict]:
+        self.calls.append(dict(obs))
+        batch_size = int(np.asarray(obs["observation/state"]).shape[0])
+        actions = np.zeros((batch_size, self._action_horizon, self._action_dim), dtype=np.float32)
+        intermediates = {
+            "generated_tokens": np.arange(self._num_tokens * batch_size, dtype=np.int32).reshape(
+                self._num_tokens, batch_size
+            ),
+            "token_logprobs": np.linspace(-3.0, -0.1, self._num_tokens * batch_size, dtype=np.float32).reshape(
+                self._num_tokens, batch_size
+            ),
+            "token_pre_logits": np.random.randn(max(self._num_tokens - 1, 0), batch_size, self._width).astype(
+                np.float32
+            ),
+            "num_tokens": self._num_tokens,
+        }
+        return {"actions": actions, "policy_timing": {"infer_ms": 2.34}}, intermediates
 
 
 # --------------------------------------------------------------- writer tests
@@ -117,6 +155,116 @@ class TestSaveStepActivations:
         with open(tmp_path / "step" / "metadata.json") as f:
             loaded = json.load(f)
         assert loaded == meta
+
+
+def _fake_fast_intermediates(num_tokens: int = 6, batch: int = 2, width: int = 2048) -> dict:
+    """Mimic the shapes returned by Policy.infer_with_intermediates for pi0-fast
+    after the Python-side slicing (generated_tokens/logprobs are (num_tokens, batch),
+    token_pre_logits is (num_tokens-1, batch, width), num_tokens is an int).
+    """
+    return {
+        "generated_tokens": np.arange(num_tokens * batch, dtype=np.int32).reshape(num_tokens, batch),
+        "token_logprobs": np.linspace(-5.0, -0.1, num_tokens * batch, dtype=np.float32).reshape(num_tokens, batch),
+        "token_pre_logits": np.random.randn(max(num_tokens - 1, 0), batch, width).astype(np.float32),
+        "num_tokens": num_tokens,
+    }
+
+
+class TestSaveStepActivationsFast:
+    """Locks in the ``fast_v1`` on-disk schema for pi0-fast activations."""
+
+    def test_writes_all_files(self, tmp_path: pathlib.Path) -> None:
+        intermediates = _fake_fast_intermediates(num_tokens=6, batch=2)
+        step_dir = tmp_path / "ep" / "step_0000"
+        save_step_activations_fast(
+            step_dir,
+            intermediates,
+            env_id=0,
+            step_metadata={"task_name": "t", "step": 0},
+        )
+        for fname in ["tokens.npz", "hidden_states.npz", "token_logprobs.npz", "metadata.json"]:
+            assert (step_dir / fname).exists(), f"missing {fname}"
+
+    def test_env_id_slicing_picks_batch_column(self, tmp_path: pathlib.Path) -> None:
+        intermediates = _fake_fast_intermediates(num_tokens=5, batch=3)
+        step_dir = tmp_path / "step"
+        save_step_activations_fast(step_dir, intermediates, env_id=2, step_metadata={})
+
+        tokens = np.load(step_dir / "tokens.npz")["generated_tokens"]
+        np.testing.assert_array_equal(tokens, intermediates["generated_tokens"][:, 2])
+
+        logprobs = np.load(step_dir / "token_logprobs.npz")["token_logprobs"]
+        np.testing.assert_allclose(logprobs, intermediates["token_logprobs"][:, 2])
+
+        pre_logits = np.load(step_dir / "hidden_states.npz")["token_pre_logits"]
+        np.testing.assert_allclose(
+            pre_logits,
+            intermediates["token_pre_logits"][:, 2].astype(np.float16),
+        )
+
+    def test_dtypes_match_schema(self, tmp_path: pathlib.Path) -> None:
+        # Source arrays deliberately use wider dtypes; the writer should downcast
+        # (tokens→int32, logprobs→float32, pre_logits→float16) so the on-disk
+        # schema is stable regardless of what the JAX side produces.
+        intermediates = {
+            "generated_tokens": np.ones((4, 1), dtype=np.int64),
+            "token_logprobs": np.ones((4, 1), dtype=np.float64),
+            "token_pre_logits": np.ones((3, 1, 16), dtype=np.float32),
+            "num_tokens": 4,
+        }
+        step_dir = tmp_path / "step"
+        save_step_activations_fast(step_dir, intermediates, env_id=0, step_metadata={})
+        assert np.load(step_dir / "tokens.npz")["generated_tokens"].dtype == np.int32
+        assert np.load(step_dir / "token_logprobs.npz")["token_logprobs"].dtype == np.float32
+        assert np.load(step_dir / "hidden_states.npz")["token_pre_logits"].dtype == np.float16
+
+    def test_metadata_has_num_tokens_and_collection_version(self, tmp_path: pathlib.Path) -> None:
+        intermediates = _fake_fast_intermediates(num_tokens=7, batch=1)
+        step_dir = tmp_path / "step"
+        save_step_activations_fast(
+            step_dir,
+            intermediates,
+            env_id=0,
+            step_metadata={"task_name": "t", "step": 3, "inference_step": 1},
+        )
+        with open(step_dir / "metadata.json") as f:
+            loaded = json.load(f)
+        # Caller-supplied fields pass through unchanged...
+        assert loaded["task_name"] == "t"
+        assert loaded["step"] == 3
+        assert loaded["inference_step"] == 1
+        # ...and the writer adds the two schema-identifying fields.
+        assert loaded["num_tokens"] == 7
+        assert loaded["collection_version"] == "fast_v1"
+
+    def test_does_not_mutate_caller_metadata(self, tmp_path: pathlib.Path) -> None:
+        """The writer adds num_tokens/collection_version to metadata. It must
+        not mutate the caller's dict in place — otherwise repeated calls in a
+        rollout would accumulate fields or trigger surprising ordering bugs.
+        """
+        intermediates = _fake_fast_intermediates(num_tokens=3, batch=1)
+        caller_meta = {"task_name": "t", "step": 0}
+        save_step_activations_fast(tmp_path / "step", intermediates, env_id=0, step_metadata=caller_meta)
+        assert caller_meta == {"task_name": "t", "step": 0}
+
+    def test_num_tokens_one_skips_hidden_states_file(self, tmp_path: pathlib.Path) -> None:
+        """Edge case: if only one token was generated (EOS immediately), pre_logits
+        has leading shape 0 and hidden_states.npz must not be written — otherwise
+        np.load later chokes on a zero-length array with no recorded shape."""
+        intermediates = {
+            "generated_tokens": np.array([[5]], dtype=np.int32),
+            "token_logprobs": np.array([[-0.1]], dtype=np.float32),
+            "token_pre_logits": np.zeros((0, 1, 16), dtype=np.float32),
+            "num_tokens": 1,
+        }
+        step_dir = tmp_path / "step"
+        save_step_activations_fast(step_dir, intermediates, env_id=0, step_metadata={})
+        assert (step_dir / "tokens.npz").exists()
+        assert (step_dir / "token_logprobs.npz").exists()
+        assert (step_dir / "metadata.json").exists()
+        assert not (step_dir / "hidden_states.npz").exists(), (
+            "hidden_states.npz should be omitted when token_pre_logits has length 0"
+        )
 
 
 class TestSaveEpisodeFiles:
@@ -225,6 +373,7 @@ def policy_setup(tmp_path: pathlib.Path):
         checkpoint_step="ckpt-step",
         policy_dir="/fake/policy/dir",
         config_name="fake_config",
+        model_type=_model.ModelType.PI05,
     )
     return stub, wrapper
 
@@ -236,7 +385,9 @@ class TestCollectingPolicyMetadata:
         assert meta["underlying"] == "stub"
         assert meta["policy_dir"] == "/fake/policy/dir"
         assert meta["config_name"] == "fake_config"
+        # PI05 fixture → diffusion schema identifier.
         assert meta["collection_mode"] == "v1"
+        assert meta["model_type"] == "pi05"
         assert meta["checkpoint_step"] == "ckpt-step"
         assert meta["output_root"] == str(tmp_path)
 
@@ -380,6 +531,111 @@ class TestCollectingPolicyFinalize:
         assert rewards["per_step_reward"].shape == (10,)
         assert float(rewards["cumulative_reward"][-1]) == pytest.approx(1.0)
         assert bool(rewards["success_at_step"][7]) is True
+
+
+class TestCollectingPolicyPi0Fast:
+    """Verifies CollectingPolicy routes to the fast_v1 writer when
+    constructed with model_type=PI0_FAST.
+
+    The dispatch decision is made once at construction time (self._save_step_fn),
+    not by probing the intermediates dict shape — these tests pin that contract
+    so a future change can't silently fall back to the diffusion writer and
+    corrupt the on-disk dataset.
+    """
+
+    @pytest.fixture
+    def fast_policy_setup(self, tmp_path: pathlib.Path):
+        stub = _StubFastPolicy()
+        wrapper = CollectingPolicy(
+            policy=stub,
+            output_root=tmp_path,
+            checkpoint_step="fast-ckpt",
+            policy_dir="/fake/policy/dir",
+            config_name="pi0_fast_libero",
+            model_type=_model.ModelType.PI0_FAST,
+        )
+        return stub, wrapper
+
+    def test_metadata_reports_fast_v1_collection_mode(self, fast_policy_setup) -> None:
+        _, wrapper = fast_policy_setup
+        meta = wrapper.metadata
+        assert meta["collection_mode"] == "fast_v1"
+        assert meta["model_type"] == "pi0_fast"
+
+    def test_infer_writes_fast_v1_schema(self, fast_policy_setup, tmp_path: pathlib.Path) -> None:
+        stub, wrapper = fast_policy_setup
+        obs = {
+            "observation/state": np.zeros(8, dtype=np.float32),
+            "observation/image": np.zeros((224, 224, 3), dtype=np.uint8),
+            "prompt": "do the thing",
+            "__collect__": {
+                "task_name": "t",
+                "episode_id": 0,
+                "env_id": 0,
+                "step": 3,
+                "inference_step": 1,
+                "prompt": "do the thing",
+                "cumulative_reward": 0.0,
+                "success_so_far": False,
+                "reward_since_last_inference": 0.0,
+            },
+        }
+        result = wrapper.infer(obs)
+
+        assert len(stub.calls) == 1
+        assert result["actions"].shape == (10, 7)  # 3D stripped to (ah, ad)
+
+        step_dir = tmp_path / "fast-ckpt" / "t" / "episode_000_env_000" / "step_0003"
+        # fast_v1 files present
+        assert (step_dir / "tokens.npz").exists()
+        assert (step_dir / "token_logprobs.npz").exists()
+        assert (step_dir / "hidden_states.npz").exists()
+        assert (step_dir / "metadata.json").exists()
+        # diffusion files NOT present — locks in that we didn't also write the v1 layout
+        assert not (step_dir / "denoising.npz").exists()
+        assert not (step_dir / "adarms_cond.npz").exists()
+        assert not (step_dir / "suffix_residual.npz").exists()
+        assert not (step_dir / "suffix_mlp_hidden.npz").exists()
+
+        with open(step_dir / "metadata.json") as f:
+            step_meta = json.load(f)
+        assert step_meta["collection_version"] == "fast_v1"
+        assert step_meta["num_tokens"] == 4
+
+    def test_fast_writer_handles_single_token_no_hidden_states(self, tmp_path: pathlib.Path) -> None:
+        """If the model emits a single EOS token, token_pre_logits has leading
+        shape 0 and hidden_states.npz must be omitted. Regression for the
+        edge-case branch inside save_step_activations_fast."""
+        stub = _StubFastPolicy(num_tokens=1)
+        wrapper = CollectingPolicy(
+            policy=stub,
+            output_root=tmp_path,
+            checkpoint_step="ckpt",
+            policy_dir="/d",
+            config_name="pi0_fast_libero",
+            model_type=_model.ModelType.PI0_FAST,
+        )
+        wrapper.infer(
+            {
+                "observation/state": np.zeros(8, dtype=np.float32),
+                "prompt": "x",
+                "__collect__": {
+                    "task_name": "t",
+                    "episode_id": 0,
+                    "env_id": 0,
+                    "step": 0,
+                    "inference_step": 0,
+                    "prompt": "x",
+                    "cumulative_reward": 0.0,
+                    "success_so_far": False,
+                    "reward_since_last_inference": 0.0,
+                },
+            }
+        )
+        step_dir = tmp_path / "ckpt" / "t" / "episode_000_env_000" / "step_0000"
+        assert (step_dir / "tokens.npz").exists()
+        assert (step_dir / "token_logprobs.npz").exists()
+        assert not (step_dir / "hidden_states.npz").exists()
 
 
 class TestPathConstruction:
@@ -615,6 +871,7 @@ class TestParallelCollectionSessions:
             checkpoint_step="ckpt",
             policy_dir="/fake/policy/dir",
             config_name="fake",
+            model_type=_model.ModelType.PI05,
         )
 
         num_clients = 8
@@ -713,6 +970,7 @@ class TestParallelCollectionSessions:
             checkpoint_step="ckpt",
             policy_dir="/fake/policy/dir",
             config_name="fake",
+            model_type=_model.ModelType.PI05,
         )
 
         num_clients = 6

@@ -17,8 +17,11 @@ class _BaselineModel(torch.nn.Module):
 
 def test_infer_with_intermediates_raises_for_baseline_without_method():
     """Models without sample_actions_with_intermediates get a clear NotImplementedError (not AttributeError)."""
+    from openpi.models import model as _model
+
     policy = _policy.Policy.__new__(_policy.Policy)
     policy._is_pytorch_model = True  # noqa: SLF001
+    policy._model_type = _model.ModelType.DIFFUSION_POLICY  # noqa: SLF001
     policy._model = _BaselineModel()  # noqa: SLF001
     with pytest.raises(NotImplementedError, match="sample_actions_with_intermediates"):
         policy.infer_with_intermediates({"observation/state": None})

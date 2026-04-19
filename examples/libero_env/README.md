@@ -69,9 +69,36 @@ TrainConfig(
 - [`brandonyang/openpi-libero-3000`](https://huggingface.co/brandonyang/openpi-libero-3000)
 - [`brandonyang/openpi-libero-9000`](https://huggingface.co/brandonyang/openpi-libero-9000)
 
+### pi0-fast LIBERO
+
+`pi0_fast_libero` is an autoregressive alternative to `pi05_libero`. Config:
+
+```python
+TrainConfig(
+    name="pi0_fast_libero",
+    model=pi0_fast.Pi0FASTConfig(action_dim=7, action_horizon=10, max_token_len=180),
+    data=LeRobotLiberoDataConfig(
+        repo_id="physical-intelligence/libero",
+        base_config=DataConfig(prompt_from_task=True),
+        extra_delta_transform=True,
+    ),
+    weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
+    num_train_steps=30_000,
+),
+```
+
+Released checkpoints:
+- [`brandonyang/pi0fast-libero-checkpoints`](https://huggingface.co/brandonyang/pi0fast-libero-checkpoints) (1000, 2000 steps)
+
+```bash
+hf download brandonyang/pi0fast-libero-checkpoints \
+    --include "pi0_fast_libero_b200_bs512/2000/*" \
+    --local-dir checkpoints/pi0_fast_libero
+```
+
 ### Diffusion Policy baseline (PyTorch-only)
 
-`dp_libero` is a non-VLA baseline (Chi et al., CNN 1D U-Net) for comparison against pi0/pi0.5. It's trained via the PyTorch entry point; evaluation reuses the existing LIBERO server/client flow but `serve_policy.py` **must** be launched with `--pytorch` (DP has no JAX path).
+`dp_libero` is a non-VLA baseline (Chi et al., CNN 1D U-Net) for comparison against pi0/pi0.5/pi0-fast. It's trained via the PyTorch entry point; evaluation reuses the existing LIBERO server/client flow but `serve_policy.py` **must** be launched with `--pytorch` (DP has no JAX path).
 
 ```bash
 # 1. Norm stats (once per dataset).
@@ -96,7 +123,7 @@ uv run scripts/serve_policy.py --pytorch policy:checkpoint \
 
 Then run `main.py` / `eval_all.py` from `examples/libero_env/` exactly as documented under [Evaluation](#evaluation) below — the client talks to the server and doesn't need to know which model is loaded.
 
-Activation collection (`--collect`) is not supported for DP — the collection path is pi0/pi0-FAST/pi0.5 only.
+Activation collection (`--collect`) is not supported for DP — the collection path is pi0 / pi0-FAST / pi0.5 only.
 
 **Caveat — unconditional baseline.** `dp_libero` trains on the `physical-intelligence/libero` dataset but the DP model consumes only images + state; the data pipeline drops the task prompt and the model has no task ID / one-hot input (same as `dp_metaworld`). Loss converges against the mixture but per-task success rates are expected to be weak since DP can't distinguish tasks given the same arm pose. For fair per-task numbers, train one DP per task or extend the model with a task embedding.
 
@@ -113,9 +140,15 @@ uv run scripts/serve_policy.py --env LIBERO
 To serve a specific checkpoint instead of the default one:
 
 ```bash
+# pi0.5 (JAX by default; pass --pytorch for the PyTorch backend):
 uv run scripts/serve_policy.py policy:checkpoint \
   --policy.config=pi05_libero \
   --policy.dir=path/to/checkpoint
+
+# pi0-fast (JAX only — no PyTorch port):
+uv run scripts/serve_policy.py policy:checkpoint \
+  --policy.config=pi0_fast_libero \
+  --policy.dir=checkpoints/pi0_fast_libero/pi0_fast_libero_b200_bs512/2000
 ```
 
 ### Run Evaluation
@@ -161,7 +194,13 @@ examples/libero_env/output/<task_suite_name>/
 ### Downloading Pre-Collected Activations
 
 ```bash
-hf download brandonyang/pi05-libero-activations-v1-2000-15env --repo-type dataset --local-dir pi05_libero_activations-v1-2000-15env
+# pi0.5 diffusion — v1 schema (denoising / adarms_cond / suffix_residual / suffix_mlp_hidden):
+# 2000-step checkpoint, 10 tasks × 15 episodes
+hf download brandonyang/pi05-libero-activations-v1-2000-15env --repo-type dataset --local-dir pi05-libero-activations-v1-2000-15env
+
+# pi0-fast autoregressive — fast_v1 schema (tokens / hidden_states / token_logprobs):
+# 2000-step checkpoint, libero_10, 15 episodes/task — 1.1 GB, mean success 0.65
+hf download brandonyang/pi0fast-libero-activations-v1-2000-15env --repo-type dataset --local-dir pi0fast-libero-activations-v1-2000-15env
 ```
 
 For mech-interp work you can have the policy server save per-step intermediate
@@ -172,15 +211,34 @@ and writes the same on-disk format as `examples/metaworld/main.py --collect`
 filesystem — the libero client never touches them, so the client and server
 can be on different machines.
 
+`serve_policy.py --collect_activations` auto-picks the backend from the
+configured `model_type`:
+- **pi0 / pi0.5** (diffusion) → must be launched with `--pytorch`. Intermediates
+  come from `register_forward_hook` over the 10 denoising steps (`v1` schema:
+  `denoising.npz` / `adarms_cond.npz` / `suffix_residual.npz` / `suffix_mlp_hidden.npz`).
+- **pi0-fast** (autoregressive) → must be launched **without** `--pytorch` (no
+  PyTorch port of the decode exists). Intermediates come from a JIT-compiled
+  `jax.lax.while_loop` (`fast_v1` schema: `tokens.npz` / `hidden_states.npz` /
+  `token_logprobs.npz`).
+
 Start the collection-mode server from the repo root in one terminal:
 
 ```bash
 # Terminal 1 (main openpi venv) — server pinned to GPU 0
+
+# pi0.5 diffusion (PyTorch):
 export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py --pytorch --collect_activations \
     --output-dir ./activations \
     policy:checkpoint --policy.config=pi05_libero \
     --policy.dir=/path/to/checkpoint
+
+# pi0-fast autoregressive (JAX):
+export CUDA_VISIBLE_DEVICES=0
+uv run scripts/serve_policy.py --collect_activations \
+    --output-dir ./pi0fast-libero-activations-v1-2000-15env \
+    policy:checkpoint --policy.config=pi0_fast_libero \
+    --policy.dir=checkpoints/pi0_fast_libero/pi0_fast_libero_b200_bs512/2000
 ```
 
 Then run a libero rollout with `--collect` from this directory:
@@ -196,15 +254,17 @@ MUJOCO_GL=egl uv run python main.py --task_suite_name libero_spatial --task_id 0
 ```
 
 Notes:
-- Collection mode requires `--pytorch` on the server. `infer_with_intermediates`
-  is implemented for the PyTorch backend only.
+- The collection server picks the writer from `model_type`:
+  - pi0 / pi0.5 → writes `v1` schema (`denoising.npz` + ...); requires `--pytorch`.
+  - pi0-fast → writes `fast_v1` schema (`tokens.npz` + `hidden_states.npz` + `token_logprobs.npz`); cannot be combined with `--pytorch`.
 - A collection-mode server **rejects** plain inference requests. If you want to
   also run regular eval, start a separate non-collection server on a different
   port.
 - The server's `--output-dir` is on the **server's** filesystem. With
   `--output-dir ./activations`, files land at
-  `./activations/pi05_libero/<task_name>/episode_NNN_env_000/step_NNNN/`
-  relative to wherever the server was launched from.
+  `./activations/<checkpoint_step>/<task_name>/episode_NNN_env_000/step_NNNN/`
+  relative to wherever the server was launched from. `<checkpoint_step>` is the
+  final path component of `--policy.dir` (e.g. `2000` or `pi05_libero`).
 - `eval_all.py --collect` defaults to 2 episodes per task. Override with
   `--num_episodes N`. Each episode uses the next deterministic initial state
   from LIBERO's task suite, so reproducibility is built-in.
@@ -259,11 +319,26 @@ infer call.
 The server writes activations to:
 ```
 <output_dir>/<checkpoint_step>/<task_name>/episode_<episode_id:03d>_env_<env_id:03d>/step_<step:04d>/
-    denoising.npz       # all_x_t, all_v_t
-    adarms_cond.npz     # all_adarms_cond
-    suffix_residual.npz # all_suffix_residual
+```
+
+Per-step files differ by architecture:
+
+**pi0 / pi0.5** (`v1` schema):
+```
+    denoising.npz         # all_x_t, all_v_t
+    adarms_cond.npz       # all_adarms_cond
+    suffix_residual.npz   # all_suffix_residual
     suffix_mlp_hidden.npz # all_suffix_mlp_hidden
-    metadata.json       # the __collect__ dict, verbatim
+    metadata.json         # the __collect__ dict, verbatim
+```
+
+**pi0-fast** (`fast_v1` schema):
+```
+    tokens.npz            # generated_tokens (num_tokens,) int32
+    hidden_states.npz     # token_pre_logits (num_tokens-1, width) float16
+                          #   (omitted when num_tokens == 1)
+    token_logprobs.npz    # token_logprobs (num_tokens,) float32
+    metadata.json         # the __collect__ dict + num_tokens + collection_version="fast_v1"
 ```
 
 Where:
@@ -361,7 +436,8 @@ metadata, so clients can discover the checkpoint identity:
 {
     "policy_dir":      "/home/.../checkpoints/pi05_libero",
     "config_name":     "pi05_libero",
-    "collection_mode": "v1",
+    "collection_mode": "v1",            # "fast_v1" for pi0-fast
+    "model_type":      "pi05",          # "pi0" / "pi05" / "pi0_fast"
     "checkpoint_step": "pi05_libero",
     "output_root":     "/abs/path/to/activations",
 }
