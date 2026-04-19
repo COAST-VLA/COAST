@@ -237,55 +237,6 @@ class Policy(BasePolicy):
         outputs["policy_timing"] = {"infer_ms": model_time * 1000}
         return outputs, intermediates
 
-    def infer_with_intermediates_v2(self, obs: dict) -> tuple[dict, dict]:
-        """Like infer_batched() but returns v2 intermediates (selective steps, attention, adaRMS). PyTorch only."""
-        if not self._is_pytorch_model:
-            raise NotImplementedError("infer_with_intermediates_v2 is only supported for PyTorch models")
-        if not hasattr(self._model, "sample_actions_with_intermediates_v2"):
-            raise NotImplementedError(
-                f"{type(self._model).__name__} does not implement sample_actions_with_intermediates_v2; "
-                "v2 activation collection is only wired up for pi0/pi0-FAST/pi0.5. "
-                "For non-VLA baselines (e.g., Diffusion Policy), use the normal --collect=False eval path."
-            )
-
-        # Make a copy since transformations may modify the inputs in place.
-        inputs = jax.tree.map(lambda x: x, obs)
-
-        # 1) unbatch -> list of single-example dicts
-        eval_batch_size = int(inputs["observation/state"].shape[0])
-        singles = []
-        for i in range(eval_batch_size):
-            ex = {}
-            for k, v in inputs.items():
-                if k == "prompt":
-                    ex[k] = v[i]
-                else:
-                    ex[k] = v[i]
-            singles.append(ex)
-        # 2) run single-example transform per item
-        singles = [self._input_transform(ex) for ex in singles]
-        # 3) collate back -> batch dict
-        inputs = collate_transformed_singles(singles)
-
-        inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device), inputs)
-
-        observation = _model.Observation.from_dict(inputs)
-        start_time = time.monotonic()
-        actions, intermediates = self._model.sample_actions_with_intermediates_v2(self._pytorch_device, observation)
-        model_time = time.monotonic() - start_time
-
-        outputs = {
-            "state": inputs["state"],
-            "actions": actions,
-        }
-        outputs = jax.tree.map(
-            lambda x: np.asarray(x.detach().cpu()) if isinstance(x, torch.Tensor) else np.asarray(x),
-            outputs,
-        )
-        outputs = self._output_transform(outputs)
-        outputs["policy_timing"] = {"infer_ms": model_time * 1000}
-        return outputs, intermediates
-
     @property
     def metadata(self) -> dict[str, Any]:
         return self._metadata

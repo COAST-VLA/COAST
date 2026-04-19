@@ -24,14 +24,6 @@ def test_infer_with_intermediates_raises_for_baseline_without_method():
         policy.infer_with_intermediates({"observation/state": None})
 
 
-def test_infer_with_intermediates_v2_raises_for_baseline_without_method():
-    policy = _policy.Policy.__new__(_policy.Policy)
-    policy._is_pytorch_model = True  # noqa: SLF001
-    policy._model = _BaselineModel()  # noqa: SLF001
-    with pytest.raises(NotImplementedError, match="sample_actions_with_intermediates_v2"):
-        policy.infer_with_intermediates_v2({"observation/state": None})
-
-
 @pytest.mark.manual
 def test_infer():
     config = _config.get_config("pi0_aloha_sim")
