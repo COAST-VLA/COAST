@@ -178,40 +178,6 @@ Notes:
   `--num_episodes N`. Each episode uses the next deterministic initial state
   from LIBERO's task suite, so reproducibility is built-in.
 
-#### Advanced: parallel collection on the *same* task (`--collect_env_id`)
-
-The server keys its output path on `(task_name, episode_id, env_id)`. Standard
-workflows keep `env_id=0` and rely on the other two dimensions for uniqueness:
-
-| Workflow                                  | Why it's safe without `--collect_env_id` |
-|-------------------------------------------|------------------------------------------|
-| Single `main.py` invocation               | `episode_id` varies per rollout          |
-| `eval_all.py --collect` (parallel tasks)  | `task_name` varies per subprocess        |
-
-**When you need `--collect_env_id`**: running N parallel `main.py` subprocesses
-on the **same task_id** — e.g., to collect many rollouts of one task faster
-than `--num_episodes N` sequentially (useful for building a per-task conceptor
-NPZ). Then every subprocess shares `(task_name, episode_id=0)`, so each must
-pass a distinct `--collect_env_id` to avoid clobbering each other's output:
-
-```bash
-# Collect 5 rollouts of KITCHEN_SCENE3 in parallel — distinct env_ids required
-for i in 0 1 2 3 4; do
-    CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run python main.py \
-        --task_suite_name libero_10 --task_id 2 \
-        --num_episodes 1 --collect --port 8210 \
-        --seed $((7+i)) --collect_env_id $i \
-        --output_dir /tmp/libero-collect-e$i > /tmp/libero-collect-e$i.log 2>&1 &
-done; wait
-```
-
-Without `--collect_env_id` this pattern would overwrite a single
-`episode_000_env_000/` directory. With it, you get disjoint
-`episode_000_env_{0..4}/` dirs and the downstream NPZ builder finds 5 rollouts.
-
-For any workflow other than parallel-subprocesses-on-the-same-task, leave the
-default (0); **`eval_all.py --collect` is correct as-is without this flag**.
-
 ### Protocol: what `--collect_activations` server expects
 
 The collection-mode server is **collection-only**: every WebSocket request
