@@ -1,139 +1,84 @@
-# DROID
+# DROID Policies in openpi
 
-[DROID](https://droid-dataset.github.io/) is a real-robot manipulation dataset / platform (Franka Panda + stereo cameras + wrist cam). Unlike the sim examples, DROID runs on **real hardware**: the policy server runs on a workstation GPU, and `main.py` runs on the DROID control laptop, talking to the server over the network. The DROID control laptop uses its own conda-based env per upstream [DROID setup](https://github.com/droid-dataset/droid); everything else (server, dataset tooling) uses the root openpi venv.
+We offer instructions for:
+- [Running inference for our best $pi_{0.5}$-DROID policy](./README.md#running-droid-inference)
+- [Running inference for other pre-trained DROID policies ($\pi_0$, $\pi_0$-FAST, ...)](./README.md#running-roboarena-baseline-policies)
+- [Pre-training *generalist* policies on the *full* DROID dataset](./README_train.md#training-on-droid)
+- [Fine-tuning expert $\pi_{0.5}$ on your custom DROID dataset](./README_train.md#fine-tuning-on-custom-droid-datasets)
 
-- `main.py` runs one rollout on the real robot. Gets copied to `$DROID_ROOT/scripts/main.py` on the control laptop.
-- `convert_droid_data_to_lerobot.py` converts a raw DROID capture to a LeRobot dataset.
-- `compute_droid_nonidle_ranges.py` pre-computes non-idle index ranges used during full-dataset training.
+## Running DROID Inference
 
-## Installation
+This example shows how to run the fine-tuned $\pi_{0.5}$-DROID model on the [DROID robot platform](https://github.com/droid-dataset/droid). Based on the [public RoboArena benchmark](https://robo-arena.github.io/leaderboard), this is currently our strongest generalist DROID policy. 
 
-On a **workstation GPU** (for the policy server), install openpi from the repo root:
+
+### Step 1: Start a policy server
+
+Since the DROID control laptop does not have a powerful GPU, we will start a remote policy server on a different machine with a more powerful GPU and then query it from the DROID control laptop during inference.
+
+1. On a machine with a powerful GPU (~NVIDIA 4090), clone and install the `openpi` repository following the instructions in the [README](https://github.com/Physical-Intelligence/openpi).
+2. Start the OpenPI server via the following command:
 
 ```bash
-git submodule update --init --recursive
-GIT_LFS_SKIP_SMUDGE=1 uv sync
+uv run scripts/serve_policy.py policy:checkpoint --policy.config=pi05_droid --policy.dir=gs://openpi-assets/checkpoints/pi05_droid
 ```
 
-On the **DROID control laptop** (where `main.py` runs), with the DROID conda env activated:
+You can also run the equivalent command below:
 
 ```bash
-cd $OPENPI_ROOT/packages/openpi-client && pip install -e .
-pip install tyro
-```
-
-The control laptop only needs `openpi-client`, not the full openpi install.
-
-## Dataset & Training
-
-We do not re-train DROID by default; evaluate against the upstream checkpoints under `gs://openpi-assets/checkpoints/pi05_droid` / `pi0_fast_droid` / `pi0_droid` / the RoboArena baselines. The rest of this section is for approximating the upstream training pipeline or fine-tuning on a custom dataset.
-
-### Full-DROID training (RLDS)
-
-Full DROID training uses RLDS (LeRobot isn't yet scalable to the full DROID dataset). Install the RLDS dependency group, download the dataset, and train from the repo root:
-
-```bash
-# 1. RLDS deps
-uv sync --group rlds
-
-# 2. Download DROID v1.0.1 (~1.8 TB; v1.0.1 has the full ~75k language annotations, v1.0.0 only 30k):
-gsutil -m cp -r gs://gresearch/robotics/droid/1.0.1 <your_download_path>/droid/1.0.1
-
-# 3. Point rlds_data_dir in TrainConfig (src/openpi/training/config.py) at your download path.
-
-# 4. Compute norm stats (~10 min):
-uv run --group rlds scripts/compute_norm_stats.py --config-name pi05_full_droid_finetune --max-frames 10_000_000
-
-# 5. Train:
-XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run --group rlds scripts/train.py pi05_full_droid_finetune \
-    --exp-name=my_experiment --overwrite
-```
-
-Compute budget: ~2 days on 8× H100 from pi0 init (100k iters, bs256, ~1 epoch); ~5 days from PaliGemma init (240k iters, ~3 epochs). LoRA hasn't produced usable policies for us here.
-
-**Idle filtering.** The DROID dataset contains many idle timesteps from VR teleop; training benefits from filtering them. The default recipe uses a pre-computed index list pulled from cloud storage. To regenerate it (e.g. for a non-`1.0.1` version), rerun [`compute_droid_nonidle_ranges.py`](compute_droid_nonidle_ranges.py) and pass `filter_dict_path=...` in the train config. The published indices are only valid for `droid/1.0.1`.
-
-### Fine-tuning on a custom DROID dataset (LeRobot)
-
-For smaller custom datasets (<10s of hours), convert to LeRobot first and fine-tune `pi05_droid` on it:
-
-```bash
-# 1. Sample: download a tiny 30-demo subset of raw DROID (1.6 GB):
-gsutil -m cp -r gs://gresearch/robotics/droid_raw/1.0.1/IRIS/success/2023-12-04 <your_target_path>
-
-# 2. Language annotations (12 MB) — for your own data you can skip this and supply instructions manually:
-gsutil -m cp -r gs://gresearch/robotics/droid_raw/1.0.1/aggregated-annotations-030724.json <your_target_dir>
-
-# 3. Convert to LeRobot (<5 min for 30 demos). Each episode directory must contain recordings/MP4;
-#    run droid's svo_to_mp4.py first if yours doesn't.
-uv run examples/droid/convert_droid_data_to_lerobot.py --data_dir <your_target_path>
-
-# 4. Fine-tune pi05_droid on the converted dataset (config: pi05_droid_finetune in src/openpi/training/config.py):
-uv run scripts/train.py pi05_droid_finetune --exp-name=my_experiment --overwrite
-```
-
-## Serving the policy
-
-Run the server on a workstation GPU (~RTX 4090 minimum). The default is the `pi05_droid` checkpoint:
-
-```bash
-# pi0.5 DROID (default, recommended):
-uv run scripts/serve_policy.py policy:checkpoint \
-    --policy.config=pi05_droid \
-    --policy.dir=gs://openpi-assets/checkpoints/pi05_droid
-
-# Shorthand:
 uv run scripts/serve_policy.py --env=DROID
 ```
 
-Alternative policies (see [`roboarena_config.py`](../../src/openpi/training/misc/roboarena_config.py)):
+### Step 2: Run the DROID robot
 
-```bash
-# pi0-FAST DROID (FAST tokenizer):
-uv run scripts/serve_policy.py policy:checkpoint --policy.config=pi0_fast_droid --policy.dir=gs://openpi-assets/checkpoints/pi0_fast_droid
-
-# pi0 DROID (flow matching):
-uv run scripts/serve_policy.py policy:checkpoint --policy.config=pi0_droid --policy.dir=gs://openpi-assets/checkpoints/pi0_droid
-
-# RoboArena baselines (PaliGemma + binning/FAST/FSQ/diffusion):
-uv run scripts/serve_policy.py policy:checkpoint --policy.config=paligemma_binning_droid --policy.dir=gs://openpi-assets/checkpoints/roboarena/paligemma_binning_droid
-uv run scripts/serve_policy.py policy:checkpoint --policy.config=paligemma_fast_droid --policy.dir=gs://openpi-assets/checkpoints/roboarena/paligemma_fast_droid
-uv run scripts/serve_policy.py policy:checkpoint --policy.config=paligemma_fast_specialist_droid --policy.dir=gs://openpi-assets/checkpoints/roboarena/paligemma_fast_specialist_droid
-uv run scripts/serve_policy.py policy:checkpoint --policy.config=paligemma_vq_droid --policy.dir=gs://openpi-assets/checkpoints/roboarena/paligemma_vq_droid
-uv run scripts/serve_policy.py policy:checkpoint --policy.config=paligemma_diffusion_droid --policy.dir=gs://openpi-assets/checkpoints/roboarena/paligemma_diffusion_droid
-```
-
-## Evaluation
-
-On the DROID control laptop:
-
-1. Have the latest DROID package on both the control laptop and the NUC.
-2. Activate the DROID conda env.
-3. Copy `main.py` from this directory to `$DROID_ROOT/scripts/main.py`.
-4. Replace the camera IDs in `main.py` with yours. Run `ZED_Explorer` to enumerate connected cameras and confirm positioning.
-5. Run the script, pointing at the policy server. `--external_camera` picks which stereo side feeds the policy; only one external camera is used.
+1. Make sure you have the most recent version of the DROID package installed on both the DROID control laptop and the NUC.
+2. On the control laptop, activate your DROID conda environment.
+3. Clone the openpi repo and install the openpi client, which we will use to connect to the policy server (this has very few dependencies and should be very fast to install): with the DROID conda environment activated, run `cd $OPENPI_ROOT/packages/openpi-client && pip install -e .`.
+4. Install `tyro`, which we will use for command line parsing: `pip install tyro`.
+5. Copy the `main.py` file from this directory to the `$DROID_ROOT/scripts` directory.
+6. Replace the camera IDs in the `main.py` file with the IDs of your cameras (you can find the camera IDs by running `ZED_Explorer` in the command line, which will open a tool that shows you all connected cameras and their IDs -- you can also use it to make sure that the cameras are well-positioned to see the scene you want the robot to interact with).
+7. Run the `main.py` file. Make sure to point the IP and host address to the policy server. (To make sure the server machine is reachable from the DROID laptop, you can run `ping <server_ip>` from the DROID laptop.) Also make sure to specify the external camera to use for the policy (we only input one external camera), choose from ["left", "right"].
 
 ```bash
 python3 scripts/main.py --remote_host=<server_ip> --remote_port=<server_port> --external_camera="left"
 ```
 
-The script prompts for a free-form language instruction per rollout. The policy handles a fairly broad range of scenes and camera positions, but failure modes scale with task complexity. Verify the server is reachable with `ping <server_ip>` first if the client hangs on startup.
-
-## Activation collection
-
-DROID supports the same server-side collection protocol as LIBERO / RoboCasa: start the server with `--collect_activations`, run the client with `--collect`, and activations are saved on the **server's** filesystem. Protocol, output layout, schema, and verification are covered in the canonical reference — see **[`docs/activation_collection.md`](../../docs/activation_collection.md)**.
-
-Because DROID runs on real hardware, there is no scripted success signal — `episode_success` and rewards are supplied by the user at the end of each rollout (the `main.py` script prompts for them).
+The script will ask you to enter a free-form language instruction for the robot to follow. Make sure to point the cameras at the scene you want the robot to interact with. You _do not_ need to carefully control camera angle, object positions, etc. The policy is fairly robust in our experience. Happy prompting!
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
-| Cannot reach policy server | Check the server is running and that `--remote_host` / `--remote_port` are correct. `ping <server_ip>` from the DROID laptop confirms reachability. |
-| Cannot find cameras | Verify camera IDs; occasionally replugging helps. Run `ZED_Explorer` to enumerate connected cameras. |
-| Policy inference slow / inconsistent | Prefer a wired connection on the DROID laptop. 0.5–1 s latency per action chunk is normal. |
-| Policy doesn't perform the task well | The model handles simple tabletop pick-and-place robustly, but harder tasks fail more often. Confirm the feeding camera sees the relevant objects (policy only sees one external + one wrist). Modifying scene/object placement is a valid mitigation. |
+| Cannot reach policy server | Make sure the server is running and the IP and port are correct. You can check that the server machine is reachable by running `ping <server_ip>` from the DROID laptop. |
+| Cannot find cameras | Make sure the camera IDs are correct and that the cameras are connected to the DROID laptop. Sometimes replugging the cameras can help. You can check all connected cameras by running `ZED_Explore` in the command line. |
+| Policy inference is slow / inconsistent | Try using a wired internet connection for the DROID laptop to reduce latency (0.5 - 1 sec latency per chunk is normal). |
+| Policy does not perform the task well | In our experiments, the policy could perform simple table top manipulation tasks (pick-and-place) across a wide range of environments, camera positions, and lighting conditions. If the policy does not perform the task well, you can try modifying the scene or object placement to make the task easier. Also make sure that the camera view you are passing to the policy can see all relevant objects in the scene (the policy is only conditioned on a single external camera + wrist camera, make sure you are feeding the desired camera to the policy). Use `ZED_Explore` to check that the camera view you are passing to the policy can see all relevant objects in the scene. Finally, the policy is far from perfect and will fail on more complex manipulation tasks, but it usually makes a decent effort. :) |
 
-## Results — RoboArena
 
-Consider submitting your DROID policies to the [RoboArena benchmark](https://robo-arena.github.io/) for evaluation on diverse real-world tasks and scenes. Questions: [karl.pertsch@gmail.com](mailto:karl.pertsch@gmail.com).
+## Running Other Policies
+
+We provide configs for running the baseline DROID policies from the [RoboArena](https://robo-arena.github.io/) paper. Simply run the commands below to start inference servers for the respective policies. Then follow the instructions above to run evaluation on the DROID robot.
+
+```
+# Train from pi0-FAST, using FAST tokenizer
+uv run scripts/serve_policy.py policy:checkpoint --policy.config=pi0_fast_droid --policy.dir=gs://openpi-assets/checkpoints/pi0_fast_droid
+
+# Train from pi0, using flow matching
+uv run scripts/serve_policy.py policy:checkpoint --policy.config=pi0_droid --policy.dir=gs://openpi-assets/checkpoints/pi0_droid
+
+# Trained from PaliGemma, using RT-2 / OpenVLA style binning tokenizer.
+uv run scripts/serve_policy.py policy:checkpoint --policy.config=paligemma_binning_droid --policy.dir=gs://openpi-assets/checkpoints/roboarena/paligemma_binning_droid
+
+# Trained from PaliGemma, using FAST tokenizer (using universal FAST+ tokenizer).
+uv run scripts/serve_policy.py policy:checkpoint --policy.config=paligemma_fast_droid --policy.dir=gs://openpi-assets/checkpoints/roboarena/paligemma_fast_droid
+
+# Trained from PaliGemma, using FAST tokenizer (tokenizer trained on DROID dataset).
+uv run scripts/serve_policy.py policy:checkpoint --policy.config=paligemma_fast_specialist_droid --policy.dir=gs://openpi-assets/checkpoints/roboarena/paligemma_fast_specialist_droid
+
+# Trained from PaliGemma, using FSQ tokenizer.
+uv run scripts/serve_policy.py policy:checkpoint --policy.config=paligemma_vq_droid --policy.dir=gs://openpi-assets/checkpoints/roboarena/paligemma_vq_droid
+
+# pi0-style diffusion / flow VLA, trained on DROID from PaliGemma.
+uv run scripts/serve_policy.py policy:checkpoint --policy.config=paligemma_diffusion_droid --policy.dir=gs://openpi-assets/checkpoints/roboarena/paligemma_diffusion_droid
+```
+
+You can find the inference configs in [roboarena_config.py](../../src/openpi/training/misc/roboarena_config.py).
