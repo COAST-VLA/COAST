@@ -16,10 +16,22 @@ logger = logging.getLogger(__name__)
 
 
 def ensure_pytorch_checkpoint(checkpoint_dir: str, config_name: str) -> None:
-    """Convert JAX checkpoint to PyTorch if needed. No-op if already converted and up-to-date."""
+    """Convert JAX checkpoint to PyTorch if needed. No-op if already converted and up-to-date.
+
+    Also a no-op for PyTorch-native checkpoints (e.g., Diffusion Policy trained via
+    train_pytorch.py), which save ``model.safetensors`` directly and have no JAX
+    ``params/`` subdir to convert from.
+    """
     checkpoint_path = Path(checkpoint_dir)
     safetensors_path = checkpoint_path / "model.safetensors"
+    params_dir = checkpoint_path / "params"
     hash_path = checkpoint_path / ".pytorch_conversion_hash"
+
+    # PyTorch-native checkpoint: model.safetensors exists and there's no orbax params/ dir to
+    # convert from. Nothing to do — use the weights as-is.
+    if safetensors_path.exists() and not params_dir.exists():
+        logger.info("Checkpoint is PyTorch-native (no JAX params/); skipping conversion.")
+        return
 
     current_hash = _compute_checkpoint_hash(checkpoint_path, config_name)
 
