@@ -357,9 +357,7 @@ def test_load_policy_collect_pi0_fast_uses_jax(monkeypatch):
     assert captured_kwargs.get("use_pytorch") is False, (
         "Expected --collect with pi0-fast to pass use_pytorch=False (JAX path)"
     )
-    assert ensure_called == [], (
-        "Expected ensure_pytorch_checkpoint NOT to be called for pi0-fast (JAX-only)"
-    )
+    assert ensure_called == [], "Expected ensure_pytorch_checkpoint NOT to be called for pi0-fast (JAX-only)"
 
 
 def test_load_policy_normal_eval_does_not_import_openpi(monkeypatch):
