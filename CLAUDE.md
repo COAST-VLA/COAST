@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This is a fork of Physical Intelligence's openpi repository for **activation collection and mechanistic interpretability** on Vision-Language-Action (VLA) models (pi0, pi0-FAST, pi0.5). The models are implemented in JAX (primary) and PyTorch, with fine-tuning, evaluation, and activation collection pipelines across three robot environments.
+This is a fork of Physical Intelligence's openpi repository for **activation collection and mechanistic interpretability** on Vision-Language-Action (VLA) models (pi0, pi0-FAST, pi0.5) plus NVIDIA GR00T N1.5. The models are implemented in JAX (primary) and PyTorch, with fine-tuning, evaluation, and activation collection pipelines across four robot environments.
 
 ## Evaluation & Collection Clients
 
@@ -11,18 +11,20 @@ This is a fork of Physical Intelligence's openpi repository for **activation col
 | **MetaWorld** | In-process (loads policy directly) | Root venv | In-process (`main.py --collect`, `eval_all.py --collect`) |
 | **LIBERO** | Server-client over WebSocket | **Separate venv (Python 3.8)** in `examples/libero_env/` | Server-side (`--collect_activations` on server, `--collect` on client) |
 | **RoboCasa** | Server-client over WebSocket | **Separate venv (Python 3.11)** in `examples/robocasa_env/` | Server-side (same protocol as LIBERO) |
+| **DROID** | Server-client over WebSocket; real-robot control laptop | Root venv (server), DROID conda env + `openpi-client` (laptop) | Server-side (same protocol as LIBERO) |
 
-For workflow details (dataset generation, training configs, eval commands, activation formats), read the respective `examples/{client}/README.md`.
+Canonical activation-collection reference: [`docs/activation_collection.md`](docs/activation_collection.md). For per-client workflow details (dataset generation, training configs, eval commands), read the respective `examples/{client}/README.md`.
 
 ## Multi-Venv Setup (IMPORTANT)
 
-This repo has **three separate Python environments**. Running commands from the wrong directory will use the wrong venv and fail.
+This repo has **four separate Python environments**. Running commands from the wrong directory will use the wrong venv and fail.
 
 | Venv | Python | Directory | When to use |
 |------|--------|-----------|-------------|
-| **Root** | 3.11 | Repo root | Training, serving, MetaWorld eval/collection, tests |
+| **Root** | 3.11 | Repo root | Training, serving (pi0/pi0.5/pi0-FAST), MetaWorld eval/collection, DROID eval server, tests |
 | **libero_env** | 3.8 | `examples/libero_env/` | LIBERO client eval/collection |
 | **robocasa_env** | 3.11 | `examples/robocasa_env/` | RoboCasa client eval/collection |
+| **groot_env** | 3.10 | `groot_env/` | GR00T N1.5 policy server (separate due to `torch==2.5.1` pin) |
 
 ```bash
 # Root venv (training, serving, metaworld)

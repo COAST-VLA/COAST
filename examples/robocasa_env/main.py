@@ -76,7 +76,7 @@ class Args:
     collect: bool = False
 
     # Override the top-level output directory (for videos / artifacts). If None,
-    # defaults to ``output/single-{split}``.
+    # defaults to ``output/{env_name}``.
     output_dir: Optional[str] = None
 
 
@@ -262,9 +262,7 @@ def main(args: Args) -> None:
     if args.output_dir is not None:
         output_dir = args.output_dir
     else:
-        output_dir = os.path.join(
-            os.path.dirname(__file__), "output", f"single-{args.split}"
-        )
+        output_dir = os.path.join(os.path.dirname(__file__), "output", args.env_name)
     os.makedirs(output_dir, exist_ok=True)
 
     collect_session = CollectionSession(policy) if args.collect else None

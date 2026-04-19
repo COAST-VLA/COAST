@@ -219,7 +219,7 @@ class TestBuildCommand:
     def test_output_dir_always_forwarded(self) -> None:
         """After the output_dir rework, ``_build_command`` unconditionally
         forwards ``--output_dir`` to main.py. This is the invariant that
-        prevents main.py from falling back to its own ``output/single-{split}/``
+        prevents main.py from falling back to its own ``output/{env_name}/``
         default and scattering videos into a sibling directory."""
         cmd = eval_all._build_command(
             _default_args(),
@@ -233,7 +233,7 @@ class TestBuildCommand:
 
     def test_output_dir_forwarded_verbatim_without_task_set_nesting(self) -> None:
         """A user passing ``--output_dir /foo`` to eval_all wants exactly
-        ``/foo`` forwarded to main.py — not ``/foo/single-{split}`` or
+        ``/foo`` forwarded to main.py — not ``/foo/{env_name}`` or
         ``/foo/{task_set}-{split}``. This locks in that main.py's own per-task
         video dir lands directly under the provided path."""
         cmd = eval_all._build_command(

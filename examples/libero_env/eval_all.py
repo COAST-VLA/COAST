@@ -61,7 +61,7 @@ class Args:
         "libero_10",
     ] = "libero_spatial"
     # Number of episodes / initial states per task.
-    num_episodes: int = 2
+    num_episodes: int = 1
     # Override the suite default max steps. If None, uses main.SUITE_MAX_STEPS.
     max_steps: Optional[int] = None
     # Number of settling steps before policy actions.
@@ -109,7 +109,7 @@ def _build_command(args: Args, task_id: int, output_dir: str) -> List[str]:
     ``output_dir`` is the absolute path where this subprocess should write its
     per-task video directory. It is unconditionally forwarded as ``--output_dir``
     so that main.py does not fall back to its own default (which would land
-    videos in a separate ``output/single-{suite}/`` tree).
+    videos in a separate ``output/{suite}-task{id:02d}/`` tree).
     """
     cmd = [
         sys.executable,
@@ -208,7 +208,7 @@ def main(args: Args) -> None:
     # parallel_logs/, and each subprocess's per-task video directory. The same
     # dir is forwarded to main.py subprocesses via --output_dir so their
     # per-task video dirs land alongside results.json instead of in a
-    # sibling ``output/single-{suite}/`` tree.
+    # sibling ``output/{suite}-task{id:02d}/`` tree.
     #
     # ``os.path.abspath`` matters when the user passes a relative --output_dir:
     # main.py subprocesses run with cwd=script_dir, so a relative path would

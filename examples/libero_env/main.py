@@ -88,7 +88,7 @@ class Args:
     collect: bool = False
 
     # Override the per-task output directory (for videos / artifacts). If None,
-    # defaults to ``output/single-{task_suite_name}``.
+    # defaults to ``output/{task_suite_name}-task{task_id:02d}``.
     output_dir: Optional[str] = None
 
 
@@ -368,7 +368,7 @@ def main(args: Args) -> None:
         output_dir = os.path.join(
             os.path.dirname(__file__),
             "output",
-            "single-{}".format(args.task_suite_name),
+            "{}-task{:02d}".format(args.task_suite_name, args.task_id),
         )
     os.makedirs(output_dir, exist_ok=True)
 

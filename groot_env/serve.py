@@ -28,14 +28,13 @@ from __future__ import annotations
 import dataclasses
 import logging
 import pathlib
+import socket
 
 import tyro
 
 import groot_activation_collector
 import groot_adapter
 import websocket_policy_server
-
-logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
@@ -81,7 +80,7 @@ def _build_policy(args: Args):
 
 
 def main(args: Args) -> None:
-    logger.info(
+    logging.info(
         "Loading GR00T N1.5: model=%s, embodiment=%s, device=%s, denoising_steps=%d",
         args.model_path,
         args.embodiment,
@@ -102,7 +101,7 @@ def main(args: Args) -> None:
         # "checkpoint-120000"), mirroring pi0's convention.
         checkpoint_step = pathlib.Path(args.model_path).name
         output_root = pathlib.Path(args.output_dir).resolve()
-        logger.info(
+        logging.info(
             "Activation collection enabled (checkpoint_step=%s, output_root=%s)",
             checkpoint_step,
             output_root,
@@ -116,13 +115,16 @@ def main(args: Args) -> None:
         )
         metadata.update(policy.metadata)
 
+    hostname = socket.gethostname()
+    local_ip = socket.gethostbyname(hostname)
+    logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
+
     server = websocket_policy_server.WebsocketPolicyServer(
         policy=policy,
         host="0.0.0.0",
         port=args.port,
         metadata=metadata,
     )
-    logger.info("GR00T N1.5 server listening on port %d", args.port)
     server.serve_forever()
 
 

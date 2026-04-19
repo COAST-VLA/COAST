@@ -1,4 +1,4 @@
-"""Tests for collected activation data from `serve.py --collect-activations` (GR00T N1.5).
+"""Tests for collected activation data from `serve.py --collect_activations` (GR00T N1.5).
 
 GR00T-N1.5 analog of `tests/test_activations.py`. Same structure; schema is
 aligned with pi0's `sample_actions_with_intermediates` one-for-one where the
