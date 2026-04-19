@@ -254,15 +254,6 @@ class Policy(BasePolicy):
             start_time = time.monotonic()
             actions, intermediates = self._sample_actions_with_intermediates(sample_rng, observation, **sample_kwargs)
             model_time = time.monotonic() - start_time
-            # prefix_pre_logits is the per-prefix-position hidden state of the
-            # VLM (shape (batch, prefix_len, width) ≈ MBs per call at batch=1).
-            # sample_actions_with_intermediates returns it because it's handy
-            # for debugging, but no collection writer persists it — dropping
-            # here avoids a several-MB device→host copy on every inference
-            # step. If a future mech-interp workflow needs it, add a dedicated
-            # prefix_hidden_states.npz writer rather than resurrecting this
-            # implicit transfer.
-            intermediates.pop("prefix_pre_logits", None)
             # JIT returns fixed-size buffers on the leading axis
             # (max_decoding_steps). Slice down to num_tokens so downstream
             # consumers see tokens/logprobs of length num_tokens and

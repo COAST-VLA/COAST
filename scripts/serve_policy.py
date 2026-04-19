@@ -131,21 +131,13 @@ def create_policy(args: Args) -> _policy.Policy:
 
 
 def main(args: Args) -> None:
-    # Resolve model_type once for the whole collection branch (guard + wrapper
-    # both need it). The corresponding get_config call is cheap but clearer to
-    # read as a single lookup.
-    model_type = (
-        _config.get_config(args.policy.config).model.model_type
-        if args.collect_activations and isinstance(args.policy, Checkpoint)
-        else None
-    )
-
     if args.collect_activations:
         if not isinstance(args.policy, Checkpoint):
             raise ValueError("--collect_activations requires --policy=checkpoint (default policies are not supported).")
         # pi0 / pi0.5 capture intermediates through PyTorch forward hooks; pi0-fast
         # has no PyTorch port of the autoregressive decode, so it captures through
         # JAX. Pick the backend here based on the configured model_type.
+        model_type = _config.get_config(args.policy.config).model.model_type
         if model_type == _model.ModelType.PI0_FAST and args.pytorch:
             raise ValueError(
                 "--pytorch cannot be combined with a pi0-fast model — there is no PyTorch port "
@@ -161,9 +153,9 @@ def main(args: Args) -> None:
 
     if args.collect_activations:
         assert isinstance(args.policy, Checkpoint)  # narrowed above
-        assert model_type is not None
         checkpoint_step = pathlib.Path(args.policy.dir).name
         output_root = pathlib.Path(args.output_dir).resolve()
+        model_type = _config.get_config(args.policy.config).model.model_type
         logging.info(
             "Activation collection enabled (checkpoint_step=%s, output_root=%s, model_type=%s)",
             checkpoint_step,
