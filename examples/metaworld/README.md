@@ -87,6 +87,8 @@ Then run `main.py` / `eval_all.py` in a second terminal exactly as documented un
 
 Activation collection (`--collect`) is not supported for DP — the collection path is pi0/pi0-FAST/pi0.5 only.
 
+**Caveat — unconditional multi-task baseline.** `dp_metaworld` trains on all 44 ML45 tasks but the DP model consumes only images + state; the data pipeline drops the task prompt and the model has no task ID / one-hot input. Loss converges against the multi-task mixture but per-task success rates are expected to be weak since DP can't distinguish "reach" from "push-wall" given the same arm pose. For fair per-task numbers, train one DP per task or extend the model with a task embedding.
+
 ## Evaluation
 
 Normal evaluation uses a server-client architecture: `scripts/serve_policy.py` hosts the model and serves actions over WebSocket; `main.py` / `eval_all.py` run the envs and query the server at each step. Both run from the repo root.

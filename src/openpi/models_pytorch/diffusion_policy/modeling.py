@@ -402,7 +402,17 @@ class DiffusionPolicy(nn.Module):
         return image
 
     def _encode_global_cond(self, observation) -> Tensor:
-        """Build (B, global_cond_dim) vector from images + state. n_obs_steps=1 path."""
+        """Build (B, global_cond_dim) vector from images + state. n_obs_steps=1 path.
+
+        NOTE — unconditional multi-task baseline: DP receives no task signal here. The training
+        data for e.g. dp_metaworld spans all 44 ML45 tasks and the data pipeline attaches a task
+        string (via ``prompt_from_task=True``), but openpi's DP model transform drops the prompt
+        (see ``ModelTransformFactory`` DIFFUSION_POLICY case in ``openpi/training/config.py``) and
+        the conditioning vector below is built from images + state only — no tokenized_prompt,
+        no task ID, no one-hot. When trained on a multi-task dataset this yields a single policy
+        that must average motor behaviour across tasks; for fair per-task comparisons either train
+        one DP per task or add a task embedding to the concat below.
+        """
         feats = []
         for i, key in enumerate(self.camera_keys):
             img = observation.images[key]
