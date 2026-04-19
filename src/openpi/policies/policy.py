@@ -299,15 +299,11 @@ class Policy(BasePolicy):
         else:
             inputs = jax.tree.map(lambda x: x, obs)
             eval_batch_size = int(inputs["observation/state"].shape[0])
-            singles = []
-            for i in range(eval_batch_size):
-                ex = {}
-                for k, v in inputs.items():
-                    if k == "prompt":
-                        ex[k] = v[i]
-                    else:
-                        ex[k] = v[i]
-                singles.append(ex)
+            # Unbatch: list of single-example dicts. Both `prompt` (str-list) and
+            # array leaves are already leading-batch-dim indexable the same way,
+            # so no per-key branch is needed here — matches infer() but dropped
+            # the redundant prompt/non-prompt conditional.
+            singles = [{k: v[i] for k, v in inputs.items()} for i in range(eval_batch_size)]
             singles = [self._input_transform(ex) for ex in singles]
             inputs = collate_transformed_singles(singles)
             inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device), inputs)

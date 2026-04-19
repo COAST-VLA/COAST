@@ -256,6 +256,23 @@ def test_neg_inf_beta_rejected():
         validate_steering_payload(p, {"taskA"})
 
 
+def test_bool_alpha_rejected():
+    """Python bool is a subclass of int — isinstance(True, (int, float)) is True.
+    Without an explicit bool guard, `{"alpha": True}` would silently be treated
+    as α=1.0 downstream. The validator must reject it explicitly."""
+    p = _valid_payload()
+    p["alpha"] = True
+    with pytest.raises(ValueError, match="alpha"):
+        validate_steering_payload(p, {"taskA"})
+
+
+def test_bool_layer_rejected():
+    p = _valid_payload()
+    p["layer"] = True
+    with pytest.raises(ValueError, match="layer"):
+        validate_steering_payload(p, {"taskA"})
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Conceptor NPZ helpers (synthesized mini-NPZ, no download required)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -604,6 +621,55 @@ def test_wrapper_random_matched_deterministic_across_calls(mini_npz: pathlib.Pat
     w.infer({"__steering__": _payload("taskA", "random_matched")})
     second = p.last_steering_hooks[0][1]
     assert first is second  # cache hit
+
+
+def test_wrapper_does_not_mutate_caller_obs(mini_npz: pathlib.Path):
+    """The `__steering__` payload is part of the inbound obs dict. The wrapper
+    must strip it before passing to the underlying policy BUT must not mutate
+    the caller's dict (matches CollectingPolicy's .get() contract). Verify the
+    key is still present in the caller's dict after infer()."""
+    p = _StubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=mini_npz, device="cpu")
+    payload = _payload("taskA", "global")
+    obs = {"some_obs": "data", "__steering__": payload}
+    w.infer(obs)
+    # Caller's dict still has the steering key:
+    assert "__steering__" in obs
+    # But the downstream policy did not see it:
+    assert "__steering__" not in p.last_steering_obs
+
+
+def test_wrapper_cache_key_per_step_ignores_alpha(mini_npz: pathlib.Path):
+    """per_step NPZ keys bake α=1.0; runtime α is irrelevant. Two per_step
+    requests differing only in α must share one cache entry."""
+    p = _StubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=mini_npz, device="cpu")
+    w.infer({"__steering__": _payload("taskA", "per_step", alpha=0.1)})
+    w.infer({"__steering__": _payload("taskA", "per_step", alpha=0.5)})
+    w.infer({"__steering__": _payload("taskA", "per_step", alpha=1.0)})
+    assert len(w._hook_cache) == 1  # noqa: SLF001
+
+
+def test_wrapper_cache_key_linear_ignores_beta(mini_npz: pathlib.Path):
+    """LinearSteeringHook has no β term; runtime β is irrelevant. Three linear
+    requests differing only in β must share one cache entry."""
+    p = _StubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=mini_npz, device="cpu")
+    w.infer({"__steering__": _payload("taskA", "linear", alpha=0.5, beta=0.1)})
+    w.infer({"__steering__": _payload("taskA", "linear", alpha=0.5, beta=0.3)})
+    w.infer({"__steering__": _payload("taskA", "linear", alpha=0.5, beta=0.5)})
+    assert len(w._hook_cache) == 1  # noqa: SLF001
+
+
+def test_wrapper_cache_key_global_keys_on_both_alpha_beta(mini_npz: pathlib.Path):
+    """Non-per_step/non-linear strategies still differentiate on both α and β —
+    a change in either must produce a distinct hook."""
+    p = _StubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=mini_npz, device="cpu")
+    w.infer({"__steering__": _payload("taskA", "global", alpha=0.1, beta=0.1)})
+    w.infer({"__steering__": _payload("taskA", "global", alpha=0.1, beta=0.3)})  # different β
+    w.infer({"__steering__": _payload("taskA", "global", alpha=0.5, beta=0.1)})  # different α
+    assert len(w._hook_cache) == 3  # noqa: SLF001
 
 
 def test_wrapper_random_matched_seed_stable_across_processes(mini_npz: pathlib.Path):

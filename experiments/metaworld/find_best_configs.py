@@ -193,7 +193,20 @@ def main(args: Args) -> None:
     partial_results_path = run_dir / "partial_results.jsonl"
     per_task_results: dict[str, dict[str, float]] = {task: {} for task in args.tasks}
 
-    total_conditions = len(args.layers) * len(args.alphas) * len(args.betas) * len(args.strategies) + 1
+    # Strategy-gated grid (see experiments/libero/find_best_configs.py for the
+    # full rationale): per_step ignores alpha, linear ignores beta. Expand
+    # once here instead of running duplicate conditions under different
+    # cosmetic hyperparameters.
+    conditions: list[tuple[int, float, float, str]] = []
+    for strategy in args.strategies:
+        alpha_axis: tuple[float, ...] = (float("nan"),) if strategy == "per_step" else args.alphas
+        beta_axis: tuple[float, ...] = (float("nan"),) if strategy == "linear" else args.betas
+        for layer in args.layers:
+            for alpha in alpha_axis:
+                for beta in beta_axis:
+                    conditions.append((layer, alpha, beta, strategy))  # noqa: PERF401
+    total_conditions = len(conditions) + 1
+
     for task in args.tasks:
         task_dir = run_dir / task
         task_dir.mkdir(parents=True, exist_ok=True)
@@ -215,42 +228,41 @@ def main(args: Args) -> None:
         logger.info("[1/%d] baseline: SR=%.3f", total_conditions, sr)
 
         cond_idx = 1
-        for layer in args.layers:
-            for alpha in args.alphas:
-                for beta in args.betas:
-                    for strategy in args.strategies:
-                        cond_idx += 1
-                        cond_name = f"{strategy}_L{layer}_a{alpha}_b{beta}"
-                        sr = _run_one_eval(
-                            task,
-                            args.num_episodes,
-                            args.num_envs,
-                            args.max_steps,
-                            args.port,
-                            task_dir / cond_name,
-                            steer=True,
-                            layer=layer,
-                            alpha=alpha,
-                            beta=beta,
-                            strategy=strategy,
-                        )
-                        per_task_results[task][cond_name] = sr
-                        with open(partial_results_path, "a") as f:
-                            f.write(
-                                json.dumps(
-                                    {
-                                        "task": task,
-                                        "condition": cond_name,
-                                        "layer": layer,
-                                        "alpha": alpha,
-                                        "beta": beta,
-                                        "strategy": strategy,
-                                        "success_rate": sr,
-                                    }
-                                )
-                                + "\n"
-                            )
-                        logger.info("[%d/%d] %s: SR=%.3f", cond_idx, total_conditions, cond_name, sr)
+        for layer, alpha, beta, strategy in conditions:
+            cond_idx += 1
+            effective_alpha = 1.0 if strategy == "per_step" else alpha
+            effective_beta = 0.0 if strategy == "linear" else beta
+            cond_name = f"{strategy}_L{layer}_a{effective_alpha}_b{effective_beta}"
+            sr = _run_one_eval(
+                task,
+                args.num_episodes,
+                args.num_envs,
+                args.max_steps,
+                args.port,
+                task_dir / cond_name,
+                steer=True,
+                layer=layer,
+                alpha=effective_alpha,
+                beta=effective_beta,
+                strategy=strategy,
+            )
+            per_task_results[task][cond_name] = sr
+            with open(partial_results_path, "a") as f:
+                f.write(
+                    json.dumps(
+                        {
+                            "task": task,
+                            "condition": cond_name,
+                            "layer": layer,
+                            "alpha": effective_alpha,
+                            "beta": effective_beta,
+                            "strategy": strategy,
+                            "success_rate": sr,
+                        }
+                    )
+                    + "\n"
+                )
+            logger.info("[%d/%d] %s: SR=%.3f", cond_idx, total_conditions, cond_name, sr)
 
         with open(run_dir / "per_task_results.json", "w") as f:
             json.dump(per_task_results, f, indent=2)

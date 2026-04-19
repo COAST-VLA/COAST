@@ -295,8 +295,9 @@ class LinearSteeringHook:
             h, rest = output[0], output[1:]
         else:
             h, rest = output, None
-        # Align both dtype and device to h; self._device at init may differ
-        # from h.device under multi-GPU or CPU fallback.
+        # Align both dtype and device to h so the hook follows the input's
+        # placement (construction-time device may differ under multi-GPU
+        # or CPU fallback).
         v = self.v.to(device=h.device, dtype=h.dtype)
         delta = self.alpha * v  # (d,); broadcasts to h
         h_steered = h + delta
@@ -343,7 +344,11 @@ def validate_steering_payload(payload: Any, available: Iterable[str]) -> None:
         raise ValueError(f"__steering__ payload missing required fields: {missing}")
 
     for key, expected in _REQUIRED_PAYLOAD_FIELDS.items():
-        if not isinstance(payload[key], expected):  # type: ignore[arg-type]
+        if not isinstance(payload[key], expected) or isinstance(payload[key], bool):
+            # Python's bool is a subclass of int, so it slips past isinstance(_, int)
+            # and float(True) silently becomes 1.0 downstream. Reject booleans
+            # explicitly — a misbehaving client sending {"alpha": True} shouldn't
+            # be interpreted as α=1.0.
             raise ValueError(f"__steering__.{key} must be {expected}, got {type(payload[key]).__name__}")
 
     # NaN/Inf in alpha/beta would silently poison the hook's M matrix (NaN
@@ -387,27 +392,39 @@ class SteeredPolicyWrapper:
         self._npz = load_conceptor_npz(conceptor_npz_path)
         self._available_tasks = available_tasks(self._npz)
         self._device = device
-        # Cache key = (task, layer, alpha, beta, strategy).
+        # Cache key is strategy-projected: only the params the strategy actually
+        # uses contribute. See _cache_key(). Avoids rebuilding identical hooks
+        # just because an irrelevant CLI flag differs during a sweep.
         self._hook_cache: dict[tuple[str, int, float, float, str], Any] = {}
 
+    @staticmethod
+    def _cache_key(payload: dict) -> tuple[str, int, float, float, str]:
+        """Strategy-projected cache key.
+
+        - `linear`    uses only alpha (LinearSteeringHook ignores beta) → beta
+          zeroed in the key so (linear, α=0.1, β=0.3) and (linear, α=0.1, β=0.1)
+          collapse to the same hook.
+        - `per_step`  uses only beta (per-step matrices come from the NPZ at
+          fixed α=1.0 via `get_per_step_conceptor_matrices`, which takes only
+          task+layer) → alpha zeroed so (per_step, α=0.1, β=0.3) and
+          (per_step, α=1.0, β=0.3) share a hook.
+        - everything else keys on both alpha and beta.
+        """
+        strategy = payload["strategy"]
+        alpha = 0.0 if strategy == "per_step" else float(payload["alpha"])
+        beta = 0.0 if strategy == "linear" else float(payload["beta"])
+        return (payload["task"], int(payload["layer"]), alpha, beta, strategy)
+
     def _get_or_build_hook(self, payload: dict) -> tuple[int, Any]:
-        key = (
-            payload["task"],
-            int(payload["layer"]),
-            float(payload["alpha"]),
-            float(payload["beta"]),
-            payload["strategy"],
-        )
+        key = self._cache_key(payload)
         hook = self._hook_cache.get(key)
         if hook is None:
             strategy = key[4]
             if strategy == "linear":
-                # Linear: h' = h + alpha * v. Beta is ignored (but kept in the cache
-                # key for consistency so (linear, α=0.1, β=0.3) and (linear, α=0.1, β=0.1)
-                # share the hook via re-entry — which is fine because the hook's
-                # behavior only depends on (α, v)).
+                # Linear: h' = h + α·v. Beta is unused; the cache key zeros it
+                # out so multiple β values with the same α share one hook.
                 v = get_linear_direction(self._npz, task=key[0], layer=key[1])
-                hook = LinearSteeringHook(v, alpha=key[2], device=self._device)
+                hook = LinearSteeringHook(v, alpha=float(payload["alpha"]), device=self._device)
             elif strategy == "random_matched":
                 # Deterministic seed from the full cache key so repeat requests
                 # produce the same random matrix — IMPORTANT: across server
@@ -422,21 +439,22 @@ class SteeredPolicyWrapper:
                     self._npz,
                     task=key[0],
                     layer=key[1],
-                    alpha=key[2],
+                    alpha=float(payload["alpha"]),
                     strategy=strategy,
                     random_seed=seed,
                 )
-                hook = ConceptorSteeringHook(C, beta=key[3], device=self._device)
+                hook = ConceptorSteeringHook(C, beta=float(payload["beta"]), device=self._device)
             elif strategy == "per_step":
                 # Load all 10 per-step conceptors, build a list of 10 M_t matrices
-                # aligned to the pi0.5 sampler's step counter 0..9.
+                # aligned to the pi0.5 sampler's step counter 0..9. α is unused
+                # here (per-step NPZ keys bake α=1.0 in); cache key zeros α out.
                 matrices = get_per_step_conceptor_matrices(
                     self._npz,
                     task=key[0],
                     layer=key[1],
                 )
                 hook = ConceptorSteeringHook(
-                    beta=key[3],
+                    beta=float(payload["beta"]),
                     device=self._device,
                     matrices_per_step=matrices,
                 )
@@ -446,10 +464,10 @@ class SteeredPolicyWrapper:
                     self._npz,
                     task=key[0],
                     layer=key[1],
-                    alpha=key[2],
+                    alpha=float(payload["alpha"]),
                     strategy=strategy,
                 )
-                hook = ConceptorSteeringHook(C, beta=key[3], device=self._device)
+                hook = ConceptorSteeringHook(C, beta=float(payload["beta"]), device=self._device)
             self._hook_cache[key] = hook
             logger.info("Built steering hook %s [%s] (cache size=%d)", key, type(hook).__name__, len(self._hook_cache))
         else:
@@ -457,12 +475,19 @@ class SteeredPolicyWrapper:
         return key[1], hook
 
     def infer(self, obs: dict) -> dict:
-        payload = obs.pop(_STEERING_KEY, None) if isinstance(obs, dict) else None
+        # Use .get() (not .pop()) so we don't mutate the caller's obs dict —
+        # matches the CollectingPolicy.infer() contract in activation_collector.py.
+        # Strip __steering__ via a shallow dict comprehension before passing
+        # downstream so the underlying policy's transforms don't see the magic key.
+        if not isinstance(obs, dict):
+            return self._policy.infer(obs)
+        payload = obs.get(_STEERING_KEY)
         if payload is None:
             return self._policy.infer(obs)
         validate_steering_payload(payload, self._available_tasks)
+        clean_obs = {k: v for k, v in obs.items() if k != _STEERING_KEY}
         layer, hook = self._get_or_build_hook(payload)
-        result, _ = self._policy.infer_with_steering(obs, steering_hooks=[(layer, hook)])
+        result, _ = self._policy.infer_with_steering(clean_obs, steering_hooks=[(layer, hook)])
         return result
 
     def reset(self) -> None:
