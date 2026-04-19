@@ -120,11 +120,11 @@ Client (this venv):
 ```bash
 cd examples/libero_env
 
-# Single task (defaults: --task_suite_name libero_10 --task_id 0):
-MUJOCO_GL=egl uv run python main.py --collect --num_episodes 15
+# Single task:
+MUJOCO_GL=egl uv run python main.py --task_suite_name libero_10 --task_id 0 --collect --num_episodes 15
 
-# Full suite — default libero_10, parallelized across tasks:
-MUJOCO_GL=egl uv run python eval_all.py --collect --num_episodes 15 --num_workers 5
+# Full suite — parallelized across tasks:
+MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_10 --collect --num_episodes 15 --num_workers 5
 ```
 
 Pre-collected datasets:
