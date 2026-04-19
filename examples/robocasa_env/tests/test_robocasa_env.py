@@ -262,7 +262,8 @@ class TestEvalAll:
         args = eval_all.Args()
         assert args.host == "0.0.0.0"
         assert args.port == 8000
-        assert args.task_set == "atomic_seen"
+        assert args.task_set == "subset"
+        assert args.tasks == []
         assert args.split == "pretrain"
         assert args.num_episodes == 1
         assert args.max_steps is None

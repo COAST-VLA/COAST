@@ -4,13 +4,19 @@ subprocess per env_name. Each subprocess is an independent ``main.py`` invocatio
 which gives each env its own MuJoCo/EGL context (necessary because MuJoCo + EGL
 is not safe to share across envs in a single process).
 
-Available task sets come from ``robocasa.utils.dataset_registry.TASK_SET_REGISTRY``,
-notably:
+Available task sets:
+- ``subset``              — curated 7-task subset (default), the tasks we have
+                            published results for in both pi0.5 and GR00T N1.5.
+                            Parallels metaworld's ``--split subset``.
 - ``atomic_seen``         — 18 atomic target tasks
 - ``composite_seen``      — 16 seen composite target tasks
 - ``composite_unseen``    — 16 unseen composite target tasks
 - ``target50``            — atomic_seen + composite_seen + composite_unseen
 - ``pretrain50`` / ``pretrain100`` / ``pretrain200`` / ``pretrain300`` — pretraining task sets
+
+All named task sets other than ``subset`` resolve via
+``robocasa.utils.dataset_registry.TASK_SET_REGISTRY``. Pass ``--tasks t1 t2 ...``
+to override the task set with an explicit list (parallels metaworld's ``--tasks``).
 
 RoboCasa env stepping is roughly 10x slower than libero (~400 ms per step), so
 parallel subprocess orchestration is a substantial wall-clock win over the old
@@ -18,9 +24,10 @@ sequential eval_all. For sequential execution with inline stack traces on crash,
 pass ``--num_workers 1``.
 
 Examples:
+    MUJOCO_GL=egl uv run python eval_all.py                                 # curated subset
     MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen
     MUJOCO_GL=egl uv run python eval_all.py --task_set composite_seen --num_episodes 3 --num_workers 5
-    MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen --output_dir /tmp/mech_interp_run1
+    MUJOCO_GL=egl uv run python eval_all.py --tasks OpenDrawer CloseFridge  # explicit task list
 
 One run's entire output tree lives under a single directory (by default
 ``examples/robocasa_env/output/{task_set}-{split}/``, or whatever
@@ -52,6 +59,20 @@ from robocasa.utils.dataset_registry import TASK_SET_REGISTRY
 
 logger = logging.getLogger(__name__)
 
+# Curated 7-task subset: these are the tasks with published pi0.5 + GR00T N1.5
+# success rates in this repo (see examples/robocasa_env/README.md and
+# groot_env/README.md). Parallel to metaworld's SUBSET — meant for faster
+# iteration than running the full 18-task atomic_seen set.
+SUBSET = [
+    "CloseFridge",
+    "CoffeeSetupMug",
+    "OpenDrawer",
+    "OpenStandMixerHead",
+    "PickPlaceCounterToCabinet",
+    "PickPlaceCounterToStove",
+    "TurnOnElectricKettle",
+]
+
 # Pulls the last ``success_rate=0.50`` (or similar) from the main.py log stream.
 # main.py logs this once at the end of eval_task via ``logger.info``, e.g.:
 #   [CloseBlenderLid/pretrain] success_rate=1.00 (1/1)
@@ -63,8 +84,13 @@ class Args:
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # Task set name. Must be a key of ``TASK_SET_REGISTRY``.
-    task_set: str = "atomic_seen"
+    # Task set name. ``subset`` picks the curated 7-task list (default; see
+    # module-level SUBSET). Any other value must be a key of
+    # ``TASK_SET_REGISTRY``. Overridden by ``--tasks`` if that is non-empty.
+    task_set: str = "subset"
+    # Explicit list of env_names to evaluate. When non-empty, overrides
+    # ``--task_set``. Parallels metaworld's ``--tasks`` override.
+    tasks: List[str] = dataclasses.field(default_factory=list)
     # Dataset split: "pretrain" (in-distribution object instances) or "target" (held-out).
     split: str = "pretrain"
     # Number of episodes to run per task. Default is 1 because robocasa env
@@ -231,12 +257,28 @@ def _run_one_task(
     }
 
 
-def main(args: Args) -> None:
+def _resolve_tasks(args: Args) -> List[str]:
+    """Return the list of env_names to evaluate.
+
+    Order of precedence, mirroring ``examples/metaworld/eval_all.py``:
+    1. ``--tasks t1 t2 ...`` explicit override, if non-empty.
+    2. ``--task_set subset`` — the curated ``SUBSET`` list.
+    3. Any other ``--task_set`` value — resolved via ``TASK_SET_REGISTRY``.
+    """
+    if args.tasks:
+        return list(args.tasks)
+    if args.task_set == "subset":
+        return list(SUBSET)
     if args.task_set not in TASK_SET_REGISTRY:
         raise ValueError(
-            f"Unknown task_set '{args.task_set}'. Available: {sorted(TASK_SET_REGISTRY.keys())}"
+            f"Unknown task_set '{args.task_set}'. Available: "
+            f"{['subset', *sorted(TASK_SET_REGISTRY.keys())]}"
         )
-    env_names: List[str] = list(TASK_SET_REGISTRY[args.task_set])
+    return list(TASK_SET_REGISTRY[args.task_set])
+
+
+def main(args: Args) -> None:
+    env_names: List[str] = _resolve_tasks(args)
 
     np.random.seed(args.seed)
 

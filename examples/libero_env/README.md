@@ -71,6 +71,7 @@ uv run scripts/serve_policy.py policy:checkpoint \
 
 ```bash
 cd examples/libero_env
+# Defaults to --task_suite_name libero_10 --task_id 0; override either/both:
 MUJOCO_GL=egl uv run python main.py --task_suite_name libero_spatial --task_id 0
 ```
 
@@ -82,14 +83,15 @@ Default output: `examples/libero_env/output/<task_suite_name>-task<task_id:02d>/
 
 ```bash
 cd examples/libero_env
-MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_spatial
+# Default suite: libero_10
+MUJOCO_GL=egl uv run python eval_all.py
 
-# With more episodes per task and a concurrency cap:
+# Another suite, with more episodes per task and a concurrency cap:
 MUJOCO_GL=egl uv run python eval_all.py \
-    --task_suite_name libero_10 --num_episodes 15 --num_workers 5
+    --task_suite_name libero_spatial --num_episodes 15 --num_workers 5
 
 # Sequential execution (inline stack traces on crash):
-MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_spatial --num_workers 1
+MUJOCO_GL=egl uv run python eval_all.py --num_workers 1
 ```
 
 A full run produces a single directory containing everything:

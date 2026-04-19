@@ -59,7 +59,7 @@ class Args:
         "libero_object",
         "libero_goal",
         "libero_10",
-    ] = "libero_spatial"
+    ] = "libero_10"
     # Number of episodes / initial states per task.
     num_episodes: int = 1
     # Override the suite default max steps. If None, uses main.SUITE_MAX_STEPS.

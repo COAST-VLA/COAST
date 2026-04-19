@@ -415,8 +415,8 @@ class TestArgsDefaults:
         args = eval_all.Args()
         assert args.host == "0.0.0.0"
         assert args.port == 8000
-        assert args.task_suite_name == "libero_spatial"
-        assert args.num_episodes == 2
+        assert args.task_suite_name == "libero_10"
+        assert args.num_episodes == 1
         assert args.num_steps_wait == 10
         assert args.replan_steps == 5
         assert args.resize_size == 224

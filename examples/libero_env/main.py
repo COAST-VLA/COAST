@@ -60,7 +60,7 @@ class Args:
         "libero_object",
         "libero_goal",
         "libero_10",
-    ] = "libero_spatial"
+    ] = "libero_10"
     # Task index within the suite.
     task_id: int = 0
     # Number of episodes / initial states to evaluate.

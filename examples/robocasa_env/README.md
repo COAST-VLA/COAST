@@ -92,7 +92,17 @@ Default output: `examples/robocasa_env/output/<env_name>/`. Override with `--out
 
 ```bash
 cd examples/robocasa_env
+
+# Curated 7-task subset (default; the tasks we have published pi0.5 + GR00T N1.5
+# results for — faster iteration than the full 18-task atomic_seen set)
+MUJOCO_GL=egl uv run python eval_all.py --num_episodes 15 --num_workers 5
+
+# A full RoboCasa task set (see TASK_SET_REGISTRY: atomic_seen, composite_seen,
+# composite_unseen, target50, pretrain50 / 100 / 200 / 300)
 MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen --num_episodes 15 --num_workers 5
+
+# Explicit task list (overrides --task_set)
+MUJOCO_GL=egl uv run python eval_all.py --tasks OpenDrawer CloseFridge
 ```
 
 Default output layout (default `output/<task_set>-<split>/`, override with `--output_dir`):
