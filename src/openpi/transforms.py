@@ -325,6 +325,22 @@ class PromptFromLeRobotTask(DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
+class DropKeys(DataTransformFn):
+    """Drops the listed keys from the data dict (no-op if absent).
+
+    Useful for models that don't consume the language prompt — the string leaf would otherwise
+    fail when the PyTorch data loader converts batches to tensors.
+    """
+
+    keys: Sequence[str]
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if not isinstance(data, dict):
+            return data
+        return {k: v for k, v in data.items() if k not in self.keys}
+
+
+@dataclasses.dataclass(frozen=True)
 class PadStatesAndActions(DataTransformFn):
     """Zero-pads states and actions to the model action dimension."""
 

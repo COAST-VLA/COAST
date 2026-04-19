@@ -17,6 +17,7 @@ import openpi.models.model as _model
 import openpi.models.pi0_config as pi0_config
 import openpi.models.pi0_fast as pi0_fast
 import openpi.models.tokenizer as _tokenizer
+import openpi.models_pytorch.diffusion_policy as diffusion_policy
 from openpi.policies import metaworld_lerobot_policy
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
@@ -163,6 +164,12 @@ class ModelTransformFactory(GroupFactory):
                         )
                     ],
                 )
+            case _model.ModelType.DIFFUSION_POLICY:
+                # DP has no language prompt and uses raw state/action dims, so no tokenize/pad.
+                # Image resize happens in the model forward.
+                # Drop the prompt string so it doesn't leak into the torch batch (strings can't be
+                # converted to torch tensors).
+                return _transforms.Group(inputs=[_transforms.DropKeys(keys=("prompt",))])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -884,6 +891,65 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         pytorch_weight_path="/path/to/your/pytorch_weight_path",
         num_train_steps=30_000,
+    ),
+    #
+    # Diffusion Policy configs (PyTorch-only baseline for VLA comparison).
+    #
+    TrainConfig(
+        name="dp_metaworld",
+        # MetaWorld: state=4, actions=4. DP uses raw (non-padded) dims.
+        model=diffusion_policy.DiffusionPolicyConfig(
+            action_dim=4,
+            state_dim=4,
+            action_horizon=16,
+            camera_keys=("base_0_rgb", "left_wrist_0_rgb"),
+        ),
+        data=LeRobotMetaworldDataConfig(
+            repo_id="brandonyang/metaworld_ml45",
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+        ),
+        batch_size=64,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=1e-4,
+            decay_steps=99_500,
+            decay_lr=1e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=10.0, weight_decay=1e-6),
+        ema_decay=None,  # EMA not wired up in train_pytorch.py yet; add in follow-up.
+        num_train_steps=100_000,
+        num_workers=4,
+        save_interval=5_000,
+        keep_period=20_000,
+    ),
+    TrainConfig(
+        name="dp_libero",
+        # LIBERO: state=8, actions=7.
+        model=diffusion_policy.DiffusionPolicyConfig(
+            action_dim=7,
+            state_dim=8,
+            action_horizon=16,
+            camera_keys=("base_0_rgb", "left_wrist_0_rgb"),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id="physical-intelligence/libero",
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+        ),
+        batch_size=64,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=1e-4,
+            decay_steps=99_500,
+            decay_lr=1e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=10.0, weight_decay=1e-6),
+        ema_decay=None,
+        num_train_steps=100_000,
+        num_workers=4,
+        save_interval=5_000,
+        keep_period=20_000,
     ),
     #
     # Robocasa configs.

@@ -22,16 +22,16 @@ BasePolicy: TypeAlias = _base_policy.BasePolicy
 
 
 def collate_transformed_singles(singles: list[dict]) -> dict:
-    # TODO(branyang02): This is hardcoded, but it should be fine??
-
     # singles: list[dict] where each dict has keys:
-    # state (array), tokenized_prompt (array), tokenized_prompt_mask (array),
-    # image (dict[str, array]), image_mask (dict[str, array])
+    # state (array), image (dict[str, array]), image_mask (dict[str, array]),
+    # and optionally tokenized_prompt / tokenized_prompt_mask (VLA models only).
     out = {}
 
-    # Stack flat array fields
+    # Stack flat array fields. tokenized_prompt/mask are skipped for models that don't use a prompt
+    # (e.g., Diffusion Policy).
     for k in ["state", "tokenized_prompt", "tokenized_prompt_mask"]:
-        out[k] = jnp.stack([jnp.asarray(ex[k]) for ex in singles], axis=0)
+        if k in singles[0]:
+            out[k] = jnp.stack([jnp.asarray(ex[k]) for ex in singles], axis=0)
 
     # Stack nested dict fields
     for k in ["image", "image_mask"]:

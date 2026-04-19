@@ -40,7 +40,9 @@ import torch.nn.parallel
 import tqdm
 import wandb
 
+import openpi.models.model as _model
 import openpi.models.pi0_config
+import openpi.models_pytorch.diffusion_policy as diffusion_policy
 import openpi.models_pytorch.pi0_pytorch
 import openpi.shared.normalize as _normalize
 import openpi.training.config as _config
@@ -389,24 +391,29 @@ def train_loop(config: _config.TrainConfig):
             torch.cuda.empty_cache()
         logging.info("Cleared sample batch and data loader from memory")
 
-    # Build model
-    if not isinstance(config.model, openpi.models.pi0_config.Pi0Config):
-        # Convert dataclass to Pi0Config if needed
-        model_cfg = openpi.models.pi0_config.Pi0Config(
-            dtype=config.pytorch_training_precision,
-            action_dim=config.model.action_dim,
-            action_horizon=config.model.action_horizon,
-            max_token_len=config.model.max_token_len,
-            paligemma_variant=getattr(config.model, "paligemma_variant", "gemma_2b"),
-            action_expert_variant=getattr(config.model, "action_expert_variant", "gemma_300m"),
-            pi05=getattr(config.model, "pi05", False),
-        )
-    else:
+    # Build model — dispatch on model_type.
+    if config.model.model_type == _model.ModelType.DIFFUSION_POLICY:
+        assert isinstance(config.model, diffusion_policy.DiffusionPolicyConfig)
         model_cfg = config.model
-        # Update dtype to match pytorch_training_precision
-        object.__setattr__(model_cfg, "dtype", config.pytorch_training_precision)
+        model = diffusion_policy.DiffusionPolicy(model_cfg).to(device)
+    else:
+        if not isinstance(config.model, openpi.models.pi0_config.Pi0Config):
+            # Convert dataclass to Pi0Config if needed
+            model_cfg = openpi.models.pi0_config.Pi0Config(
+                dtype=config.pytorch_training_precision,
+                action_dim=config.model.action_dim,
+                action_horizon=config.model.action_horizon,
+                max_token_len=config.model.max_token_len,
+                paligemma_variant=getattr(config.model, "paligemma_variant", "gemma_2b"),
+                action_expert_variant=getattr(config.model, "action_expert_variant", "gemma_300m"),
+                pi05=getattr(config.model, "pi05", False),
+            )
+        else:
+            model_cfg = config.model
+            # Update dtype to match pytorch_training_precision
+            object.__setattr__(model_cfg, "dtype", config.pytorch_training_precision)
 
-    model = openpi.models_pytorch.pi0_pytorch.PI0Pytorch(model_cfg).to(device)
+        model = openpi.models_pytorch.pi0_pytorch.PI0Pytorch(model_cfg).to(device)
 
     if hasattr(model, "gradient_checkpointing_enable"):
         enable_gradient_checkpointing = True
@@ -497,7 +504,7 @@ def train_loop(config: _config.TrainConfig):
             f"Optimizer: {type(config.optimizer).__name__}, weight_decay={config.optimizer.weight_decay}, clip_norm={config.optimizer.clip_gradient_norm}"
         )
         logging.info("EMA is not supported for PyTorch training")
-        logging.info(f"Training precision: {model_cfg.dtype}")
+        logging.info(f"Training precision: {getattr(model_cfg, 'dtype', 'float32')}")
 
     # Training loop - iterate until we reach num_train_steps
     pbar = (
