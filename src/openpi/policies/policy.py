@@ -49,6 +49,7 @@ class Policy(BasePolicy):
         self,
         model: _model.BaseModel,
         *,
+        model_type: _model.ModelType,
         rng: at.KeyArrayLike | None = None,
         transforms: Sequence[_transforms.DataTransformFn] = (),
         output_transforms: Sequence[_transforms.DataTransformFn] = (),
@@ -61,6 +62,8 @@ class Policy(BasePolicy):
 
         Args:
             model: The model to use for action sampling.
+            model_type: Which architecture ``model`` is. Used to dispatch pi0-fast's
+                per-sample FAST-token decode path without probing ``model`` for attributes.
             rng: Random number generator key for JAX models. Ignored for PyTorch models.
             transforms: Input data transformations to apply before inference.
             output_transforms: Output data transformations to apply after inference.
@@ -71,6 +74,7 @@ class Policy(BasePolicy):
             is_pytorch: Whether the model is a PyTorch model. If False, assumes JAX model.
         """
         self._model = model
+        self._model_type = model_type
         self._input_transform = _transforms.compose(transforms)
         self._output_transform = _transforms.compose(output_transforms)
         self._sample_kwargs = sample_kwargs or {}
@@ -145,7 +149,7 @@ class Policy(BasePolicy):
 
         # pi0-fast returns raw tokens of shape (batch, max_decoding_steps). ExtractFASTActions
         # decodes one sample at a time, so apply the output transform per sample and re-stack.
-        if outputs["actions"].ndim == 2:
+        if self._model_type == _model.ModelType.PI0_FAST:
             per_sample_outputs = [
                 self._output_transform({"state": outputs["state"][i], "actions": outputs["actions"][i]})
                 for i in range(eval_batch_size)
@@ -208,7 +212,7 @@ class Policy(BasePolicy):
         Supports both PyTorch pi0/pi0.5 models (via forward hooks) and JAX pi0-fast
         models (via unrolled autoregressive decoding).
         """
-        is_fast = hasattr(self._model, "sample_actions_with_intermediates") and not self._is_pytorch_model
+        is_fast = self._model_type == _model.ModelType.PI0_FAST and not self._is_pytorch_model
 
         if not self._is_pytorch_model and not is_fast:
             raise NotImplementedError(
