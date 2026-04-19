@@ -112,16 +112,18 @@ MetaWorld collects **in-process** (no server needed): `--collect` makes the scri
 CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/main.py \
     --collect --env_name reach-v3 --num_envs 16 \
     --policy.config=pi05_metaworld \
-    --policy.dir=checkpoints/openpi-metaworld-5000
+    --policy.dir=checkpoints/openpi-metaworld-5000 \
+    --collect_output_dir ./activations
 
 # Full sweep — pi0-FAST (JAX):
 CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
     --collect --split subset --num_envs 16 \
     --policy.config=pi0_fast_metaworld \
-    --policy.dir=checkpoints/pi0_fast_metaworld/pi0_fast_metaworld_b200_bs512/2500
+    --policy.dir=checkpoints/pi0_fast_metaworld/pi0_fast_metaworld_b200_bs512/2500 \
+    --collect_output_dir ./activations
 ```
 
-Start `--num_envs` at 16 and halve it if you OOM — memory scales linearly. `eval_all.py --gpus 0 1 ...` round-robins tasks across GPUs (pi0.5 only today; pi0-FAST multi-GPU sharding is not yet wired up).
+Start `--num_envs` at 16 and halve it if you OOM — memory scales linearly.
 
 Pre-collected datasets and per-schema file lists are in the canonical reference.
 

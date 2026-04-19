@@ -254,19 +254,19 @@ No server involved. The entry-point script loads the policy from
 CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/main.py \
     --collect --env_name reach-v3 --num_envs 16 \
     --policy.config=pi05_metaworld \
-    --policy.dir=checkpoints/openpi-metaworld-5000
+    --policy.dir=/path/to/checkpoint \
+    --collect_output_dir ./activations
 
 # Full sweep — pi0-FAST (JAX):
 CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
     --collect --split subset --num_envs 16 \
     --policy.config=pi0_fast_metaworld \
-    --policy.dir=checkpoints/pi0_fast_metaworld/pi0_fast_metaworld_b200_bs512/2500
+    --policy.dir=/path/to/checkpoint \
+    --collect_output_dir ./activations
 ```
 
-Activations go to `--collect_output_dir` (default `./activations`). Videos
-and `results.json` continue to go to `--output_dir`, unaffected by
-`--collect`. `--gpus 0 1 ...` on `eval_all.py` round-robins tasks across
-GPUs via subprocess dispatch (pi0.5 only today).
+Videos and `results.json` continue to go to `--output_dir`, unaffected by
+`--collect`.
 
 ### LIBERO / RoboCasa / DROID (server-side)
 
@@ -275,7 +275,7 @@ Start a collection-mode policy server in one terminal, run the client with
 shared `CollectionSession` helper.
 
 ```bash
-# Terminal 1 — pi0.5 diffusion (PyTorch required for infer_with_intermediates):
+# Terminal 1 — pi0.5 diffusion (PyTorch required for activation collection):
 export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py --pytorch --collect_activations \
     --output-dir ./activations \
@@ -287,7 +287,7 @@ export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py --collect_activations \
     --output-dir ./activations \
     policy:checkpoint --policy.config=pi0_fast_libero \
-    --policy.dir=checkpoints/pi0_fast_libero/.../2000
+    --policy.dir=/path/to/checkpoint
 
 # Terminal 1 (alternative) — GR00T N1.5 (PyTorch-only, no --pytorch flag needed):
 cd groot_env

@@ -63,7 +63,8 @@ export CUDA_VISIBLE_DEVICES=<GPU>
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
     --collect --split <SPLIT> --num_envs 16 \
     --policy.config=pi05_metaworld \
-    --policy.dir=<CHECKPOINT>
+    --policy.dir=<CHECKPOINT> \
+    --collect_output_dir ./activations
 ```
 
 **Single task:**
@@ -72,12 +73,12 @@ export CUDA_VISIBLE_DEVICES=<GPU>
 MUJOCO_GL=egl uv run examples/metaworld/main.py \
     --collect --env_name <TASK> --num_envs 16 \
     --policy.config=pi05_metaworld \
-    --policy.dir=<CHECKPOINT>
+    --policy.dir=<CHECKPOINT> \
+    --collect_output_dir ./activations
 ```
 
 For a task subset, use `--tasks reach-v3 push-v3 ...` on `eval_all.py` (skips `--split`).
 For multi-GPU, use `--gpus 0 1` on `eval_all.py` instead of `CUDA_VISIBLE_DEVICES`.
-`--collect_output_dir` (default `./activations`) overrides the activation root.
 
 ### LIBERO — Server + Client (two commands, two venvs)
 
