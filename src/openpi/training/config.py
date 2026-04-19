@@ -666,6 +666,46 @@ class TrainConfig:
             raise ValueError("Cannot resume and overwrite at the same time.")
 
 
+def _make_dp_config(
+    *,
+    name: str,
+    model: "diffusion_policy.DiffusionPolicyConfig",
+    data: "DataConfigFactory",
+    batch_size: int = 64,
+    num_train_steps: int = 100_000,
+    warmup_steps: int = 500,
+    peak_lr: float = 1e-4,
+    decay_lr: float = 1e-5,
+    num_workers: int = 4,
+    save_interval: int = 5_000,
+    keep_period: int | None = 20_000,
+) -> TrainConfig:
+    """Build a TrainConfig for Diffusion Policy with shared defaults.
+
+    DP hyperparams that don't vary across envs (LR schedule, optimizer, batch size, step count,
+    save cadence) live here to prevent drift across dp_metaworld / dp_libero / dp_robocasa / etc.
+    Per-env differences (action/state dim, dataset) are passed in via ``model`` and ``data``.
+    """
+    return TrainConfig(
+        name=name,
+        model=model,
+        data=data,
+        batch_size=batch_size,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=warmup_steps,
+            peak_lr=peak_lr,
+            decay_steps=num_train_steps - warmup_steps,
+            decay_lr=decay_lr,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=10.0, weight_decay=1e-6),
+        ema_decay=None,  # EMA not wired up in train_pytorch.py yet; add in follow-up.
+        num_train_steps=num_train_steps,
+        num_workers=num_workers,
+        save_interval=save_interval,
+        keep_period=keep_period,
+    )
+
+
 # Use `get_config` if you need to get a config by name in your code.
 _CONFIGS = [
     #
@@ -894,8 +934,11 @@ _CONFIGS = [
     ),
     #
     # Diffusion Policy configs (PyTorch-only baseline for VLA comparison).
-    #
-    TrainConfig(
+    # Shared DP training hyperparameters (batch, LR schedule, optimizer, steps, save cadence) are kept
+    # identical across envs via _make_dp_config below. Per-env differences live in the model (state/action
+    # dims) and data configs. Adding a new env should only mean adding a DiffusionPolicyConfig + data
+    # config and calling _make_dp_config.
+    _make_dp_config(
         name="dp_metaworld",
         # MetaWorld: state=4, actions=4. DP uses raw (non-padded) dims.
         model=diffusion_policy.DiffusionPolicyConfig(
@@ -909,21 +952,8 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
         ),
-        batch_size=64,
-        lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=500,
-            peak_lr=1e-4,
-            decay_steps=99_500,
-            decay_lr=1e-5,
-        ),
-        optimizer=_optimizer.AdamW(clip_gradient_norm=10.0, weight_decay=1e-6),
-        ema_decay=None,  # EMA not wired up in train_pytorch.py yet; add in follow-up.
-        num_train_steps=100_000,
-        num_workers=4,
-        save_interval=5_000,
-        keep_period=20_000,
     ),
-    TrainConfig(
+    _make_dp_config(
         name="dp_libero",
         # LIBERO: state=8, actions=7.
         model=diffusion_policy.DiffusionPolicyConfig(
@@ -937,19 +967,6 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
         ),
-        batch_size=64,
-        lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=500,
-            peak_lr=1e-4,
-            decay_steps=99_500,
-            decay_lr=1e-5,
-        ),
-        optimizer=_optimizer.AdamW(clip_gradient_norm=10.0, weight_decay=1e-6),
-        ema_decay=None,
-        num_train_steps=100_000,
-        num_workers=4,
-        save_interval=5_000,
-        keep_period=20_000,
     ),
     #
     # Robocasa configs.
