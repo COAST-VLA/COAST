@@ -155,7 +155,7 @@ def test_eval_all_args_defaults():
     assert args.collect is False
     assert args.gpus == []
     assert args.tasks == []
-    # Default split is the curated 10-task subset — tasks whose success rate
+    # Default split is the curated 26-task subset — tasks whose success rate
     # varies meaningfully across training checkpoints (see eval_all.py::SUBSET).
     assert args.split == "subset"
     assert args.collect_output_dir == "./activations"

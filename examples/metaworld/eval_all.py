@@ -47,19 +47,35 @@ import tyro
 logger = logging.getLogger(__name__)
 
 
-# Curated subset of 10 ML45-train tasks (tasks whose success rate varies
+# Curated subset of 26 ML45-train tasks (tasks whose success rate varies
 # meaningfully across training checkpoints — used for faster iteration).
 SUBSET = [
     "assembly-v3",
+    "basketball-v3",
+    "coffee-pull-v3",
+    "coffee-push-v3",
     "disassemble-v3",
+    "door-open-v3",
+    "faucet-close-v3",
     "hammer-v3",
     "handle-pull-side-v3",
+    "handle-pull-v3",
     "lever-pull-v3",
     "peg-insert-side-v3",
+    "pick-out-of-hole-v3",
+    "pick-place-v3",
     "pick-place-wall-v3",
     "plate-slide-back-side-v3",
     "plate-slide-back-v3",
+    "push-back-v3",
+    "push-v3",
+    "reach-v3",
+    "shelf-place-v3",
+    "soccer-v3",
+    "stick-pull-v3",
     "stick-push-v3",
+    "sweep-into-v3",
+    "sweep-v3",
 ]
 
 

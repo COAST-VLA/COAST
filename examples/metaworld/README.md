@@ -89,7 +89,7 @@ Default output: `examples/metaworld/output/<env_name>/`. Override with `--output
 Pick a split or a task subset:
 
 ```bash
-# Curated 10-task subset (default; the tasks with the most success-rate
+# Curated 26-task subset (default; the tasks with the most success-rate
 # variation across training checkpoints)
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split subset
 

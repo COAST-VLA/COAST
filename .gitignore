@@ -12,7 +12,11 @@ pi05-metaworld-activations-v2-15env/
 pi05-libero-activations-v1-2000-15env/
 groot_n15-robocasa-activations-v1-15env/
 pi0fast-metaworld-activations-v1-15env/
+pi0fast-metaworld-activations-v1-26subset-15env/
 pi0fast-libero-activations-v1-2000-15env/
+
+# Local smoke-test scratch
+smoke_outputs/
 
 # Analysis outputs
 results/
