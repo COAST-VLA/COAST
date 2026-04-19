@@ -5,18 +5,13 @@ data/
 wandb/
 pi05_pretrain_human300/
 
-# Activation datasets (see HuggingFace for remote copies)
-pi05-metaworld-activations-v1-2env/
-pi05-metaworld-activations-v1-15env/
-pi05-metaworld-activations-v2-15env/
-pi05-libero-activations-v1-2000-15env/
-groot_n15-robocasa-activations-v1-15env/
-pi0fast-metaworld-activations-v1-15env/
-pi0fast-metaworld-activations-v1-26subset-15env/
-pi0fast-libero-activations-v1-2000-15env/
+# Activation datasets (see HuggingFace for remote copies). Named runs live
+# under activations/<dataset-name>/; ad-hoc runs land at activations/<checkpoint_step>/.
+activations/
 
-# Local smoke-test scratch
-smoke_outputs/
+# Transitional: an in-flight pi0-FAST subset run still writes to the old
+# top-level location. Remove this line once the dataset is moved under activations/.
+pi0fast-metaworld-activations-v1-26subset-15env/
 
 # Analysis outputs
 results/

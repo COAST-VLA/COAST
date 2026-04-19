@@ -91,7 +91,7 @@ Videos and `results.json` land under `output/...` exactly as for pi0.5.
 cd groot_env
 export CUDA_VISIBLE_DEVICES=0
 uv run python serve.py --port 8000 --collect_activations \
-    --output-dir ../groot_n15-robocasa-activations-v1-15env
+    --output-dir ../activations/groot_n15-robocasa-activations-v1-15env
 # …then run any client with --collect (see examples/robocasa_env/README.md).
 ```
 
@@ -116,11 +116,11 @@ Where `D = num_denoising_steps`, `L = num_dit_layers`, `H = action_horizon`, `A 
 # Deep invariants for ONE task: directory layout, metadata fields, reward
 # array/length agreement, dtype/shape strictness, flow-matching norm signature,
 # cross-episode variation.
-ACTIVATIONS_DIR=../groot_n15-robocasa-activations-v1-15env/checkpoint-120000/OpenDrawer \
+ACTIVATIONS_DIR=../activations/groot_n15-robocasa-activations-v1-15env/checkpoint-120000/OpenDrawer \
     uv run pytest tests/test_groot_activations.py -v
 
 # Sweep every task in a dataset:
-for task in ../groot_n15-robocasa-activations-v1-15env/checkpoint-120000/*/; do
+for task in ../activations/groot_n15-robocasa-activations-v1-15env/checkpoint-120000/*/; do
     ACTIVATIONS_DIR="$task" uv run pytest tests/test_groot_activations.py -v
 done
 ```

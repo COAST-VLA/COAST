@@ -120,9 +120,10 @@ WebSocket policy server. Collection-mode server (`--collect_activations`) saves 
 Always use the `hf download` CLI and download into the project tree — never into `~/.cache/huggingface` or any user-global cache.
 
 ```bash
-# Datasets (e.g., activation datasets) — local dir mirrors the repo basename
+# Activation datasets — land under activations/<dataset-name>/ (one
+# canonical root so mech-interp tooling + .gitignore can use a single rule)
 hf download brandonyang/pi05-metaworld-activations-v2-15env \
-    --repo-type dataset --local-dir pi05-metaworld-activations-v2-15env
+    --repo-type dataset --local-dir activations/pi05-metaworld-activations-v2-15env
 
 # Checkpoints — place under checkpoints/, optionally --include a subpath
 hf download robocasa/robocasa365_checkpoints \

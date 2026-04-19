@@ -293,7 +293,7 @@ uv run scripts/serve_policy.py --collect_activations \
 cd groot_env
 export CUDA_VISIBLE_DEVICES=0
 uv run python serve.py --port 8000 --collect_activations \
-    --output-dir ../groot_n15-robocasa-activations-v1-15env
+    --output-dir ../activations/groot_n15-robocasa-activations-v1-15env
 ```
 
 ```bash
@@ -326,7 +326,7 @@ ACTIVATIONS_DIR=./activations/5000/reach-v3 \
 
 # GR00T N1.5 (groot_v1 schema):
 cd groot_env
-ACTIVATIONS_DIR=../groot_n15-robocasa-activations-v1-15env/checkpoint-120000/OpenDrawer \
+ACTIVATIONS_DIR=../activations/groot_n15-robocasa-activations-v1-15env/checkpoint-120000/OpenDrawer \
     uv run pytest tests/test_groot_activations.py -v
 ```
 

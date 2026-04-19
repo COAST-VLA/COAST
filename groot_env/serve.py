@@ -62,9 +62,12 @@ class Args:
     collect_activations: bool = False
     # Server-side root directory for saved activations. Activations land at
     # <output_dir>/<checkpoint_step>/<task_name>/episode_NNN_env_NNN/step_NNNN/.
-    # Only used when --collect_activations is set. Default name matches the
-    # `pi05-*-activations-v1-*` convention in the repo root .gitignore.
-    output_dir: str = "../groot_n15-robocasa-activations-v1-15env"
+    # Only used when --collect_activations is set. Relative path is resolved
+    # against `groot_env/`, so the default points at the repo-root
+    # ``activations/`` dir that the other servers (`scripts/serve_policy.py`)
+    # and MetaWorld's in-process collector also default to. For named dataset
+    # runs, pass ``--output-dir ../activations/<dataset-name>/``.
+    output_dir: str = "../activations"
 
 
 def _build_policy(args: Args):

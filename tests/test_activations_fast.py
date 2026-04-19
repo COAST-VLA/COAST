@@ -10,11 +10,11 @@ need their own validator.
 Run after collecting activations, pointing at one task directory:
 
     # metaworld pi0-fast
-    ACTIVATIONS_FAST_DIR=pi0fast-metaworld-activations-v1-15env/2500/reach-v3 \\
+    ACTIVATIONS_FAST_DIR=activations/pi0fast-metaworld-activations-v1-15env/2500/reach-v3 \\
         uv run pytest tests/test_activations_fast.py -v
 
     # libero pi0-fast
-    ACTIVATIONS_FAST_DIR=pi0fast-libero-activations-v1-2000-15env/2000/LIVING_ROOM_SCENE2_put_both_the_cream_cheese_box_and_the_butter_in_the_basket \\
+    ACTIVATIONS_FAST_DIR=activations/pi0fast-libero-activations-v1-2000-15env/2000/LIVING_ROOM_SCENE2_put_both_the_cream_cheese_box_and_the_butter_in_the_basket \\
         uv run pytest tests/test_activations_fast.py -v
 
 The env-var gate is the same as ``tests/test_activations.py`` (default path is
@@ -32,7 +32,7 @@ import pytest
 
 ACTIVATIONS_FAST_DIR = os.environ.get(
     "ACTIVATIONS_FAST_DIR",
-    "pi0fast-metaworld-activations-v1-15env/2500/reach-v3",
+    "activations/pi0fast-metaworld-activations-v1-15env/2500/reach-v3",
 )
 
 
