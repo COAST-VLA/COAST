@@ -44,18 +44,15 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_libero \
 Start the policy server from the repo root (root venv):
 
 ```bash
-# Default LIBERO policy:
-uv run scripts/serve_policy.py --env LIBERO
-
-# Specific checkpoint — pi0.5 (JAX by default; add --pytorch for PyTorch):
+# pi0.5 (JAX by default; add --pytorch for PyTorch):
 uv run scripts/serve_policy.py policy:checkpoint \
     --policy.config=pi05_libero \
-    --policy.dir=path/to/checkpoint
+    --policy.dir=/path/to/checkpoint
 
 # pi0-FAST (JAX only — no PyTorch port):
 uv run scripts/serve_policy.py policy:checkpoint \
     --policy.config=pi0_fast_libero \
-    --policy.dir=checkpoints/pi0_fast_libero/pi0_fast_libero_b200_bs512/2000
+    --policy.dir=/path/to/checkpoint
 ```
 
 ## Evaluation
@@ -115,16 +112,19 @@ export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py --collect_activations \
     --output-dir ./activations \
     policy:checkpoint --policy.config=pi0_fast_libero \
-    --policy.dir=checkpoints/pi0_fast_libero/pi0_fast_libero_b200_bs512/2000
+    --policy.dir=/path/to/checkpoint
 ```
 
 Client (this venv):
 
 ```bash
 cd examples/libero_env
-MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_spatial --collect --num_workers 5
-# or a single task:
-MUJOCO_GL=egl uv run python main.py --task_suite_name libero_spatial --task_id 0 --collect
+
+# Single task (defaults: --task_suite_name libero_10 --task_id 0):
+MUJOCO_GL=egl uv run python main.py --collect --num_episodes 15
+
+# Full suite — default libero_10, parallelized across tasks:
+MUJOCO_GL=egl uv run python eval_all.py --collect --num_episodes 15 --num_workers 5
 ```
 
 Pre-collected datasets:
