@@ -176,11 +176,16 @@ Both paths write per-episode `metadata.json` + `rewards.npz` identically. Per-st
 Pre-collected activation datasets are available on HuggingFace if you want to skip collection:
 
 ```bash
+# pi0.5 diffusion — v1 schema (denoising / adarms_cond / suffix_residual / suffix_mlp_hidden):
 # 15 envs per task — 357 GB
 hf download brandonyang/pi05-metaworld-activations-v1-15env --repo-type dataset --local-dir pi05-metaworld-activations-v1-15env
 
 # 2 envs per task — 20 GB
 hf download brandonyang/pi05-metaworld-activations-v1-2env --repo-type dataset --local-dir pi05-metaworld-activations-v1-2env
+
+# pi0-fast autoregressive — fast_v1 schema (tokens / hidden_states / token_logprobs):
+# 15 envs per task, 2500-step checkpoint, 10-task subset — 4.2 GB
+hf download brandonyang/pi0fast-metaworld-activations-v1-15env --repo-type dataset --local-dir pi0fast-metaworld-activations-v1-15env
 ```
 
 ### Running Collection
