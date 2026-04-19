@@ -1,10 +1,16 @@
-"""Shared activation-collection utilities used by both the metaworld
-collect_activations.py script and the WebSocket policy server's
-collection mode.
+"""GR00T N1.5 activation-collection wrapper for the WebSocket policy server.
 
-The on-disk schema (file names, dtypes, metadata.json fields, directory layout)
-is the source of truth for downstream mech-interp tooling. Both metaworld and
-libero (and any future env) write the same format via these helpers.
+Independent of the pi0-side ``src/openpi/serving/activation_collector.py`` —
+lives here because GR00T has its own venv (torch 2.5.1, conflicts with the root
+openpi env). The on-disk schema (``groot_v1``) is distinct from pi0's ``v1``
+(denoising is the same file, but conditioning + per-layer tensors have
+GR00T-specific names; see ``save_step_activations`` below).
+
+The ``__collect__`` / ``__finalize_episode__`` wire protocol, task-name
+sanitization, per-episode ``metadata.json`` + ``rewards.npz`` layout, and
+``_intermediates_lock`` concurrency guard all mirror the pi0-side
+``CollectingPolicy`` so the same robocasa client can `--collect` against either
+backend without changes.
 """
 
 from __future__ import annotations
@@ -137,7 +143,17 @@ class CollectingPolicy(_base_policy.BasePolicy):
             **underlying,
             "policy_dir": str(self._policy_dir),
             "config_name": self._config_name,
-            "collection_mode": "v1",
+            # collection_mode is the on-disk schema identifier. "groot_v1" is
+            # GR00T's DiT-plus-backbone layout — distinct from pi0's "v1"
+            # (suffix_residual/adarms_cond) and pi0-fast's "fast_v1" (tokens/
+            # hidden_states/token_logprobs). Downstream tools should key off
+            # this field, not the backend, to pick the right loader.
+            "collection_mode": "groot_v1",
+            # Parallels the pi0-side model_type field ("pi0" / "pi05" / "pi0_fast").
+            # Not the same as `backend` above — backend is a free-form label;
+            # model_type is the uniform identifier shared across all collection
+            # servers in this repo.
+            "model_type": "groot_n15",
             "checkpoint_step": self._checkpoint_step,
             "output_root": str(self._output_root),
         }

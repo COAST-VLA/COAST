@@ -263,7 +263,11 @@ class TestCollectingPolicyMetadata:
         policy, _ = _make_policy(tmp_path)
         meta = policy.metadata
         assert meta["underlying"] == "stub"  # from stub
-        assert meta["collection_mode"] == "v1"
+        # Schema identifier: "groot_v1" is GR00T's DiT+backbone layout, distinct
+        # from pi0's "v1" (suffix_residual/adarms_cond) and pi0-fast's "fast_v1".
+        assert meta["collection_mode"] == "groot_v1"
+        # Uniform model_type field shared across all collection servers.
+        assert meta["model_type"] == "groot_n15"
         assert meta["checkpoint_step"] == "checkpoint-120000"
         assert meta["config_name"] == "groot_n15_robocasa"
 
