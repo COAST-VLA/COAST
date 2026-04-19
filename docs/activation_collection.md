@@ -278,14 +278,14 @@ shared `CollectionSession` helper.
 # Terminal 1 — pi0.5 diffusion (PyTorch required for activation collection):
 export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py --pytorch --collect_activations \
-    --output-dir ./activations/pi05-libero-activations-v1-15env \
+    --output-dir ./activations \
     policy:checkpoint --policy.config=pi05_libero \
     --policy.dir=/path/to/checkpoint
 
 # Terminal 1 (alternative) — pi0-FAST autoregressive (JAX only):
 export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py --collect_activations \
-    --output-dir ./activations/pi0fast-libero-activations-v1-15env \
+    --output-dir ./activations \
     policy:checkpoint --policy.config=pi0_fast_libero \
     --policy.dir=/path/to/checkpoint
 
@@ -293,8 +293,8 @@ uv run scripts/serve_policy.py --collect_activations \
 cd groot_env
 export CUDA_VISIBLE_DEVICES=0
 uv run python serve.py --port 8000 --collect_activations \
-    --model-path ../checkpoints/groot_n15/gr00t_n1-5/multitask_learning/checkpoint-120000 \
-    --output-dir ../activations/groot_n15-robocasa-activations-v1-15env
+    --model-path /path/to/checkpoint \
+    --output-dir ../activations
 ```
 
 ```bash
@@ -321,9 +321,15 @@ Env-var-driven pytest suites validate a collected tree. Skipped in CI when
 `ACTIVATIONS_DIR` is unset.
 
 ```bash
-# pi0 / pi0.5 / pi0-FAST (works on any env that wrote v1 or fast_v1):
+# pi0 / pi0.5 diffusion (v1 schema — denoising.npz / adarms_cond.npz /
+# suffix_residual.npz / suffix_mlp_hidden.npz):
 ACTIVATIONS_DIR=./activations/5000/reach-v3 \
     uv run pytest tests/test_activations.py -v
+
+# pi0-FAST autoregressive (fast_v1 schema — tokens.npz / hidden_states.npz /
+# token_logprobs.npz). Uses ACTIVATIONS_FAST_DIR, not ACTIVATIONS_DIR:
+ACTIVATIONS_FAST_DIR=./activations/pi0fast-metaworld-activations-v1-15env/2500/reach-v3 \
+    uv run pytest tests/test_activations_fast.py -v
 
 # GR00T N1.5 (groot_v1 schema):
 cd groot_env
@@ -342,7 +348,6 @@ of running your own collection:
 | Backend | Client | Dataset | Notes |
 |---|---|---|---|
 | pi0.5 (`v1`)     | MetaWorld | [`brandonyang/pi05-metaworld-activations-v1-15env`](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v1-15env) | 15 envs × 45 tasks, 357 GB |
-| pi0.5 (`v1`)     | MetaWorld | [`brandonyang/pi05-metaworld-activations-v1-2env`](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v1-2env)   | 2 envs × 45 tasks, 20 GB |
 | pi0-FAST (`fast_v1`) | MetaWorld | [`brandonyang/pi0fast-metaworld-activations-v1-15env`](https://huggingface.co/datasets/brandonyang/pi0fast-metaworld-activations-v1-15env) | 10-task subset, 2500-step checkpoint, 4.2 GB |
 | pi0.5 (`v1`)     | LIBERO    | [`brandonyang/pi05-libero-activations-v1-2000-15env`](https://huggingface.co/datasets/brandonyang/pi05-libero-activations-v1-2000-15env) | 2000-step checkpoint, 10 tasks × 15 episodes |
 | pi0-FAST (`fast_v1`) | LIBERO | [`brandonyang/pi0fast-libero-activations-v1-2000-15env`](https://huggingface.co/datasets/brandonyang/pi0fast-libero-activations-v1-2000-15env) | libero_10, 2000-step, 1.1 GB, mean success 0.65 |

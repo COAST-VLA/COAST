@@ -120,7 +120,7 @@ uv run scripts/serve_policy.py --pytorch --collect_activations \
 # pi0-FAST autoregressive (JAX):
 export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py --collect_activations \
-    --output-dir ./activations/pi0fast-libero-activations-v1-2000-15env \
+    --output-dir ./activations \
     policy:checkpoint --policy.config=pi0_fast_libero \
     --policy.dir=checkpoints/pi0_fast_libero/pi0_fast_libero_b200_bs512/2000
 ```
