@@ -69,6 +69,37 @@ TrainConfig(
 - [`brandonyang/openpi-libero-3000`](https://huggingface.co/brandonyang/openpi-libero-3000)
 - [`brandonyang/openpi-libero-9000`](https://huggingface.co/brandonyang/openpi-libero-9000)
 
+### Diffusion Policy baseline (PyTorch-only)
+
+`dp_libero` is a non-VLA baseline (Chi et al., CNN 1D U-Net) for comparison against pi0/pi0.5. It's trained via the PyTorch entry point; evaluation reuses the existing LIBERO server/client flow but `serve_policy.py` **must** be launched with `--pytorch` (DP has no JAX path).
+
+```bash
+# 1. Norm stats (once per dataset).
+uv run scripts/compute_norm_stats.py --config-name dp_libero
+
+# 2a. Train single-GPU (defaults: 100k steps, batch 64, DDPM-100 / DDIM-10).
+CUDA_VISIBLE_DEVICES=0 uv run scripts/train_pytorch.py dp_libero \
+    --exp-name dp_libero_test \
+    --overwrite
+
+# 2b. Train multi-GPU via torchrun (DDP; batch_size is the total across GPUs).
+CUDA_VISIBLE_DEVICES=0,1 uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 \
+    scripts/train_pytorch.py dp_libero \
+    --exp-name dp_libero_test \
+    --overwrite
+
+# 3. Serve the resulting checkpoint. --pytorch is required.
+uv run scripts/serve_policy.py --pytorch policy:checkpoint \
+    --policy.config=dp_libero \
+    --policy.dir=checkpoints/dp_libero/dp_libero_test/<step>
+```
+
+Then run `main.py` / `eval_all.py` from `examples/libero_env/` exactly as documented under [Evaluation](#evaluation) below — the client talks to the server and doesn't need to know which model is loaded.
+
+Activation collection (`--collect`) is not supported for DP — the collection path is pi0/pi0-FAST/pi0.5 only.
+
+**Caveat — unconditional baseline.** `dp_libero` trains on the `physical-intelligence/libero` dataset but the DP model consumes only images + state; the data pipeline drops the task prompt and the model has no task ID / one-hot input (same as `dp_metaworld`). Loss converges against the mixture but per-task success rates are expected to be weak since DP can't distinguish tasks given the same arm pose. For fair per-task numbers, train one DP per task or extend the model with a task embedding.
+
 ## Evaluation
 
 ### Serving the LIBERO Policy
