@@ -163,7 +163,13 @@ examples/libero_env/output/<task_suite_name>/
 ### Downloading Pre-Collected Activations
 
 ```bash
-hf download brandonyang/pi05-libero-activations-v1-2000-15env --repo-type dataset --local-dir pi05_libero_activations-v1-2000-15env
+# pi0.5 diffusion — v1 schema (denoising / adarms_cond / suffix_residual / suffix_mlp_hidden):
+# 2000-step checkpoint, 10 tasks × 15 episodes
+hf download brandonyang/pi05-libero-activations-v1-2000-15env --repo-type dataset --local-dir pi05-libero-activations-v1-2000-15env
+
+# pi0-fast autoregressive — fast_v1 schema (tokens / hidden_states / token_logprobs):
+# 2000-step checkpoint, libero_10, 15 episodes/task — 1.1 GB, mean success 0.65
+hf download brandonyang/pi0fast-libero-activations-v1-2000-15env --repo-type dataset --local-dir pi0fast-libero-activations-v1-2000-15env
 ```
 
 For mech-interp work you can have the policy server save per-step intermediate
