@@ -183,7 +183,6 @@ def run_local(args: Args) -> None:
     env_names = _resolve_tasks(args)
     logger.info(f"Evaluating {len(env_names)} tasks")
 
-
     policy, collect_extras = load_policy(args)
 
     results_path = os.path.join(output_dir, "results.json")

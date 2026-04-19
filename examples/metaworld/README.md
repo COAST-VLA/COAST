@@ -64,6 +64,35 @@ TrainConfig(
 - [`brandonyang/openpi-metaworld-5000`](https://huggingface.co/brandonyang/openpi-metaworld-5000)
 - [`brandonyang/openpi-metaworld-25000`](https://huggingface.co/brandonyang/openpi-metaworld-25000)
 
+### pi0-fast MetaWorld
+
+`pi0_fast_metaworld` is an autoregressive alternative to `pi05_metaworld`. Config:
+
+```python
+TrainConfig(
+    name="pi0_fast_metaworld",
+    model=pi0_fast.Pi0FASTConfig(action_dim=4, action_horizon=32, max_token_len=250),
+    data=LeRobotMetaworldDataConfig(
+        repo_id="brandonyang/metaworld_ml45",
+        base_config=DataConfig(prompt_from_task=True),
+        extra_delta_transform=False,
+    ),
+    batch_size=512,
+    num_train_steps=2_501,
+    keep_period=500,
+    weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
+),
+```
+
+Released checkpoints:
+- [`brandonyang/pi0fast-metaworld-checkpoints`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints) (1000, 2000, 2500 steps)
+
+```bash
+hf download brandonyang/pi0fast-metaworld-checkpoints \
+    --include "pi0_fast_metaworld_b200_bs512/2500/*" \
+    --local-dir checkpoints/pi0_fast_metaworld
+```
+
 ## Evaluation
 
 Normal evaluation uses a server-client architecture: `scripts/serve_policy.py` hosts the model and serves actions over WebSocket; `main.py` / `eval_all.py` run the envs and query the server at each step. Both run from the repo root.
@@ -89,6 +118,11 @@ uv run scripts/serve_policy.py policy:checkpoint \
 uv run scripts/serve_policy.py --pytorch policy:checkpoint \
     --policy.config=pi05_metaworld \
     --policy.dir=checkpoints/openpi-metaworld-5000
+
+# pi0-fast (JAX only — no PyTorch port):
+uv run scripts/serve_policy.py policy:checkpoint \
+    --policy.config=pi0_fast_metaworld \
+    --policy.dir=checkpoints/pi0_fast_metaworld/pi0_fast_metaworld_b200_bs512/2500
 ```
 
 ### Run evaluation (Terminal 2)
@@ -102,11 +136,15 @@ MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
 **Full sweep** (`eval_all.py`) — pick a split or a task subset:
 
 ```bash
+# Curated 10-task subset (DEFAULT; faster iteration — tasks with the most
+# success-rate variation across training checkpoints)
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split subset
+
 # ML45 train split (45 tasks) or test split (5 held-out tasks)
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
 
-# Specific tasks
+# Specific tasks (overrides --split)
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --tasks reach-v3 push-v3 pick-place-v3
 ```
 
@@ -123,9 +161,15 @@ Metaworld parallelizes **in-process**: `--num_envs N` runs N envs of the same ta
 
 ## Collecting Activations for Mechanistic Interpretability
 
-The same `main.py` and `eval_all.py` accept a `--collect` flag. Unlike the libero and robocasa examples (which route activations through a dedicated collection server), metaworld activation collection runs **in-process**: when `--collect` is set, the script loads the PyTorch policy directly, bypassing the WebSocket server, and saves intermediate activations during rollout. This preserves metaworld's batched `AsyncVectorEnv` inference and enables per-GPU task sharding via `eval_all.py --gpus`.
+The same `main.py` and `eval_all.py` accept a `--collect` flag. Unlike the libero and robocasa examples (which route activations through a dedicated collection server), metaworld activation collection runs **in-process**: when `--collect` is set, the script loads the policy directly, bypassing the WebSocket server, and saves intermediate activations during rollout. This preserves metaworld's batched `AsyncVectorEnv` inference and enables per-GPU task sharding via `eval_all.py --gpus`.
 
 **No server needed for `--collect`** — the script loads the policy itself from `--policy.dir`. Activations are written to `--collect_output_dir` (default `./activations`) using the same on-disk schema as libero and robocasa collection. Videos and `results.json` continue to go to `--output_dir`, unaffected by `--collect`. `--gpus` is only valid together with `--collect`; for normal (WebSocket-served) eval, pin a single GPU with `CUDA_VISIBLE_DEVICES`.
+
+`load_policy` auto-detects the model architecture and picks the right backend:
+- **pi0 / pi0.5** (diffusion): loads a PyTorch checkpoint (via `ensure_pytorch_checkpoint`). Intermediates are captured with `register_forward_hook` over the 10 denoising steps.
+- **pi0-fast** (autoregressive): loads the JAX checkpoint (no PyTorch port exists). Intermediates are written inside a JIT-compiled `jax.lax.while_loop` decode; per-token hidden states / logprobs / token IDs go into pre-allocated buffers.
+
+Both paths write per-episode `metadata.json` + `rewards.npz` identically. Per-step files differ by architecture (see "Output Structure" below).
 
 ### Downloading Pre-Collected Activations
 
@@ -144,17 +188,26 @@ hf download brandonyang/pi05-metaworld-activations-v1-2env --repo-type dataset -
 **Single task** (`main.py --collect`):
 
 ```bash
+# pi0.5 diffusion (PyTorch):
 CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/main.py \
     --collect --env_name reach-v3 --num_envs 16 \
+    --policy.config=pi05_metaworld \
     --policy.dir=checkpoints/openpi-metaworld-5000
+
+# pi0-fast autoregressive (JAX):
+CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/main.py \
+    --collect --env_name reach-v3 --num_envs 16 \
+    --policy.config=pi0_fast_metaworld \
+    --policy.dir=checkpoints/pi0_fast_metaworld/pi0_fast_metaworld_b200_bs512/2500
 ```
 
-**Full sweep** (`eval_all.py --collect`) — use `--split train|test` or `--tasks t1 t2 ...`:
+**Full sweep** (`eval_all.py --collect`) — use `--split subset|train|test` or `--tasks t1 t2 ...`:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
-    --collect --split train --num_envs 16 \
-    --policy.dir=checkpoints/openpi-metaworld-5000
+    --collect --split subset --num_envs 16 \
+    --policy.config=pi0_fast_metaworld \
+    --policy.dir=checkpoints/pi0_fast_metaworld/pi0_fast_metaworld_b200_bs512/2500
 ```
 
 **Multi-GPU** — round-robin task sharding across the listed GPUs (replaces `CUDA_VISIBLE_DEVICES`):
@@ -173,6 +226,10 @@ Start with `--num_envs 16` and halve it if you OOM. Memory pressure scales rough
 
 ### Output Structure
 
+Per-episode layout is the same across architectures. Per-step `.npz` files differ — pi0/pi0.5 save denoising-step tensors; pi0-fast saves per-token tensors.
+
+**pi0 / pi0.5** (diffusion, PyTorch):
+
 ```
 {collect_output_dir}/{checkpoint_step}/{task_name}/
   episode_NNN_env_NNN/
@@ -189,9 +246,27 @@ Start with `--num_envs 16` and halve it if you OOM. Memory pressure scales rough
       ...
 ```
 
+**pi0-fast** (autoregressive, JAX) — schema version `fast_v1`:
+
+```
+{collect_output_dir}/{checkpoint_step}/{task_name}/
+  episode_NNN_env_NNN/
+    metadata.json        # same fields as the diffusion path
+    rewards.npz          # same
+    step_NNNN/
+      tokens.npz             # generated_tokens (num_tokens,) int32 — sampled FAST token IDs
+      hidden_states.npz      # token_pre_logits (num_tokens-1, 2048) float16 — per-token last hidden state
+                             # (one fewer than tokens because the EOS-triggering iteration's
+                             # pre_logits is not captured — see sample_actions_with_intermediates)
+      token_logprobs.npz     # token_logprobs (num_tokens,) float32 — log-prob of each sampled token
+      metadata.json          # step-level (plus num_tokens, collection_version="fast_v1")
+    step_NNNN+replan_steps/
+      ...
+```
+
 For exact shapes, run the schema validator (`tests/test_activations.py`) against a real output tree — shapes depend on the model config and are kept in lockstep with what the server-side collector in `src/openpi/serving/activation_collector.py` writes, so libero / robocasa activations validate the same way.
 
-Storage scales roughly linearly with `num_envs × num_tasks × num_inference_steps`; expect hundreds of GB for a full ML45 sweep at `num_envs=16`.
+Storage scales roughly linearly with `num_envs × num_tasks × num_inference_steps`; expect hundreds of GB for a full ML45 sweep at `num_envs=16` for pi0.5 (pi0-fast is much smaller — per-step files are ~40 KB vs ~9 MB).
 
 ### Validate Activations
 

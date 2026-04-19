@@ -86,9 +86,7 @@ class Policy(BasePolicy):
             # JAX model setup
             self._sample_actions = nnx_utils.module_jit(model.sample_actions)
             if hasattr(model, "sample_actions_with_intermediates"):
-                self._sample_actions_with_intermediates = nnx_utils.module_jit(
-                    model.sample_actions_with_intermediates
-                )
+                self._sample_actions_with_intermediates = nnx_utils.module_jit(model.sample_actions_with_intermediates)
             self._rng = rng or jax.random.key(0)
 
     @override
@@ -152,10 +150,7 @@ class Policy(BasePolicy):
                 self._output_transform({"state": outputs["state"][i], "actions": outputs["actions"][i]})
                 for i in range(eval_batch_size)
             ]
-            outputs = {
-                k: np.stack([o[k] for o in per_sample_outputs], axis=0)
-                for k in per_sample_outputs[0]
-            }
+            outputs = {k: np.stack([o[k] for o in per_sample_outputs], axis=0) for k in per_sample_outputs[0]}
         else:
             outputs = self._output_transform(outputs)
         outputs["policy_timing"] = {
@@ -245,9 +240,7 @@ class Policy(BasePolicy):
             self._rng, sample_rng = jax.random.split(self._rng)
             sample_kwargs = dict(self._sample_kwargs)
             start_time = time.monotonic()
-            actions, intermediates = self._sample_actions_with_intermediates(
-                sample_rng, observation, **sample_kwargs
-            )
+            actions, intermediates = self._sample_actions_with_intermediates(sample_rng, observation, **sample_kwargs)
             model_time = time.monotonic() - start_time
             # JIT returns fixed-size buffers on the leading axis
             # (max_decoding_steps). Slice down to num_tokens so downstream

@@ -388,9 +388,7 @@ class Pi0FAST(_model.BaseModel):
             log_probs = jax.nn.log_softmax(last_logit, axis=-1)
             token_logprob = jnp.take_along_axis(log_probs[:, 0, :], token, axis=-1)[:, 0]
 
-            output_tokens = put_along_last_axis(
-                output_tokens, jnp.broadcast_to(step_idx, (token.shape[0], 1)), token
-            )
+            output_tokens = put_along_last_axis(output_tokens, jnp.broadcast_to(step_idx, (token.shape[0], 1)), token)
             logprobs_buf = logprobs_buf.at[step_idx].set(token_logprob.astype(logprobs_buf.dtype))
 
             has_eos = jnp.any(token == PALIGEMMA_EOS_TOKEN, axis=-1)
@@ -424,9 +422,7 @@ class Pi0FAST(_model.BaseModel):
             return (~all_eos) & (step_idx < max_decoding_steps)
 
         init = (rng, first_logit, output_tokens, pre_logits_buf, logprobs_buf, kv_cache, False, 0)
-        _, _, output_tokens, pre_logits_buf, logprobs_buf, _, _, final_step = jax.lax.while_loop(
-            cond, step, init
-        )
+        _, _, output_tokens, pre_logits_buf, logprobs_buf, _, _, final_step = jax.lax.while_loop(cond, step, init)
 
         intermediates = {
             "generated_tokens": output_tokens.astype(jnp.int32).T,
