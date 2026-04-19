@@ -50,6 +50,29 @@ def test_construction():
     assert total > 0
 
 
+def test_n_obs_steps_gt_1_raises():
+    """n_obs_steps > 1 isn't implemented; must raise explicitly rather than silently mis-wire."""
+    cfg = _small_config(n_obs_steps=2)
+    with pytest.raises(NotImplementedError, match="n_obs_steps"):
+        DiffusionPolicy(cfg)
+
+
+def test_camera_keys_outside_openpi_image_keys_raises():
+    """camera_keys must be a subset of openpi's canonical IMAGE_KEYS."""
+    with pytest.raises(ValueError, match="camera_keys"):
+        _small_config(camera_keys=("base_0_rgb", "nonexistent_rgb"))
+
+
+def test_inputs_spec_covers_all_openpi_image_keys():
+    """inputs_spec must describe the full Observation layout (all IMAGE_KEYS), not just camera_keys."""
+    from openpi.models import model as _model
+
+    cfg = _small_config(camera_keys=("base_0_rgb",))  # subset of 3
+    obs_spec, _act_spec = cfg.inputs_spec(batch_size=2)
+    assert set(obs_spec.images.keys()) == set(_model.IMAGE_KEYS)
+    assert set(obs_spec.image_masks.keys()) == set(_model.IMAGE_KEYS)
+
+
 def test_forward_loss_shape():
     cfg = _small_config()
     model = DiffusionPolicy(cfg).eval()
@@ -141,3 +164,20 @@ def test_image_format_robustness(layout):
     )
     actions = model.sample_actions("cpu", obs, num_steps=2)
     assert actions.shape == (b, cfg.action_horizon, cfg.action_dim)
+
+
+def test_to_nchw_01_contract():
+    """Docstring contract: float in [-1, 1] rescales to [0, 1]; uint8 in [0, 255] divides by 255."""
+    b, h, w = 1, 8, 8
+    # Edge case the old `image.min() < -1e-3` heuristic would have silently skipped:
+    # a float NHWC tensor from [-1, 1] that happens to be all-nonnegative.
+    nonneg = torch.full((b, h, w, 3), 0.25)  # would have stayed as [0.25]; now correctly rescaled to [0.625]
+    out = DiffusionPolicy._to_nchw_01(nonneg)  # noqa: SLF001
+    assert out.shape == (b, 3, h, w)
+    assert torch.allclose(out, torch.full_like(out, 0.625))
+    # uint8 NHWC passthrough -> [0, 1] via /255.
+    u8 = torch.full((b, h, w, 3), 128, dtype=torch.uint8)
+    out_u8 = DiffusionPolicy._to_nchw_01(u8)  # noqa: SLF001
+    assert out_u8.shape == (b, 3, h, w)
+    assert out_u8.dtype == torch.float32
+    assert torch.allclose(out_u8, torch.full_like(out_u8, 128 / 255.0))

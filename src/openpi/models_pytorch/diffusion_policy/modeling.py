@@ -309,6 +309,13 @@ class DiffusionPolicy(nn.Module):
 
     def __init__(self, config):
         super().__init__()
+        # _encode_global_cond builds a single-step conditioning vector, and global_cond_dim below scales by
+        # n_obs_steps — so anything other than 1 would crash deep in the U-Net with a confusing shape error.
+        # Guard until obs history is actually implemented.
+        if config.n_obs_steps != 1:
+            raise NotImplementedError(
+                f"DiffusionPolicy currently supports only n_obs_steps=1 (got {config.n_obs_steps})."
+            )
         self.config = config
 
         # Determine which cameras are active; we always use all 3 openpi image keys to match the observation
@@ -363,19 +370,30 @@ class DiffusionPolicy(nn.Module):
 
     @staticmethod
     def _to_nchw_01(image: Tensor) -> Tensor:
-        """Accepts (B, H, W, C) or (B, C, H, W) in [-1, 1] float (or uint8). Returns (B, C, H, W) in [0, 1]."""
+        """Convert an openpi image tensor to (B, C, H, W) float32 in [0, 1].
+
+        Input contract (matches ``openpi.models.model.Observation`` — see its docstring and
+        ``Observation.from_dict``):
+          - Float tensors are in ``[-1, 1]``. This is the canonical form after ``Observation.from_dict``,
+            which rescales uint8 -> float32 ``[-1, 1]``.
+          - uint8 tensors in ``[0, 255]`` are also accepted for defensiveness (e.g., if a caller builds
+            an ``Observation`` manually without going through ``from_dict``).
+          - Layout is either NHWC (openpi default) or NCHW — auto-detected by the channel dim.
+
+        ResNet18 + GroupNorm expects inputs centred around ``[0, 1]``, so we always rescale from
+        the documented input range rather than guessing at it.
+        """
         if image.dtype == torch.uint8:
-            if image.shape[1] != 3:  # NHWC uint8
+            if image.ndim == 4 and image.shape[-1] == 3:
                 image = image.permute(0, 3, 1, 2)
             return image.to(torch.float32) / 255.0
-        # float path: detect NHWC vs NCHW by channel dim
+        # float path: detect NHWC vs NCHW by channel dim. The `shape[1] != 3` guard is only meaningful
+        # when batch size != 3; a 3-image NHWC batch is ambiguous with NCHW and is rejected by the shape
+        # of the backbone downstream rather than silently mis-interpreted.
         if image.ndim == 4 and image.shape[-1] == 3 and image.shape[1] != 3:
             image = image.permute(0, 3, 1, 2)
-        # assume [-1, 1]; squash to [0, 1]. Normalize's output range is already centered at 0,
-        # but we accept either [-1,1] (from preprocess) or [0,1] (passthrough).
-        if image.min() < -1e-3:
-            image = image / 2.0 + 0.5
-        return image.clamp(0.0, 1.0)
+        # Float inputs are always in [-1, 1] per the openpi Observation contract.
+        return (image / 2.0 + 0.5).clamp(0.0, 1.0)
 
     def _resize(self, image: Tensor) -> Tensor:
         h, w = self.config.image_size

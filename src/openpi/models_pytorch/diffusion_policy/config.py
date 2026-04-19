@@ -62,6 +62,14 @@ class DiffusionPolicyConfig(_model.BaseModelConfig):
     clip_sample: bool = True
     clip_sample_range: float = 1.0
 
+    def __post_init__(self):
+        # camera_keys must be a subset of openpi's canonical image keys — the Observation layout is fixed.
+        unknown = set(self.camera_keys) - set(_model.IMAGE_KEYS)
+        if unknown:
+            raise ValueError(
+                f"DiffusionPolicyConfig.camera_keys must be a subset of {_model.IMAGE_KEYS}, got unknown keys: {sorted(unknown)}"
+            )
+
     @property
     @override
     def model_type(self) -> _model.ModelType:
@@ -81,20 +89,15 @@ class DiffusionPolicyConfig(_model.BaseModelConfig):
 
     @override
     def inputs_spec(self, *, batch_size: int = 1) -> tuple[_model.Observation, _model.Actions]:
+        # openpi's Observation always carries all IMAGE_KEYS; DP consumes the subset listed in camera_keys
+        # and ignores the rest. Building the spec from IMAGE_KEYS (not camera_keys) keeps the spec faithful
+        # to the on-the-wire Observation layout.
         image_spec = jax.ShapeDtypeStruct([batch_size, *_model.IMAGE_RESOLUTION, 3], jnp.float32)
         image_mask_spec = jax.ShapeDtypeStruct([batch_size], jnp.bool_)
         with at.disable_typechecking():
             observation_spec = _model.Observation(
-                images={
-                    "base_0_rgb": image_spec,
-                    "left_wrist_0_rgb": image_spec,
-                    "right_wrist_0_rgb": image_spec,
-                },
-                image_masks={
-                    "base_0_rgb": image_mask_spec,
-                    "left_wrist_0_rgb": image_mask_spec,
-                    "right_wrist_0_rgb": image_mask_spec,
-                },
+                images=dict.fromkeys(_model.IMAGE_KEYS, image_spec),
+                image_masks=dict.fromkeys(_model.IMAGE_KEYS, image_mask_spec),
                 state=jax.ShapeDtypeStruct([batch_size, self.state_dim], jnp.float32),
             )
         action_spec = jax.ShapeDtypeStruct([batch_size, self.action_horizon, self.action_dim], jnp.float32)
