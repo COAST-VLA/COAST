@@ -72,8 +72,14 @@ TrainConfig(
 # 1. Norm stats (once per dataset).
 uv run scripts/compute_norm_stats.py --config-name dp_metaworld
 
-# 2. Train (defaults: 100k steps, batch 64, DDPM-100 / DDIM-10).
+# 2a. Train single-GPU (defaults: 100k steps, batch 64, DDPM-100 / DDIM-10).
 CUDA_VISIBLE_DEVICES=0 uv run scripts/train_pytorch.py dp_metaworld \
+    --exp-name dp_metaworld_test \
+    --overwrite
+
+# 2b. Train multi-GPU via torchrun (DDP; batch_size is the total across GPUs).
+CUDA_VISIBLE_DEVICES=0,1 uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 \
+    scripts/train_pytorch.py dp_metaworld \
     --exp-name dp_metaworld_test \
     --overwrite
 
