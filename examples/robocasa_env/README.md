@@ -169,6 +169,35 @@ Output layout (either backend): `<output-dir>/<checkpoint_step>/<env_name>/episo
 - Client uses `env_name` as `task_name`; `task_id` is fixed at 0; `episode_id` cycles `0..num_episodes-1` per env.
 - Full wire-level protocol spec: see `examples/libero_env/README.md` (**Protocol** section).
 
+#### Advanced: parallel collection on the *same* env_name (`--collect_env_id`)
+
+The server's output path is `episode_{episode_id:03d}_env_{env_id:03d}/`.
+Standard workflows keep `env_id=0`:
+
+| Workflow                                  | Why it's safe without `--collect_env_id` |
+|-------------------------------------------|------------------------------------------|
+| Single `main.py` invocation               | `episode_id` varies per rollout          |
+| `eval_all.py --collect` (parallel envs)   | `env_name` varies per subprocess         |
+
+**When you need `--collect_env_id`**: launching N parallel `main.py`
+subprocesses on the **same env_name** (e.g., to collect many rollouts of one
+task faster than `--num_episodes N` sequentially). Every subprocess then
+shares `(task_name, episode_id=0)`, so each needs a distinct
+`--collect_env_id` (0, 1, 2, ...) to avoid clobbering the same output dir.
+
+```bash
+# Collect 5 rollouts of OpenDrawer in parallel — distinct env_ids required
+for i in 0 1 2 3 4; do
+    CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run python main.py \
+        --env_name OpenDrawer --num_episodes 1 --collect --port 8210 \
+        --seed $((7+i)) --collect_env_id $i \
+        --output_dir /tmp/rc-e$i > /tmp/rc-e$i.log 2>&1 &
+done; wait
+```
+
+For any other workflow, leave the default (0); **`eval_all.py --collect` is
+correct as-is without this flag**.
+
 ### Verifying collected activations
 
 Env-var-driven pytest suite; skipped in CI when `ACTIVATIONS_DIR` is unset.

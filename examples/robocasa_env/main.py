@@ -75,6 +75,27 @@ class Args:
     # If True, attach activation-collection metadata to every infer call so the
     # server (started with --collect_activations) saves intermediates to its disk.
     collect: bool = False
+    # The `env_id` tag attached to every `__collect__` payload — feeds into the
+    # server's output path `episode_{episode_id:03d}_env_{env_id:03d}/`. Leave
+    # at the default (0) in the common case. You only need to set this for a
+    # specific use case:
+    #
+    # **When you DO NOT need this flag** (almost always):
+    #   • Single main.py invocation (any --num_episodes value) — episode_id
+    #     varies per rollout, env_id=0 is fine.
+    #   • `eval_all.py` — dispatches one subprocess per env_name. The server
+    #     keys the path on task_name, so env_id=0 never collides across
+    #     subprocesses. This is the documented, "safe" parallel collection
+    #     pattern.
+    #
+    # **When you DO need this flag** (rare, opt-in):
+    #   • You're running N parallel main.py subprocesses on the *same*
+    #     env_name (e.g., to collect more rollouts of one task for a per-task
+    #     conceptor NPZ faster than running --num_episodes N sequentially).
+    #     Then all N share `(task_name, episode_id=0)`, so you must pass a
+    #     distinct `--collect_env_id` per subprocess (0, 1, 2, ...) to avoid
+    #     them clobbering each other's `episode_000_env_000/` files.
+    collect_env_id: int = 0
 
     # Override the top-level output directory (for videos / artifacts). If None,
     # defaults to ``output/single-{split}``.
@@ -168,6 +189,7 @@ def eval_task(
                 task_id=0,
                 episode_id=episode,
                 prompt=str(task_lang),
+                env_id=args.collect_env_id,
             )
 
         video_path = os.path.join(task_output_dir, f"episode_{episode:03d}.mp4")
