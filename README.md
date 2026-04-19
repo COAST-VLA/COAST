@@ -34,6 +34,17 @@ What each client + model combination supports today. ❌ means either the
 training config, the input-transform branch, or the serve integration is not
 yet wired up — see the per-example READMEs for how to add one.
 
+### Training
+
+We run fine-tuning in-repo for MetaWorld and LIBERO, and release a series of **intermediate-step checkpoints** for both — a span of checkpoints across training is what lets downstream mech-interp work compare behavior as the policy learns, rather than just inspecting the fully-trained endpoint. For RoboCasa and DROID we skip in-repo training and evaluate against the upstream fully-trained checkpoints directly.
+
+| Client | In-repo training | Dataset | Train configs | Checkpoints |
+|---|---|---|---|---|
+| **MetaWorld** | ✅ | [`brandonyang/metaworld_ml45`](https://huggingface.co/datasets/brandonyang/metaworld_ml45) | `pi05_metaworld`, `pi0_fast_metaworld` | intermediate (released on HF — see `examples/metaworld/README.md`) |
+| **LIBERO** | ✅ | [`physical-intelligence/libero`](https://huggingface.co/datasets/physical-intelligence/libero) | `pi05_libero`, `pi0_fast_libero` | intermediate (released on HF — see `examples/libero_env/README.md`) |
+| **RoboCasa** | ❌ | — | — | upstream [`robocasa/robocasa365_checkpoints`](https://huggingface.co/robocasa/robocasa365_checkpoints) |
+| **DROID** | ❌ | — | — | upstream `gs://openpi-assets/checkpoints/pi05_droid`, `gs://openpi-assets/checkpoints/pi0_fast_droid` |
+
 ### Inference (serve + client)
 
 | Client | pi0.5 | pi0-FAST | GR00T-N1.5 |
