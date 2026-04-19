@@ -64,6 +64,29 @@ TrainConfig(
 - [`brandonyang/openpi-metaworld-5000`](https://huggingface.co/brandonyang/openpi-metaworld-5000)
 - [`brandonyang/openpi-metaworld-25000`](https://huggingface.co/brandonyang/openpi-metaworld-25000)
 
+### Diffusion Policy baseline (PyTorch-only)
+
+`dp_metaworld` is a non-VLA baseline (Chi et al., CNN 1D U-Net) for comparison against pi0/pi0.5. It's trained via the PyTorch entry point; evaluation reuses the same server/client flow as pi05, but `serve_policy.py` **must** be launched with `--pytorch` (DP has no JAX path).
+
+```bash
+# 1. Norm stats (once per dataset).
+uv run scripts/compute_norm_stats.py --config-name dp_metaworld
+
+# 2. Train (defaults: 100k steps, batch 64, DDPM-100 / DDIM-10).
+CUDA_VISIBLE_DEVICES=0 uv run scripts/train_pytorch.py dp_metaworld \
+    --exp-name dp_metaworld_test \
+    --overwrite
+
+# 3. Serve the resulting checkpoint. --pytorch is required.
+uv run scripts/serve_policy.py --pytorch policy:checkpoint \
+    --policy.config=dp_metaworld \
+    --policy.dir=checkpoints/dp_metaworld/dp_metaworld_test/<step>
+```
+
+Then run `main.py` / `eval_all.py` in a second terminal exactly as documented under [Evaluation](#evaluation) below — the client talks to the server and doesn't need to know which model is loaded.
+
+Activation collection (`--collect`) is not supported for DP — the collection path is pi0/pi0-FAST/pi0.5 only.
+
 ## Evaluation
 
 Normal evaluation uses a server-client architecture: `scripts/serve_policy.py` hosts the model and serves actions over WebSocket; `main.py` / `eval_all.py` run the envs and query the server at each step. Both run from the repo root.
