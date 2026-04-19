@@ -278,14 +278,14 @@ shared `CollectionSession` helper.
 # Terminal 1 — pi0.5 diffusion (PyTorch required for activation collection):
 export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py --pytorch --collect_activations \
-    --output-dir ./activations \
+    --output-dir ./activations/pi05-libero-activations-v1-15env \
     policy:checkpoint --policy.config=pi05_libero \
     --policy.dir=/path/to/checkpoint
 
 # Terminal 1 (alternative) — pi0-FAST autoregressive (JAX only):
 export CUDA_VISIBLE_DEVICES=0
 uv run scripts/serve_policy.py --collect_activations \
-    --output-dir ./activations \
+    --output-dir ./activations/pi0fast-libero-activations-v1-15env \
     policy:checkpoint --policy.config=pi0_fast_libero \
     --policy.dir=/path/to/checkpoint
 
@@ -297,9 +297,9 @@ uv run python serve.py --port 8000 --collect_activations \
 ```
 
 ```bash
-# Terminal 2 — client, any of:
-(cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_spatial --collect --num_workers 5)
-(cd examples/robocasa_env && MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen --collect --num_workers 5)
+# Terminal 2 — client, any of (defaults shown; override with --task_suite_name / --task_set / --tasks):
+(cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py --collect --num_workers 5)
+(cd examples/robocasa_env && MUJOCO_GL=egl uv run python eval_all.py --collect --num_workers 5)
 ```
 
 Notes:
