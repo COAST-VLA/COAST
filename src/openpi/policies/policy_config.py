@@ -89,6 +89,7 @@ def create_trained_policy(
 
     return _policy.Policy(
         model,
+        model_type=train_config.model.model_type,
         transforms=[
             *repack_transforms.inputs,
             transforms.InjectDefaultPrompt(default_prompt),

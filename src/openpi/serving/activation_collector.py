@@ -18,6 +18,8 @@ from typing import Any
 import numpy as np
 from openpi_client import base_policy as _base_policy
 
+from openpi.models import model as _model
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,6 +51,51 @@ def save_step_activations(
     np.savez(step_dir / "suffix_residual.npz", all_suffix_residual=all_suffix_residual)
     np.savez(step_dir / "suffix_mlp_hidden.npz", all_suffix_mlp_hidden=all_suffix_mlp_hidden)
 
+    with open(step_dir / "metadata.json", "w") as f:
+        json.dump(step_metadata, f, indent=2)
+
+
+def save_step_activations_fast(
+    step_dir: pathlib.Path,
+    intermediates: dict,
+    env_id: int,
+    step_metadata: dict,
+) -> None:
+    """Save per-env, per-step activation data for pi0-fast (autoregressive) models.
+
+    On-disk schema:
+    - tokens.npz: generated_tokens (num_tokens,) int32 — sampled action token IDs
+    - hidden_states.npz: token_pre_logits (num_tokens-1, width) float16 — per-token
+      last hidden state (one fewer than tokens because the final token's forward pass
+      isn't needed for the next prediction)
+    - token_logprobs.npz: token_logprobs (num_tokens,) float32
+    - metadata.json: step metadata + num_tokens
+    """
+    step_dir.mkdir(parents=True, exist_ok=True)
+
+    generated_tokens = intermediates["generated_tokens"][:, env_id]  # (num_tokens,)
+    token_logprobs = intermediates["token_logprobs"][:, env_id]  # (num_tokens,)
+    num_tokens = int(intermediates["num_tokens"])
+
+    np.savez(
+        step_dir / "tokens.npz",
+        generated_tokens=np.asarray(generated_tokens, dtype=np.int32),
+    )
+    np.savez(
+        step_dir / "token_logprobs.npz",
+        token_logprobs=np.asarray(token_logprobs, dtype=np.float32),
+    )
+
+    token_pre_logits = intermediates["token_pre_logits"]
+    if token_pre_logits.shape[0] > 0:
+        np.savez(
+            step_dir / "hidden_states.npz",
+            token_pre_logits=np.asarray(token_pre_logits[:, env_id], dtype=np.float16),
+        )
+
+    step_metadata = dict(step_metadata)
+    step_metadata["num_tokens"] = num_tokens
+    step_metadata["collection_version"] = "fast_v1"
     with open(step_dir / "metadata.json", "w") as f:
         json.dump(step_metadata, f, indent=2)
 
@@ -101,12 +148,21 @@ class CollectingPolicy(_base_policy.BasePolicy):
         checkpoint_step: str,
         policy_dir: str,
         config_name: str,
+        model_type: _model.ModelType,
     ) -> None:
         self._policy = policy
         self._output_root = pathlib.Path(output_root)
         self._checkpoint_step = checkpoint_step
         self._policy_dir = policy_dir
         self._config_name = config_name
+        self._model_type = model_type
+        # pi0-fast writes per-token autoregressive intermediates (fast_v1 schema);
+        # pi0 / pi0.5 write per-denoising-step diffusion intermediates (v1 schema).
+        # Resolve the writer once so infer() does not probe intermediates shape on
+        # every call.
+        self._save_step_fn = (
+            save_step_activations_fast if model_type == _model.ModelType.PI0_FAST else save_step_activations
+        )
         # Serializes calls into the model's hook-based intermediate collection
         # path. See _handle_collect_infer for the rationale.
         self._intermediates_lock = threading.Lock()
@@ -114,11 +170,16 @@ class CollectingPolicy(_base_policy.BasePolicy):
     @property
     def metadata(self) -> dict:
         underlying = getattr(self._policy, "metadata", {}) or {}
+        # collection_mode is the on-disk schema identifier: "v1" for diffusion
+        # (denoising.npz / adarms_cond.npz / ...), "fast_v1" for pi0-fast
+        # (tokens.npz / hidden_states.npz / token_logprobs.npz).
+        collection_mode = "fast_v1" if self._model_type == _model.ModelType.PI0_FAST else "v1"
         return {
             **underlying,
             "policy_dir": str(self._policy_dir),
             "config_name": self._config_name,
-            "collection_mode": "v1",
+            "collection_mode": collection_mode,
+            "model_type": self._model_type.value,
             "checkpoint_step": self._checkpoint_step,
             "output_root": str(self._output_root),
         }
@@ -210,7 +271,7 @@ class CollectingPolicy(_base_policy.BasePolicy):
             result, intermediates = self._policy.infer_with_intermediates(batched_obs)
 
         step_dir = self._step_dir(collect_meta)
-        save_step_activations(
+        self._save_step_fn(
             step_dir=step_dir,
             intermediates=intermediates,
             env_id=0,  # batch_size is enforced to 1 above
