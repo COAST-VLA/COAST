@@ -204,19 +204,20 @@ CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/main.py \
 **Full sweep** (`eval_all.py --collect`) — use `--split subset|train|test` or `--tasks t1 t2 ...`:
 
 ```bash
+# pi0.5 diffusion (PyTorch):
+CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+    --collect --split subset --num_envs 16 \
+    --policy.config=pi05_metaworld \
+    --policy.dir=checkpoints/openpi-metaworld-5000
+
+# pi0-fast autoregressive (JAX):
 CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
     --collect --split subset --num_envs 16 \
     --policy.config=pi0_fast_metaworld \
     --policy.dir=checkpoints/pi0_fast_metaworld/pi0_fast_metaworld_b200_bs512/2500
 ```
 
-**Multi-GPU** — round-robin task sharding across the listed GPUs (replaces `CUDA_VISIBLE_DEVICES`):
-
-```bash
-MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
-    --collect --split train --num_envs 16 --gpus 0 1 \
-    --policy.dir=checkpoints/openpi-metaworld-5000
-```
+**Multi-GPU — TODO.** Round-robin task sharding via `--gpus 0 1 ...` currently only works for pi0.5 (the subprocess dispatch assumes the PyTorch collection path). pi0-fast multi-GPU sharding is not yet wired up — run pi0-fast collection on a single GPU via `CUDA_VISIBLE_DEVICES`.
 
 Override the activation root with `--collect_output_dir /path/to/activations`. See `--help` for the full flag list.
 
