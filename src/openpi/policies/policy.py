@@ -192,6 +192,12 @@ class Policy(BasePolicy):
         """Like infer_batched() but also returns intermediate activations. PyTorch only."""
         if not self._is_pytorch_model:
             raise NotImplementedError("infer_with_intermediates is only supported for PyTorch models")
+        if not hasattr(self._model, "sample_actions_with_intermediates"):
+            raise NotImplementedError(
+                f"{type(self._model).__name__} does not implement sample_actions_with_intermediates; "
+                "activation collection is only wired up for pi0/pi0-FAST/pi0.5. "
+                "For non-VLA baselines (e.g., Diffusion Policy), use the normal --collect=False eval path."
+            )
 
         # Make a copy since transformations may modify the inputs in place.
         inputs = jax.tree.map(lambda x: x, obs)
@@ -235,6 +241,12 @@ class Policy(BasePolicy):
         """Like infer_batched() but returns v2 intermediates (selective steps, attention, adaRMS). PyTorch only."""
         if not self._is_pytorch_model:
             raise NotImplementedError("infer_with_intermediates_v2 is only supported for PyTorch models")
+        if not hasattr(self._model, "sample_actions_with_intermediates_v2"):
+            raise NotImplementedError(
+                f"{type(self._model).__name__} does not implement sample_actions_with_intermediates_v2; "
+                "v2 activation collection is only wired up for pi0/pi0-FAST/pi0.5. "
+                "For non-VLA baselines (e.g., Diffusion Policy), use the normal --collect=False eval path."
+            )
 
         # Make a copy since transformations may modify the inputs in place.
         inputs = jax.tree.map(lambda x: x, obs)

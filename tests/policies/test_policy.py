@@ -1,9 +1,35 @@
 from openpi_client import action_chunk_broker
 import pytest
+import torch
 
 from openpi.policies import aloha_policy
+from openpi.policies import policy as _policy
 from openpi.policies import policy_config as _policy_config
 from openpi.training import config as _config
+
+
+class _BaselineModel(torch.nn.Module):
+    """Stand-in for a baseline (e.g., DP) that does not expose sample_actions_with_intermediates."""
+
+    def sample_actions(self, device, observation):
+        raise RuntimeError("unused in this test")
+
+
+def test_infer_with_intermediates_raises_for_baseline_without_method():
+    """Models without sample_actions_with_intermediates get a clear NotImplementedError (not AttributeError)."""
+    policy = _policy.Policy.__new__(_policy.Policy)
+    policy._is_pytorch_model = True  # noqa: SLF001
+    policy._model = _BaselineModel()  # noqa: SLF001
+    with pytest.raises(NotImplementedError, match="sample_actions_with_intermediates"):
+        policy.infer_with_intermediates({"observation/state": None})
+
+
+def test_infer_with_intermediates_v2_raises_for_baseline_without_method():
+    policy = _policy.Policy.__new__(_policy.Policy)
+    policy._is_pytorch_model = True  # noqa: SLF001
+    policy._model = _BaselineModel()  # noqa: SLF001
+    with pytest.raises(NotImplementedError, match="sample_actions_with_intermediates_v2"):
+        policy.infer_with_intermediates_v2({"observation/state": None})
 
 
 @pytest.mark.manual
