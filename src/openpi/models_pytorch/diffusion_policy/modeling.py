@@ -402,7 +402,15 @@ class DiffusionPolicy(nn.Module):
         return image
 
     def _encode_global_cond(self, observation) -> Tensor:
-        """Build (B, global_cond_dim) vector from images + state. n_obs_steps=1 path.
+        """Build (B, global_cond_dim) vector from state + images. n_obs_steps=1 path.
+
+        Feature ordering MUST match LeRobot's ``DiffusionModel._prepare_global_conditioning``:
+        ``[state, img_features_cam_0, img_features_cam_1, ...]``. The UNet's FiLM cond_encoder
+        is a Linear layer whose weight columns are bound to this ordering at training time, so
+        swapping it would (a) make a LeRobot-trained checkpoint produce garbage when loaded into
+        our model, and (b) make numerical-equivalence testing against the reference impossible.
+        The equivalence suite in tests/models_pytorch/test_diffusion_policy_lerobot_equivalence.py
+        pins this to LeRobot's ordering.
 
         NOTE — unconditional multi-task baseline: DP receives no task signal here. The training
         data for e.g. dp_metaworld spans all 44 ML45 tasks and the data pipeline attaches a task
@@ -413,16 +421,19 @@ class DiffusionPolicy(nn.Module):
         that must average motor behaviour across tasks; for fair per-task comparisons either train
         one DP per task or add a task embedding to the concat below.
         """
-        feats = []
+        # Encode images first so we know the UNet's working dtype (float32), then cast state
+        # to match before concatenating. The data loader can hand us float64 state; silently
+        # promoting to double would later explode inside the UNet's Linear layers.
+        img_feats = []
         for i, key in enumerate(self.camera_keys):
             img = observation.images[key]
             img = self._to_nchw_01(img)
             img = self._resize(img)
-            feats.append(self.rgb_encoders[i](img))
-        state = observation.state.to(dtype=feats[0].dtype) if feats else observation.state
-        feats.append(state)
-        # concat features — corresponds to LeRobot's flatten(start_dim=1) with n_obs_steps=1
-        return torch.cat(feats, dim=-1)
+            img_feats.append(self.rgb_encoders[i](img))
+        ref_dtype = img_feats[0].dtype if img_feats else observation.state.dtype
+        state = observation.state.to(dtype=ref_dtype)
+        # State first, then images — matches LeRobot's _prepare_global_conditioning ordering.
+        return torch.cat([state, *img_feats], dim=-1)
 
     # ---- training ------------------------------------------------------------------------------
 
