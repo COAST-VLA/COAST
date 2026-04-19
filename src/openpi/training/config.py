@@ -697,7 +697,10 @@ def _make_dp_config(
             decay_steps=num_train_steps - warmup_steps,
             decay_lr=decay_lr,
         ),
-        optimizer=_optimizer.AdamW(clip_gradient_norm=10.0, weight_decay=1e-6),
+        # AdamW betas/eps mirror LeRobot's DiffusionConfig defaults: (0.95, 0.999) / 1e-8. openpi's
+        # AdamW default betas are (0.9, 0.95) (inherited from the pi0 training setup) which would
+        # give different convergence dynamics than the reference DP training.
+        optimizer=_optimizer.AdamW(b1=0.95, b2=0.999, eps=1e-8, clip_gradient_norm=10.0, weight_decay=1e-6),
         ema_decay=None,  # EMA not wired up in train_pytorch.py yet; add in follow-up.
         num_train_steps=num_train_steps,
         num_workers=num_workers,
