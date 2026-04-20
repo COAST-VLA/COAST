@@ -44,6 +44,28 @@ python3 scripts/main.py --remote_host=<server_ip> --remote_port=<server_port> --
 
 The script will ask you to enter a free-form language instruction for the robot to follow. Make sure to point the cameras at the scene you want the robot to interact with. You _do not_ need to carefully control camera angle, object positions, etc. The policy is fairly robust in our experience. Happy prompting!
 
+### `main.py` reference
+
+Key flags (see `main.py` for the full list):
+
+| Flag | Default | Description |
+|---|---|---|
+| `--remote_host` | `0.0.0.0` | IP of the policy server. |
+| `--remote_port` | `8000` | Port of the policy server. |
+| `--external_camera` | (required) | `"left"` or `"right"` — which stereo view feeds the policy. |
+| `--max_timesteps` | `600` | Max env steps per rollout. Ctrl+C stops a rollout early. |
+| `--open_loop_horizon` | `8` | Actions to execute per server call before querying for a new chunk (~0.5 s at 15 Hz). |
+| `--collect` | `False` | Attach activation-collection metadata to every inference call. The policy server (if started with `--collect_activations`) writes intermediates to disk. See [`docs/activation_collection.md`](../../docs/activation_collection.md). |
+
+Run loop (interactive):
+
+1. Prompts for a free-form `instruction` (e.g. "pick up the fork").
+2. Rolls out up to `--max_timesteps` env steps at 15 Hz. Ctrl+C interrupts cleanly without breaking the server connection.
+3. Saves the rollout video to `video_<timestamp>.mp4` in the current directory.
+4. Asks for a success score (`y` / `n` / `0-100`).
+5. Asks whether to run another rollout — loop back to step 1 on `y`, exit on `n`.
+6. On exit, writes `results/eval_<timestamp>.csv` with columns `success`, `duration`, `video_filename`.
+
 ## Troubleshooting
 
 | Issue | Solution |

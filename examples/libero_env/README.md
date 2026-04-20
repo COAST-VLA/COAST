@@ -76,9 +76,9 @@ cd examples/libero_env
 # Default suite: libero_10
 MUJOCO_GL=egl uv run python eval_all.py
 
-# Another suite, with more episodes per task and a concurrency cap:
+# Another suite, with a concurrency cap (--num_episodes defaults to 15):
 MUJOCO_GL=egl uv run python eval_all.py \
-    --task_suite_name libero_spatial --num_episodes 15 --num_workers 5
+    --task_suite_name libero_spatial --num_workers 5
 
 # Sequential execution (inline stack traces on crash):
 MUJOCO_GL=egl uv run python eval_all.py --num_workers 1
@@ -120,11 +120,11 @@ Client (this venv):
 ```bash
 cd examples/libero_env
 
-# Single task:
+# Single task (main.py defaults --num_episodes=1; bump to 15 for real runs):
 MUJOCO_GL=egl uv run python main.py --task_suite_name libero_10 --task_id 0 --collect --num_episodes 15
 
-# Full suite — parallelized across tasks:
-MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_10 --collect --num_episodes 15 --num_workers 5
+# Full suite — parallelized across tasks (eval_all.py defaults --num_episodes=15):
+MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_10 --collect --num_workers 5
 ```
 
 Pre-collected datasets:
@@ -136,3 +136,17 @@ Pre-collected datasets:
 
 ![Comparison of Mean Performance](figures/compare_means_2000_vs_3000_vs_9000.png)
 ![Per-task comparison](figures/compare_per_task_2000_vs_3000_vs_9000.png)
+
+## Testing
+
+Run from this directory (libero_env Python 3.8 venv). LIBERO env tests need EGL rendering and are marked `manual` (skipped in CI).
+
+```bash
+cd examples/libero_env
+
+# Pure-logic tests only (no LIBERO/MuJoCo):
+uv run pytest tests/ -v -m "not manual"
+
+# Full suite including env rollouts (GPU + EGL):
+MUJOCO_GL=egl uv run pytest tests/ -v
+```

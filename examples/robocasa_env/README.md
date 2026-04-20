@@ -94,12 +94,13 @@ Default output: `examples/robocasa_env/output/<env_name>/`. Override with `--out
 cd examples/robocasa_env
 
 # Curated 7-task subset (default; the tasks we have published pi0.5 + GR00T N1.5
-# results for — faster iteration than the full 18-task atomic_seen set)
-MUJOCO_GL=egl uv run python eval_all.py --num_episodes 15 --num_workers 5
+# results for — faster iteration than the full 18-task atomic_seen set).
+# eval_all.py defaults --num_episodes=15; drop to --num_episodes 1 for smoke tests.
+MUJOCO_GL=egl uv run python eval_all.py --num_workers 5
 
 # A full RoboCasa task set (see TASK_SET_REGISTRY: atomic_seen, composite_seen,
 # composite_unseen, target50, pretrain50 / 100 / 200 / 300)
-MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen --num_episodes 15 --num_workers 5
+MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen --num_workers 5
 
 # Explicit task list (overrides --task_set)
 MUJOCO_GL=egl uv run python eval_all.py --tasks OpenDrawer CloseFridge
@@ -122,7 +123,11 @@ Client (either backend):
 
 ```bash
 cd examples/robocasa_env
-MUJOCO_GL=egl uv run python main.py --env_name CloseBlenderLid --collect
+
+# Single task (main.py defaults --num_episodes=1; bump to 15 for real runs):
+MUJOCO_GL=egl uv run python main.py --env_name CloseBlenderLid --collect --num_episodes 15
+
+# Full task set (eval_all.py defaults --num_episodes=15):
 MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen --collect --num_workers 5
 ```
 
@@ -179,3 +184,17 @@ Raw numbers: [`figures/results_75000.json`](figures/results_75000.json). Upstrea
 ### GR00T N1.5
 
 Published comparisons: https://robocasa.ai/docs/build/html/benchmarking/multitask_learning.html
+
+## Testing
+
+Run from this directory (robocasa_env venv). RoboCasa env tests need EGL rendering and are marked `manual` (skipped in CI).
+
+```bash
+cd examples/robocasa_env
+
+# Pure-logic tests only (no RoboCasa/MuJoCo):
+uv run pytest tests/ -v -m "not manual"
+
+# Full suite including env rollouts (GPU + EGL):
+MUJOCO_GL=egl uv run pytest tests/ -v
+```

@@ -124,14 +124,14 @@ Mean success rate and per-task comparisons across released checkpoints:
 ![Comparison](figures/compare_means_5000_vs_25000.png)
 ![Comparison Per Task](figures/compare_per_task_5000_vs_25000.png)
 
-### Testing
+## Testing
 
-MetaWorld environment tests require a GPU with EGL rendering support. They are marked as `manual` and skipped in CI.
+Run from the repo root (root venv). MetaWorld env tests need EGL rendering and are marked `manual` (GPU-required, skipped in CI).
 
 ```bash
-# GPU + EGL:
-MUJOCO_GL=egl uv run pytest tests/metaworld/test_metaworld_envs.py -v
+# Pure-logic tests only (no GPU):
+uv run pytest tests/metaworld/ -v -m "not manual"
 
-# Pure-logic tests only:
-uv run pytest tests/metaworld/test_metaworld_envs.py -v -m "not manual"
+# Full suite including env rollouts (GPU + EGL):
+MUJOCO_GL=egl uv run pytest tests/metaworld/ -v
 ```
