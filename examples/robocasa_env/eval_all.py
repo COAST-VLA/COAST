@@ -93,9 +93,11 @@ class Args:
     tasks: List[str] = dataclasses.field(default_factory=list)
     # Dataset split: "pretrain" (in-distribution object instances) or "target" (held-out).
     split: str = "pretrain"
-    # Number of episodes to run per task. Default is 1 because robocasa env
-    # stepping is slow (~400 ms/step).
-    num_episodes: int = 1
+    # Number of episodes to run per task. Default is 15 to match the standard
+    # "15 envs per task" convention used by the published HF pre-collected
+    # activation datasets. Drop to --num_episodes 1 for quick smoke tests —
+    # robocasa env stepping is slow (~400 ms/step).
+    num_episodes: int = 15
     # Override the maximum steps per episode. If None, uses 1.5 * task horizon
     # via ``main.get_task_horizon`` in the subprocess.
     max_steps: Optional[int] = None

@@ -60,8 +60,11 @@ class Args:
         "libero_goal",
         "libero_10",
     ] = "libero_10"
-    # Number of episodes / initial states per task.
-    num_episodes: int = 1
+    # Number of episodes / initial states per task. Default is 15 to match
+    # the standard "15 envs per task" convention used by the published HF
+    # pre-collected activation datasets. Override with --num_episodes for
+    # ad-hoc sweeps.
+    num_episodes: int = 15
     # Override the suite default max steps. If None, uses main.SUITE_MAX_STEPS.
     max_steps: Optional[int] = None
     # Number of settling steps before policy actions.

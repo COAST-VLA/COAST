@@ -265,7 +265,7 @@ class TestEvalAll:
         assert args.task_set == "subset"
         assert args.tasks == []
         assert args.split == "pretrain"
-        assert args.num_episodes == 1
+        assert args.num_episodes == 15
         assert args.max_steps is None
         assert args.replan_steps == 5
         assert args.resize_size == 224
