@@ -328,7 +328,7 @@ ACTIVATIONS_DIR=./activations/5000/reach-v3 \
 
 # pi0-FAST autoregressive (fast_v1 schema — tokens.npz / hidden_states.npz /
 # token_logprobs.npz). Uses ACTIVATIONS_FAST_DIR, not ACTIVATIONS_DIR:
-ACTIVATIONS_FAST_DIR=./activations/pi0fast-metaworld-activations-v1-15env/2500/reach-v3 \
+ACTIVATIONS_FAST_DIR=./activations/pi0fast-metaworld-activations-v1-ml45train-16env/2500/reach-v3 \
     uv run pytest tests/test_activations_fast.py -v
 
 # GR00T N1.5 (groot_v1 schema):
@@ -347,8 +347,8 @@ of running your own collection:
 
 | Backend | Client | Dataset | Notes |
 |---|---|---|---|
-| pi0.5 (`v1`)     | MetaWorld | [`brandonyang/pi05-metaworld-activations-v1-15env`](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v1-15env) | 15 envs × 45 tasks, 357 GB |
-| pi0-FAST (`fast_v1`) | MetaWorld | [`brandonyang/pi0fast-metaworld-activations-v1-15env`](https://huggingface.co/datasets/brandonyang/pi0fast-metaworld-activations-v1-15env) | 10-task subset, 2500-step checkpoint, 4.2 GB |
+| pi0.5 (`v1`)     | MetaWorld | [`brandonyang/pi05-metaworld-activations-v1-ml45train-16env`](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v1-ml45train-16env) | 16 envs × 45 ML45-train tasks |
+| pi0-FAST (`fast_v1`) | MetaWorld | [`brandonyang/pi0fast-metaworld-activations-v1-ml45train-16env`](https://huggingface.co/datasets/brandonyang/pi0fast-metaworld-activations-v1-ml45train-16env) | 16 envs × 45 ML45-train tasks |
 | pi0.5 (`v1`)     | LIBERO    | [`brandonyang/pi05-libero-activations-v1-2000-15env`](https://huggingface.co/datasets/brandonyang/pi05-libero-activations-v1-2000-15env) | 2000-step checkpoint, 10 tasks × 15 episodes |
 | pi0-FAST (`fast_v1`) | LIBERO | [`brandonyang/pi0fast-libero-activations-v1-2000-15env`](https://huggingface.co/datasets/brandonyang/pi0fast-libero-activations-v1-2000-15env) | libero_10, 2000-step, 1.1 GB, mean success 0.65 |
 | pi0.5 (`v1`)     | RoboCasa  | [`ksb21st/robocasa-activations-75000`](https://huggingface.co/datasets/ksb21st/robocasa-activations-75000) | 7 tasks × 15 episodes, `pi05_pretrain_human300/multitask_learning/75000` |

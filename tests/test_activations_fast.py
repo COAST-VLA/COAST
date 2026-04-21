@@ -10,7 +10,7 @@ need their own validator.
 Run after collecting activations, pointing at one task directory:
 
     # metaworld pi0-fast
-    ACTIVATIONS_FAST_DIR=activations/pi0fast-metaworld-activations-v1-15env/2500/reach-v3 \\
+    ACTIVATIONS_FAST_DIR=activations/pi0fast-metaworld-activations-v1-ml45train-16env/2500/reach-v3 \\
         uv run pytest tests/test_activations_fast.py -v
 
     # libero pi0-fast
@@ -32,7 +32,7 @@ import pytest
 
 ACTIVATIONS_FAST_DIR = os.environ.get(
     "ACTIVATIONS_FAST_DIR",
-    "activations/pi0fast-metaworld-activations-v1-15env/2500/reach-v3",
+    "activations/pi0fast-metaworld-activations-v1-ml45train-16env/2500/reach-v3",
 )
 
 
