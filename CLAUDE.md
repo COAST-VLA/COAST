@@ -140,6 +140,25 @@ Rules:
 - Run from the directory where the asset will be consumed (repo root for shared assets, `examples/{client}/` for client-specific ones).
 - When unsure about flags, run `hf download --help` rather than guessing.
 
+## HuggingFace Uploads (activation datasets)
+
+`hf upload <root>` rejects a commit once it crosses the **25k file limit**, which activation datasets routinely exceed. Use [`scripts/upload_activations_by_task.sh`](scripts/upload_activations_by_task.sh) — it creates the HF repo idempotently and splits the upload into one commit per task.
+
+```bash
+# Upload every step subdir of the local dataset (auto-detect steps):
+scripts/upload_activations_by_task.sh \
+    brandonyang/pi0fast-metaworld-activations-v1-ml45train-16env \
+    activations/pi0fast-metaworld-activations-v1-ml45train-16env
+
+# Upload one step only (argv[3]):
+scripts/upload_activations_by_task.sh \
+    brandonyang/pi0fast-metaworld-activations-v1-ml45train-16env \
+    activations/pi0fast-metaworld-activations-v1-ml45train-16env \
+    2500
+```
+
+Expected local layout: `<local_root>/<step>/<task>/...`. Each `<task>` becomes a separate HF commit at `path_in_repo=<step>/<task>`. Do not use bare `hf upload` on a multi-task activation tree — it will fail with `413 Payload Too Large`.
+
 ## Key Conventions
 
 - **Python 3.11+** (except libero_env: 3.8), managed by `uv`
