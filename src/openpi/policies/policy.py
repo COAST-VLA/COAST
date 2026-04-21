@@ -34,7 +34,7 @@ def collate_transformed_singles(singles: list[dict]) -> dict:
 
     # state is always present; prompt / mask fields are stacked when they show up.
     out["state"] = jnp.stack([jnp.asarray(ex["state"]) for ex in singles], axis=0)
-    optional_keys = ["tokenized_prompt", "tokenized_prompt_mask", "token_ar_mask", "token_loss_mask"]
+    optional_keys = ["tokenized_prompt", "tokenized_prompt_mask", "token_ar_mask", "token_loss_mask", "lang_emb"]
     for k in optional_keys:
         if k in singles[0]:
             out[k] = jnp.stack([jnp.asarray(ex[k]) for ex in singles], axis=0)

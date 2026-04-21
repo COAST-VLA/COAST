@@ -353,6 +353,88 @@ class PadStatesAndActions(DataTransformFn):
         return data
 
 
+class ComputeLangEmb(DataTransformFn):
+    """Encode the ``prompt`` string into a fixed-dim ``lang_emb`` vector via CLIP.
+
+    Produces a NumPy float32 vector of shape ``(embed_dim,)`` using
+    ``transformers.CLIPTextModelWithProjection.from_pretrained(model_id)`` — the pooled
+    ``text_embeds`` projection. Tokenization pads to ``max_length`` (default 25) to match the
+    NVlabs/sage robomimic pipeline the RoboCasa DP checkpoint was trained against.
+
+    The encoder is lazy-initialized on first call (avoids CLIP download at import / test
+    collection time) and per-process per-prompt-string caches to keep cost O(unique_tasks).
+
+    Not a frozen dataclass because the lazy CLIP state has to live on the instance.
+    """
+
+    def __init__(
+        self,
+        model_id: str = "openai/clip-vit-large-patch14",
+        max_length: int = 25,
+        device: str | None = None,
+        *,
+        drop_prompt: bool = True,
+    ):
+        self.model_id = model_id
+        self.max_length = max_length
+        self.device = device  # None → picked lazily (cuda if available, else cpu)
+        self.drop_prompt = drop_prompt
+        self._tokenizer = None
+        self._model = None
+        self._cache: dict[str, np.ndarray] = {}
+        self._embed_dim: int | None = None
+
+    def _lazy_init(self) -> None:
+        if self._model is not None:
+            return
+        import torch
+        from transformers import AutoTokenizer
+        from transformers import CLIPTextModelWithProjection
+
+        dev = self.device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self._tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+        self._model = CLIPTextModelWithProjection.from_pretrained(self.model_id).to(dev).eval()
+        self._device_runtime = dev
+        self._embed_dim = int(self._model.config.projection_dim)
+
+    def _encode(self, prompt: str) -> np.ndarray:
+        if prompt in self._cache:
+            return self._cache[prompt]
+        self._lazy_init()
+        import torch
+
+        tokens = self._tokenizer(
+            text=prompt,
+            add_special_tokens=True,
+            max_length=self.max_length,
+            padding="max_length",
+            return_attention_mask=True,
+            return_tensors="pt",
+        )
+        tokens = {k: v.to(self._device_runtime) for k, v in tokens.items()}
+        with torch.no_grad():
+            out = self._model(**tokens)
+        vec = out["text_embeds"][0].float().cpu().numpy().astype(np.float32)
+        self._cache[prompt] = vec
+        return vec
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if not isinstance(data, dict):
+            return data
+        prompt = data.get("prompt")
+        if prompt is None:
+            return data
+        # Accept scalar bytes/str or 0-d numpy string array.
+        if isinstance(prompt, bytes | np.bytes_):
+            prompt = prompt.decode()
+        elif isinstance(prompt, np.ndarray) and prompt.ndim == 0:
+            prompt = str(prompt.item())
+        out = {**data, "lang_emb": self._encode(str(prompt))}
+        if self.drop_prompt:
+            out.pop("prompt", None)
+        return out
+
+
 def flatten_dict(tree: at.PyTree) -> dict:
     """Flatten a nested dictionary. Uses '/' as the separator."""
     return traverse_util.flatten_dict(tree, sep="/")

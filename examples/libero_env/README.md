@@ -125,7 +125,7 @@ Then run `main.py` / `eval_all.py` from `examples/libero_env/` exactly as docume
 
 Activation collection (`--collect`) is not supported for DP — the collection path is pi0 / pi0-FAST / pi0.5 only.
 
-**Caveat — unconditional baseline.** `dp_libero` trains on the `physical-intelligence/libero` dataset but the DP model consumes only images + state; the data pipeline drops the task prompt and the model has no task ID / one-hot input (same as `dp_metaworld`). Loss converges against the mixture but per-task success rates are expected to be weak since DP can't distinguish tasks given the same arm pose. For fair per-task numbers, train one DP per task or extend the model with a task embedding.
+**Language-conditioned multi-task baseline.** `dp_libero` trains on the `physical-intelligence/libero` dataset with the per-task prompt routed through `ComputeLangEmb` (CLIP ViT-L/14 `text_embeds` projection, 768-d, `padding="max_length", max_length=25`) into a `lang_emb` obs field. The DP model's `VisualCoreLanguageConditioned` branch consumes this both via FiLM modulation of the ResNet18 image features and as a raw concatenated feature — same language-conditioning path as `dp_robocasa` / `dp_metaworld`. CLIP runs on the DataLoader worker CPUs (one cached encoder per worker, lazy-init).
 
 ## Evaluation
 

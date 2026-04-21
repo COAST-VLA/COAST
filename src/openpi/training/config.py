@@ -165,11 +165,20 @@ class ModelTransformFactory(GroupFactory):
                     ],
                 )
             case _model.ModelType.DIFFUSION_POLICY:
-                # DP has no language prompt and uses raw state/action dims, so no tokenize/pad.
-                # Image resize happens in the model forward.
-                # Drop the prompt string so it doesn't leak into the torch batch (strings can't be
-                # converted to torch tensors).
-                return _transforms.Group(inputs=[_transforms.DropKeys(keys=("prompt",))])
+                # DP uses raw state/action dims (no tokenize/pad). Image resize happens in the
+                # model forward. For language conditioning, encode ``prompt`` into the 768-d
+                # ``lang_emb`` field via CLIP ViT-L/14's text-tower projection (matches the
+                # robocasa-benchmark training pipeline); the transform drops ``prompt`` afterwards
+                # so the PyTorch collator doesn't choke on the string leaf. For DP configs that
+                # don't use language (lang_emb_dim=None), ComputeLangEmb still runs and emits
+                # ``lang_emb`` — the model just ignores it.
+                #
+                # Force CPU: PyTorch DataLoader workers are CPU-side. If we leave device=None,
+                # each of the (num_workers * world_size) workers would lazy-init CLIP on
+                # whichever GPU happens to be visible, fragmenting GPU memory and racing against
+                # the training forward pass. Prompts are per-task and heavily cached (only ~44
+                # unique strings in metaworld_ml45), so CPU encoding is cheap after warmup.
+                return _transforms.Group(inputs=[_transforms.ComputeLangEmb(device="cpu")])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -959,11 +968,14 @@ _CONFIGS = [
     # config and calling _make_dp_config.
     _make_dp_config(
         name="dp_metaworld",
-        # MetaWorld: 2 openpi cameras, flat 4-dim state, 4-dim action. No language branch — openpi's
-        # data pipeline drops the per-task prompt string for DP. horizon=16 stays consistent with
-        # the pre-Transformer DP variant so existing dp_metaworld data/norm-stats still apply.
-        # Images at 96x96 with 84x84 crop follows Chi et al.'s paper defaults and leaves the
-        # CropRandomizer a real crop window (the robomimic randomizer asserts crop<input).
+        # MetaWorld: 2 openpi cameras, flat 4-dim state, 4-dim action. Language conditioning is
+        # ON — the ``prompt`` string is encoded by ComputeLangEmb (CLIP ViT-L/14, 768-d
+        # text_embeds projection, max_length=25) into a per-step ``lang_emb`` feature that the
+        # DP model consumes via ``VisualCoreLanguageConditioned`` (FiLM-modulated ResNet18 + raw
+        # feature concat). horizon=16 stays consistent with the pre-Transformer DP variant so
+        # existing dp_metaworld data/norm-stats still apply. Images at 96x96 with 84x84 crop
+        # follows Chi et al.'s paper defaults and leaves the CropRandomizer a real crop window
+        # (the robomimic randomizer asserts crop<input).
         model=diffusion_policy.DiffusionPolicyConfig(
             action_dim=4,
             action_horizon=16,
@@ -976,7 +988,7 @@ _CONFIGS = [
                 diffusion_policy.ImageSpec("left_wrist_0_rgb", 3, 96, 96),
             ),
             lowdims=(diffusion_policy.LowdimSpec("state", 4),),
-            lang_emb_dim=None,
+            lang_emb_dim=768,
         ),
         data=LeRobotMetaworldDataConfig(
             repo_id="brandonyang/metaworld_ml45",
@@ -986,7 +998,8 @@ _CONFIGS = [
     ),
     _make_dp_config(
         name="dp_libero",
-        # LIBERO: 2 openpi cameras, 8-dim state, 7-dim action.
+        # LIBERO: 2 openpi cameras, 8-dim state, 7-dim action. Same 768-d CLIP ViT-L/14 lang_emb
+        # path as dp_metaworld.
         model=diffusion_policy.DiffusionPolicyConfig(
             action_dim=7,
             action_horizon=16,
@@ -999,7 +1012,7 @@ _CONFIGS = [
                 diffusion_policy.ImageSpec("left_wrist_0_rgb", 3, 96, 96),
             ),
             lowdims=(diffusion_policy.LowdimSpec("state", 8),),
-            lang_emb_dim=None,
+            lang_emb_dim=768,
         ),
         data=LeRobotLiberoDataConfig(
             repo_id="physical-intelligence/libero",

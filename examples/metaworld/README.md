@@ -132,7 +132,7 @@ Then run `main.py` / `eval_all.py` in a second terminal exactly as documented un
 
 Activation collection (`--collect`) is not supported for DP — the collection path is pi0 / pi0-FAST / pi0.5 only.
 
-**Caveat — unconditional multi-task baseline.** `dp_metaworld` trains on all 44 ML45 tasks but the DP model consumes only images + state; the data pipeline drops the task prompt and the model has no task ID / language embedding input (unlike `dp_robocasa` which routes the `lang_emb` obs through `VisualCoreLanguageConditioned`). Loss converges against the multi-task mixture but per-task success rates are expected to be weak since DP can't distinguish "reach" from "push-wall" given the same arm pose. For fair per-task numbers, train one DP per task.
+**Language-conditioned multi-task baseline.** `dp_metaworld` trains on all 44 ML45 tasks with the per-task prompt routed through `ComputeLangEmb` (CLIP ViT-L/14 `text_embeds` projection, 768-d, `padding="max_length", max_length=25`) into a `lang_emb` obs field. The DP model's `VisualCoreLanguageConditioned` branch consumes this both via FiLM modulation of the ResNet18 image features and as a raw concatenated feature — same language-conditioning path as `dp_robocasa`. CLIP is forced to CPU in the model_transform so each of the `num_workers × world_size` DataLoader workers caches encodings locally without fragmenting GPU memory; per-task prompts are heavily reused so only ~44 encodes happen per worker for ML45.
 
 ## Evaluation
 

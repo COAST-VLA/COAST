@@ -131,11 +131,10 @@ class DiffusionPolicy(nn.Module):
         Output convention: every value is ``(B, n_obs_steps, ...)``. We duplicate a single
         openpi time-step across n_obs_steps, since openpi's data pipeline is single-step.
 
-        ``lang_emb`` is threaded as a kwarg rather than sitting on ``Observation`` because
-        openpi's Observation dataclass types ``tokenized_prompt`` as an integer tensor — stuffing
-        a float language embedding through that field trips its runtime typechecker. Keeping
-        lang_emb separate also lets envs without language conditioning (metaworld, libero) pass
-        it as None.
+        lang_emb resolution order: the ``lang_emb`` kwarg wins if provided; otherwise we read
+        ``observation.lang_emb`` (populated by the ``ComputeLangEmb`` model_transform). Callers
+        that already have a precomputed tensor (e.g. a test injecting a known embedding) can
+        keep using the kwarg; the usual training/serving path goes through ``observation``.
         """
         obs_dict: dict[str, torch.Tensor] = {}
         n_obs_steps = self.config.n_obs_steps
@@ -162,7 +161,11 @@ class DiffusionPolicy(nn.Module):
 
         if self.config.lang_emb_dim is not None:
             if lang_emb is None:
-                raise RuntimeError("config.lang_emb_dim is set but no lang_emb was passed to forward/sample_actions")
+                lang_emb = getattr(observation, "lang_emb", None)
+            if lang_emb is None:
+                raise RuntimeError(
+                    "config.lang_emb_dim is set but neither lang_emb kwarg nor observation.lang_emb was provided"
+                )
             if lang_emb.ndim == 2:
                 lang_emb = lang_emb.unsqueeze(1).expand(-1, n_obs_steps, -1).contiguous()
             obs_dict["lang_emb"] = lang_emb.to(dtype=next(iter(obs_dict.values())).dtype)
@@ -276,11 +279,22 @@ class DiffusionPolicy(nn.Module):
             data[lowdim.key] = torch.cat(slices, dim=0)
             offset += lowdim.dim
 
-        # lang_emb (optional)
+        # lang_emb (optional). Prefer per-observation ``observation.lang_emb`` (populated by the
+        # ComputeLangEmb transform); fall back to an explicit list if the caller knows better.
         if self.config.lang_emb_dim is not None:
-            if not lang_embs:
-                raise RuntimeError("lang_emb_dim is set but no lang_embs were provided to fit_normalizer")
-            data["lang_emb"] = torch.cat(lang_embs, dim=0)
+            if lang_embs:
+                data["lang_emb"] = torch.cat(lang_embs, dim=0)
+            else:
+                pieces = []
+                for obs in observations:
+                    lang = getattr(obs, "lang_emb", None)
+                    if lang is None:
+                        raise RuntimeError(
+                            "lang_emb_dim is set but observation.lang_emb is missing — is "
+                            "ComputeLangEmb wired into model_transforms for this config?"
+                        )
+                    pieces.append(lang.to(torch.float32))
+                data["lang_emb"] = torch.cat(pieces, dim=0)
 
         normalizer = LinearNormalizer()
         normalizer.fit(data)
