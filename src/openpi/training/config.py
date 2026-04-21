@@ -959,12 +959,24 @@ _CONFIGS = [
     # config and calling _make_dp_config.
     _make_dp_config(
         name="dp_metaworld",
-        # MetaWorld: state=4, actions=4. DP uses raw (non-padded) dims.
+        # MetaWorld: 2 openpi cameras, flat 4-dim state, 4-dim action. No language branch — openpi's
+        # data pipeline drops the per-task prompt string for DP. horizon=16 stays consistent with
+        # the pre-Transformer DP variant so existing dp_metaworld data/norm-stats still apply.
+        # Images at 96x96 with 84x84 crop follows Chi et al.'s paper defaults and leaves the
+        # CropRandomizer a real crop window (the robomimic randomizer asserts crop<input).
         model=diffusion_policy.DiffusionPolicyConfig(
             action_dim=4,
-            state_dim=4,
             action_horizon=16,
-            camera_keys=("base_0_rgb", "left_wrist_0_rgb"),
+            horizon=16,
+            n_obs_steps=1,
+            n_action_steps=16,
+            crop_shape=(84, 84),
+            images=(
+                diffusion_policy.ImageSpec("base_0_rgb", 3, 96, 96),
+                diffusion_policy.ImageSpec("left_wrist_0_rgb", 3, 96, 96),
+            ),
+            lowdims=(diffusion_policy.LowdimSpec("state", 4),),
+            lang_emb_dim=None,
         ),
         data=LeRobotMetaworldDataConfig(
             repo_id="brandonyang/metaworld_ml45",
@@ -974,18 +986,38 @@ _CONFIGS = [
     ),
     _make_dp_config(
         name="dp_libero",
-        # LIBERO: state=8, actions=7.
+        # LIBERO: 2 openpi cameras, 8-dim state, 7-dim action.
         model=diffusion_policy.DiffusionPolicyConfig(
             action_dim=7,
-            state_dim=8,
             action_horizon=16,
-            camera_keys=("base_0_rgb", "left_wrist_0_rgb"),
+            horizon=16,
+            n_obs_steps=1,
+            n_action_steps=16,
+            crop_shape=(84, 84),
+            images=(
+                diffusion_policy.ImageSpec("base_0_rgb", 3, 96, 96),
+                diffusion_policy.ImageSpec("left_wrist_0_rgb", 3, 96, 96),
+            ),
+            lowdims=(diffusion_policy.LowdimSpec("state", 8),),
+            lang_emb_dim=None,
         ),
         data=LeRobotLiberoDataConfig(
             repo_id="physical-intelligence/libero",
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
         ),
+    ),
+    # dp_robocasa is inference-only: we never train this in-repo, just load the released
+    # checkpoint at robocasa/robocasa365_checkpoints/diffusion_policy/.../epoch=0500*.ckpt.
+    # Defaults mirror the checkpoint exactly so load_weights succeeds with strict=True.
+    _make_dp_config(
+        name="dp_robocasa",
+        model=diffusion_policy.DiffusionPolicyConfig(),  # all-defaults = checkpoint-compatible
+        data=LeRobotRobocasaDataConfig(
+            assets=AssetsConfig(asset_id="robocasa"),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        num_train_steps=1,  # placeholder — never actually trained locally
     ),
     #
     # Robocasa configs.

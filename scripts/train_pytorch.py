@@ -470,6 +470,26 @@ def train_loop(config: _config.TrainConfig):
         weight_decay=config.optimizer.weight_decay,
     )
 
+    # Fit the in-model LinearNormalizer for DP before any forward pass. The vendored
+    # DiffusionTransformerHybridImagePolicy computes_loss/predict_action by normalizing the
+    # observation/action tensors through LinearNormalizer, which is initialized with stats = +inf
+    # and will assert at first use. Pool ~8 batches from the data loader to get a usable
+    # min/max per shape_meta key. Only do this on fresh runs — when resuming, the normalizer is
+    # already inside the saved model state_dict.
+    if config.model.model_type == _model.ModelType.DIFFUSION_POLICY and not resuming:
+        dp_inner = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
+        if is_main:
+            logging.info("DP: fitting LinearNormalizer from data loader samples")
+        obs_buf, act_buf = [], []
+        for obs, act in loader:
+            obs_buf.append(jax.tree.map(lambda x: x.to(device), obs))
+            act_buf.append(act.to(torch.float32).to(device))
+            if len(obs_buf) >= 8:
+                break
+        dp_inner.fit_normalizer(obs_buf, act_buf)
+        if is_main:
+            logging.info("DP: LinearNormalizer fitted")
+
     # Load checkpoint if resuming
     global_step = 0
     if resuming:

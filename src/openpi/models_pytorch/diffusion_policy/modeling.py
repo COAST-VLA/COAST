@@ -1,487 +1,303 @@
-"""Diffusion Policy (CNN 1D U-Net variant).
+"""openpi wrapper around the vendored ``DiffusionTransformerHybridImagePolicy``.
 
-Core model components adapted from LeRobot's `lerobot/common/policies/diffusion/modeling_diffusion.py`
-(Apache 2.0, Columbia ARX / HuggingFace). We strip the LeRobot-specific wrappers and replace them with an
-openpi-native module that plugs into `openpi.policies.policy.Policy` via the same `compute_loss` /
-`sample_actions` interface used by `pi0_pytorch.PI0Pytorch`.
+The wrapper exposes two methods that openpi's training / serving loops call:
 
-This is a PyTorch-only model. It ignores language prompts. Uses `n_obs_steps=1` (no observation history)
-to avoid changes to the data loader; the obs-history case can be added later.
+- ``forward(observation, actions) -> loss_tensor``
+- ``sample_actions(device, observation) -> actions``
+
+Responsibilities beyond those:
+- Translate openpi's ``Observation`` (canonical ``images`` dict + 1-D ``state``) into the
+  shape_meta-keyed batch dict that the vendored policy expects.
+- Own a ``LinearNormalizer`` so loads of the robocasa-benchmark .ckpt (which stores one
+  per-key normalizer) succeed bit-exactly, and so fresh training runs can fit a normalizer
+  from their first data batch.
+- Handle ``.ckpt`` checkpoint loading (the upstream serialization format) in addition to the
+  plain state_dict path openpi uses elsewhere.
+
+The translation between openpi's flat state tensor and the per-key lowdim obs entries of the
+shape_meta is a simple concat/split driven by the ``lowdims`` tuple in the config. The
+ordering of that tuple is load-bearing — it defines the byte layout of ``observation.state``
+produced by the data pipeline.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-import itertools
-import math
+from pathlib import Path
 
-from diffusers.schedulers.scheduling_ddim import DDIMScheduler
-from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
-import einops
 import torch
-from torch import Tensor
 from torch import nn
-import torch.nn.functional as F  # noqa: N812
-import torchvision
+
+from openpi.models_pytorch.diffusion_policy.config import DiffusionPolicyConfig
+from openpi.models_pytorch.diffusion_policy.vendored import (
+    robomimic_extensions,  # noqa: F401 — registration side-effect
+)
+from openpi.models_pytorch.diffusion_policy.vendored.diffusion_transformer_hybrid_image_policy import (
+    DiffusionTransformerHybridImagePolicy,
+)
 
 
-def _make_noise_scheduler(name: str, **kwargs):
-    if name == "DDPM":
-        return DDPMScheduler(**kwargs)
-    if name == "DDIM":
-        return DDIMScheduler(**kwargs)
-    raise ValueError(f"Unsupported noise scheduler type: {name}")
+def _make_noise_scheduler(config: DiffusionPolicyConfig):
+    """Build the DDPMScheduler that matches the vendored policy's expectations."""
+    from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 
-
-class SpatialSoftmax(nn.Module):
-    """Spatial soft-argmax over 2D feature maps (Finn et al.). Ported from LeRobot DP."""
-
-    def __init__(self, input_shape, num_kp: int | None = None):
-        super().__init__()
-        assert len(input_shape) == 3
-        self._in_c, self._in_h, self._in_w = input_shape
-
-        if num_kp is not None:
-            self.nets = nn.Conv2d(self._in_c, num_kp, kernel_size=1)
-            self._out_c = num_kp
-        else:
-            self.nets = None
-            self._out_c = self._in_c
-
-        pos_x, pos_y = torch.meshgrid(
-            torch.linspace(-1.0, 1.0, self._in_w),
-            torch.linspace(-1.0, 1.0, self._in_h),
-            indexing="xy",
-        )
-        pos_x = pos_x.reshape(self._in_h * self._in_w, 1)
-        pos_y = pos_y.reshape(self._in_h * self._in_w, 1)
-        self.register_buffer("pos_grid", torch.cat([pos_x, pos_y], dim=1).float())
-
-    def forward(self, features: Tensor) -> Tensor:
-        if self.nets is not None:
-            features = self.nets(features)
-        features = features.reshape(-1, self._in_h * self._in_w)
-        attention = F.softmax(features, dim=-1)
-        expected_xy = attention @ self.pos_grid
-        return expected_xy.view(-1, self._out_c, 2)
-
-
-def _replace_submodules(
-    root_module: nn.Module, predicate: Callable[[nn.Module], bool], func: Callable[[nn.Module], nn.Module]
-) -> nn.Module:
-    if predicate(root_module):
-        return func(root_module)
-    replace_list = [k.split(".") for k, m in root_module.named_modules(remove_duplicate=True) if predicate(m)]
-    for *parents, k in replace_list:
-        parent = root_module
-        if parents:
-            parent = root_module.get_submodule(".".join(parents))
-        src = parent[int(k)] if isinstance(parent, nn.Sequential) else getattr(parent, k)
-        tgt = func(src)
-        if isinstance(parent, nn.Sequential):
-            parent[int(k)] = tgt
-        else:
-            setattr(parent, k, tgt)
-    assert not any(predicate(m) for _, m in root_module.named_modules(remove_duplicate=True))
-    return root_module
-
-
-class DiffusionRgbEncoder(nn.Module):
-    """ResNet (GroupNorm) + SpatialSoftmax → feature vector. Ported from LeRobot DP."""
-
-    def __init__(
-        self,
-        image_shape: tuple[int, int, int],
-        *,
-        vision_backbone: str = "resnet18",
-        crop_shape: tuple[int, int] | None = None,
-        crop_is_random: bool = True,
-        use_group_norm: bool = True,
-        pretrained_backbone_weights: str | None = None,
-        spatial_softmax_num_keypoints: int = 32,
-    ):
-        super().__init__()
-        if crop_shape is not None:
-            self.do_crop = True
-            self.center_crop = torchvision.transforms.CenterCrop(crop_shape)
-            self.maybe_random_crop = (
-                torchvision.transforms.RandomCrop(crop_shape) if crop_is_random else self.center_crop
-            )
-        else:
-            self.do_crop = False
-
-        backbone_model = getattr(torchvision.models, vision_backbone)(weights=pretrained_backbone_weights)
-        self.backbone = nn.Sequential(*(list(backbone_model.children())[:-2]))
-        if use_group_norm:
-            if pretrained_backbone_weights:
-                raise ValueError("Cannot replace BatchNorm in a pretrained backbone.")
-            self.backbone = _replace_submodules(
-                root_module=self.backbone,
-                predicate=lambda x: isinstance(x, nn.BatchNorm2d),
-                func=lambda x: nn.GroupNorm(num_groups=x.num_features // 16, num_channels=x.num_features),
-            )
-
-        c, h, w = image_shape
-        dummy_hw = crop_shape if crop_shape is not None else (h, w)
-        with torch.no_grad():
-            dummy = torch.zeros(1, c, *dummy_hw)
-            feature_map_shape = self.backbone(dummy).shape[1:]  # (C, H, W)
-
-        self.pool = SpatialSoftmax(feature_map_shape, num_kp=spatial_softmax_num_keypoints)
-        self.feature_dim = spatial_softmax_num_keypoints * 2
-        self.out = nn.Linear(spatial_softmax_num_keypoints * 2, self.feature_dim)
-        self.relu = nn.ReLU()
-
-    def forward(self, x: Tensor) -> Tensor:
-        if self.do_crop:
-            x = self.maybe_random_crop(x) if self.training else self.center_crop(x)
-        x = torch.flatten(self.pool(self.backbone(x)), start_dim=1)
-        return self.relu(self.out(x))
-
-
-class DiffusionSinusoidalPosEmb(nn.Module):
-    def __init__(self, dim: int):
-        super().__init__()
-        self.dim = dim
-
-    def forward(self, x: Tensor) -> Tensor:
-        half = self.dim // 2
-        emb = math.log(10000) / (half - 1)
-        emb = torch.exp(torch.arange(half, device=x.device) * -emb)
-        emb = x.unsqueeze(-1) * emb.unsqueeze(0)
-        return torch.cat((emb.sin(), emb.cos()), dim=-1)
-
-
-class DiffusionConv1dBlock(nn.Module):
-    def __init__(self, in_c, out_c, kernel_size, n_groups=8):
-        super().__init__()
-        self.block = nn.Sequential(
-            nn.Conv1d(in_c, out_c, kernel_size, padding=kernel_size // 2),
-            nn.GroupNorm(n_groups, out_c),
-            nn.Mish(),
-        )
-
-    def forward(self, x):
-        return self.block(x)
-
-
-class DiffusionConditionalResidualBlock1d(nn.Module):
-    def __init__(
-        self,
-        in_c: int,
-        out_c: int,
-        cond_dim: int,
-        kernel_size: int = 3,
-        n_groups: int = 8,
-        *,
-        use_film_scale_modulation: bool = False,
-    ):
-        super().__init__()
-        self.use_film_scale_modulation = use_film_scale_modulation
-        self.out_c = out_c
-        self.conv1 = DiffusionConv1dBlock(in_c, out_c, kernel_size, n_groups=n_groups)
-        cond_ch = out_c * 2 if use_film_scale_modulation else out_c
-        self.cond_encoder = nn.Sequential(nn.Mish(), nn.Linear(cond_dim, cond_ch))
-        self.conv2 = DiffusionConv1dBlock(out_c, out_c, kernel_size, n_groups=n_groups)
-        self.residual_conv = nn.Conv1d(in_c, out_c, 1) if in_c != out_c else nn.Identity()
-
-    def forward(self, x: Tensor, cond: Tensor) -> Tensor:
-        out = self.conv1(x)
-        cond_emb = self.cond_encoder(cond).unsqueeze(-1)
-        if self.use_film_scale_modulation:
-            scale = cond_emb[:, : self.out_c]
-            bias = cond_emb[:, self.out_c :]
-            out = scale * out + bias
-        else:
-            out = out + cond_emb
-        out = self.conv2(out)
-        return out + self.residual_conv(x)
-
-
-class DiffusionConditionalUnet1d(nn.Module):
-    """1D U-Net with FiLM conditioning. Ported from LeRobot DP."""
-
-    def __init__(
-        self,
-        action_dim: int,
-        global_cond_dim: int,
-        *,
-        down_dims: tuple[int, ...] = (256, 512, 1024),
-        kernel_size: int = 5,
-        n_groups: int = 8,
-        diffusion_step_embed_dim: int = 128,
-        use_film_scale_modulation: bool = True,
-    ):
-        super().__init__()
-        self.diffusion_step_encoder = nn.Sequential(
-            DiffusionSinusoidalPosEmb(diffusion_step_embed_dim),
-            nn.Linear(diffusion_step_embed_dim, diffusion_step_embed_dim * 4),
-            nn.Mish(),
-            nn.Linear(diffusion_step_embed_dim * 4, diffusion_step_embed_dim),
-        )
-        cond_dim = diffusion_step_embed_dim + global_cond_dim
-        in_out = [(action_dim, down_dims[0]), *itertools.pairwise(down_dims)]
-
-        common = {
-            "cond_dim": cond_dim,
-            "kernel_size": kernel_size,
-            "n_groups": n_groups,
-            "use_film_scale_modulation": use_film_scale_modulation,
-        }
-
-        self.down_modules = nn.ModuleList([])
-        for i, (d_in, d_out) in enumerate(in_out):
-            is_last = i >= len(in_out) - 1
-            self.down_modules.append(
-                nn.ModuleList(
-                    [
-                        DiffusionConditionalResidualBlock1d(d_in, d_out, **common),
-                        DiffusionConditionalResidualBlock1d(d_out, d_out, **common),
-                        nn.Conv1d(d_out, d_out, 3, 2, 1) if not is_last else nn.Identity(),
-                    ]
-                )
-            )
-
-        self.mid_modules = nn.ModuleList(
-            [
-                DiffusionConditionalResidualBlock1d(down_dims[-1], down_dims[-1], **common),
-                DiffusionConditionalResidualBlock1d(down_dims[-1], down_dims[-1], **common),
-            ]
-        )
-
-        self.up_modules = nn.ModuleList([])
-        for i, (d_out, d_in) in enumerate(reversed(in_out[1:])):
-            is_last = i >= len(in_out) - 1
-            self.up_modules.append(
-                nn.ModuleList(
-                    [
-                        DiffusionConditionalResidualBlock1d(d_in * 2, d_out, **common),
-                        DiffusionConditionalResidualBlock1d(d_out, d_out, **common),
-                        nn.ConvTranspose1d(d_out, d_out, 4, 2, 1) if not is_last else nn.Identity(),
-                    ]
-                )
-            )
-
-        self.final_conv = nn.Sequential(
-            DiffusionConv1dBlock(down_dims[0], down_dims[0], kernel_size=kernel_size),
-            nn.Conv1d(down_dims[0], action_dim, 1),
-        )
-
-    def forward(self, x: Tensor, timestep: Tensor, global_cond: Tensor | None = None) -> Tensor:
-        # x: (B, horizon, action_dim) -> (B, action_dim, horizon) for conv1d.
-        x = einops.rearrange(x, "b t d -> b d t")
-        t_emb = self.diffusion_step_encoder(timestep)
-        global_feat = torch.cat([t_emb, global_cond], dim=-1) if global_cond is not None else t_emb
-
-        skips: list[Tensor] = []
-        for resnet, resnet2, downsample in self.down_modules:
-            x = resnet(x, global_feat)
-            x = resnet2(x, global_feat)
-            skips.append(x)
-            x = downsample(x)
-
-        for mid in self.mid_modules:
-            x = mid(x, global_feat)
-
-        for resnet, resnet2, upsample in self.up_modules:
-            x = torch.cat((x, skips.pop()), dim=1)
-            x = resnet(x, global_feat)
-            x = resnet2(x, global_feat)
-            x = upsample(x)
-
-        x = self.final_conv(x)
-        return einops.rearrange(x, "b d t -> b t d")
+    return DDPMScheduler(
+        num_train_timesteps=config.num_train_timesteps,
+        beta_start=config.beta_start,
+        beta_end=config.beta_end,
+        beta_schedule=config.beta_schedule,
+        variance_type=config.variance_type,
+        clip_sample=config.clip_sample,
+        prediction_type=config.prediction_type,
+    )
 
 
 class DiffusionPolicy(nn.Module):
-    """Openpi-compatible Diffusion Policy.
+    """Transformer-Hybrid Diffusion Policy, packaged for openpi.
 
-    Interface mirrors `PI0Pytorch`:
-      - forward(observation, actions) -> per-element MSE loss (same reduction='none' shape as pi0)
-      - sample_actions(device, observation, noise=None, num_steps=None) -> (B, horizon, action_dim)
-
-    Observation (from openpi.models.model.Observation):
-      images: dict[str, Tensor]   # (B, H, W, C) float in [-1, 1] OR (B, C, H, W)
-      image_masks: dict[str, Tensor]  # (B,) bool, True=valid camera; we skip cameras whose mask is False across the batch
-      state: Tensor  # (B, state_dim)
-      tokenized_prompt / tokenized_prompt_mask: ignored
+    This is a thin wrapper over the vendored ``DiffusionTransformerHybridImagePolicy``. The
+    vendored module contains the actual parameters; we mediate between openpi's observation
+    format and the vendored module's shape_meta-keyed obs dict.
     """
 
-    def __init__(self, config):
+    def __init__(self, config: DiffusionPolicyConfig):
         super().__init__()
-        # _encode_global_cond builds a single-step conditioning vector, and global_cond_dim below scales by
-        # n_obs_steps — so anything other than 1 would crash deep in the U-Net with a confusing shape error.
-        # Guard until obs history is actually implemented.
-        if config.n_obs_steps != 1:
-            raise NotImplementedError(
-                f"DiffusionPolicy currently supports only n_obs_steps=1 (got {config.n_obs_steps})."
-            )
         self.config = config
 
-        # Determine which cameras are active; we always use all 3 openpi image keys to match the observation
-        # layout, but we allow masking one out (e.g., MetaWorld's right_wrist_0_rgb is a zero placeholder).
-        self.camera_keys = tuple(config.camera_keys)  # ordered list, e.g., ("base_0_rgb", "left_wrist_0_rgb")
-        num_cameras = len(self.camera_keys)
+        # Build the underlying policy. Kwargs mirror the vendored config exactly.
+        self._policy = DiffusionTransformerHybridImagePolicy(
+            shape_meta=config.shape_meta_dict(),
+            noise_scheduler=_make_noise_scheduler(config),
+            horizon=config.horizon,
+            n_action_steps=config.n_action_steps,
+            n_obs_steps=config.n_obs_steps,
+            num_inference_steps=config.num_inference_steps,
+            vision_backbone=config.vision_backbone,
+            crop_shape=tuple(config.crop_shape),
+            obs_encoder_group_norm=config.obs_encoder_group_norm,
+            eval_fixed_crop=config.eval_fixed_crop,
+            n_layer=config.n_layer,
+            n_cond_layers=config.n_cond_layers,
+            n_head=config.n_head,
+            n_emb=config.n_emb,
+            p_drop_emb=config.p_drop_emb,
+            p_drop_attn=config.p_drop_attn,
+            causal_attn=config.causal_attn,
+            time_as_cond=config.time_as_cond,
+            obs_as_cond=config.obs_as_cond,
+        )
 
-        # Image encoder. One encoder per camera (paper default).
-        image_shape = (3, config.image_size[0], config.image_size[1])
-        self.rgb_encoders = nn.ModuleList(
-            [
-                DiffusionRgbEncoder(
-                    image_shape,
-                    vision_backbone=config.vision_backbone,
-                    crop_shape=config.crop_shape,
-                    crop_is_random=config.crop_is_random,
-                    use_group_norm=config.use_group_norm,
-                    spatial_softmax_num_keypoints=config.spatial_softmax_num_keypoints,
+    # ---- weight loading ----------------------------------------------------------------------
+
+    def load_weights(self, weight_path: str) -> None:
+        """Load weights from either a robocasa-benchmark .ckpt or an openpi safetensors file.
+
+        The .ckpt format is the one the upstream training loop saves: a torch.save'd dict with
+        keys ``cfg``, ``state_dicts.{model, ema_model, optimizer}``, and ``pickles``. We load
+        ``state_dicts.model`` (the EMA shadow is available at ``state_dicts.ema_model`` if you
+        ever want it — the pretrain_human300 checkpoint has EMA enabled, so both exist).
+        """
+        weight_path = str(weight_path)
+        if weight_path.endswith(".ckpt"):
+            payload = torch.load(weight_path, map_location="cpu", weights_only=False)
+            state_dict = payload["state_dicts"]["model"]
+            res = self._policy.load_state_dict(state_dict, strict=True)
+            # strict=True above would have raised on mismatches; this branch is defensive.
+            if res.missing_keys or res.unexpected_keys:
+                raise RuntimeError(
+                    f"unexpected key mismatch loading {weight_path}: "
+                    f"missing={res.missing_keys[:5]}, unexpected={res.unexpected_keys[:5]}"
                 )
-                for _ in range(num_cameras)
-            ]
-        )
-        feature_dim = self.rgb_encoders[0].feature_dim
+            return
+        if weight_path.endswith(".safetensors") or Path(weight_path).is_dir():
+            # openpi's own checkpoint format: either a dir with model.safetensors, or the file
+            # directly.
+            import safetensors.torch
 
-        global_cond_dim = (feature_dim * num_cameras + config.state_dim) * config.n_obs_steps
+            if Path(weight_path).is_dir():
+                weight_path = str(Path(weight_path) / "model.safetensors")
+            safetensors.torch.load_model(self, weight_path)
+            return
+        raise ValueError(f"Unrecognized weight_path format: {weight_path}")
 
-        self.unet = DiffusionConditionalUnet1d(
-            action_dim=config.action_dim,
-            global_cond_dim=global_cond_dim,
-            down_dims=tuple(config.down_dims),
-            kernel_size=config.kernel_size,
-            n_groups=config.n_groups,
-            diffusion_step_embed_dim=config.diffusion_step_embed_dim,
-            use_film_scale_modulation=config.use_film_scale_modulation,
-        )
+    # ---- obs translation ---------------------------------------------------------------------
 
-        self.noise_scheduler = _make_noise_scheduler(
-            config.noise_scheduler_type,
-            num_train_timesteps=config.num_train_timesteps,
-            beta_start=config.beta_start,
-            beta_end=config.beta_end,
-            beta_schedule=config.beta_schedule,
-            clip_sample=config.clip_sample,
-            clip_sample_range=config.clip_sample_range,
-            prediction_type=config.prediction_type,
-        )
-        self.num_inference_steps = (
-            config.num_inference_steps if config.num_inference_steps is not None else config.num_train_timesteps
-        )
+    def _openpi_obs_to_batch(
+        self,
+        observation,
+        lang_emb: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """Turn openpi ``Observation`` (+ optional ``lang_emb``) into the per-key dict the vendored policy expects.
 
-    # ---- image handling ------------------------------------------------------------------------
+        Output convention: every value is ``(B, n_obs_steps, ...)``. We duplicate a single
+        openpi time-step across n_obs_steps, since openpi's data pipeline is single-step.
 
-    @staticmethod
-    def _to_nchw_01(image: Tensor) -> Tensor:
-        """Convert an openpi image tensor to (B, C, H, W) float32 in [0, 1].
-
-        Input contract (matches ``openpi.models.model.Observation`` — see its docstring and
-        ``Observation.from_dict``):
-          - Float tensors are in ``[-1, 1]``. This is the canonical form after ``Observation.from_dict``,
-            which rescales uint8 -> float32 ``[-1, 1]``.
-          - uint8 tensors in ``[0, 255]`` are also accepted for defensiveness (e.g., if a caller builds
-            an ``Observation`` manually without going through ``from_dict``).
-          - Layout is either NHWC (openpi default) or NCHW — auto-detected by the channel dim.
-
-        ResNet18 + GroupNorm expects inputs centred around ``[0, 1]``, so we always rescale from
-        the documented input range rather than guessing at it.
+        ``lang_emb`` is threaded as a kwarg rather than sitting on ``Observation`` because
+        openpi's Observation dataclass types ``tokenized_prompt`` as an integer tensor — stuffing
+        a float language embedding through that field trips its runtime typechecker. Keeping
+        lang_emb separate also lets envs without language conditioning (metaworld, libero) pass
+        it as None.
         """
-        if image.dtype == torch.uint8:
-            if image.ndim == 4 and image.shape[-1] == 3:
-                image = image.permute(0, 3, 1, 2)
-            return image.to(torch.float32) / 255.0
-        # float path: detect NHWC vs NCHW by channel dim. The `shape[1] != 3` guard is only meaningful
-        # when batch size != 3; a 3-image NHWC batch is ambiguous with NCHW and is rejected by the shape
-        # of the backbone downstream rather than silently mis-interpreted.
-        if image.ndim == 4 and image.shape[-1] == 3 and image.shape[1] != 3:
-            image = image.permute(0, 3, 1, 2)
-        # Float inputs are always in [-1, 1] per the openpi Observation contract.
-        return (image / 2.0 + 0.5).clamp(0.0, 1.0)
+        obs_dict: dict[str, torch.Tensor] = {}
+        n_obs_steps = self.config.n_obs_steps
 
-    def _resize(self, image: Tensor) -> Tensor:
-        h, w = self.config.image_size
-        if image.shape[-2:] != (h, w):
-            image = F.interpolate(image, size=(h, w), mode="bilinear", align_corners=False)
-        return image
+        for img_spec in self.config.images:
+            img = observation.images[img_spec.key]
+            img = _to_nchw_01(img)
+            # Resize to the declared camera H/W. The policy has its own CropRandomizer for train
+            # and a fixed center-crop at eval — we do NOT crop here.
+            if img.shape[-2:] != (img_spec.height, img_spec.width):
+                img = nn.functional.interpolate(
+                    img, size=(img_spec.height, img_spec.width), mode="bilinear", align_corners=False
+                )
+            obs_dict[img_spec.key] = img.unsqueeze(1).expand(-1, n_obs_steps, -1, -1, -1).contiguous()
 
-    def _encode_global_cond(self, observation) -> Tensor:
-        """Build (B, global_cond_dim) vector from state + images. n_obs_steps=1 path.
+        state = observation.state
+        offset = 0
+        for lowdim in self.config.lowdims:
+            slice_ = state[..., offset : offset + lowdim.dim]
+            obs_dict[lowdim.key] = slice_.unsqueeze(1).expand(-1, n_obs_steps, -1).contiguous()
+            offset += lowdim.dim
+        if offset != state.shape[-1]:
+            raise ValueError(f"state dim mismatch: lowdims sum to {offset}, observation.state has {state.shape[-1]}")
 
-        Feature ordering MUST match LeRobot's ``DiffusionModel._prepare_global_conditioning``:
-        ``[state, img_features_cam_0, img_features_cam_1, ...]``. The UNet's FiLM cond_encoder
-        is a Linear layer whose weight columns are bound to this ordering at training time, so
-        swapping it would (a) make a LeRobot-trained checkpoint produce garbage when loaded into
-        our model, and (b) make numerical-equivalence testing against the reference impossible.
-        The equivalence suite in tests/models_pytorch/test_diffusion_policy_lerobot_equivalence.py
-        pins this to LeRobot's ordering.
+        if self.config.lang_emb_dim is not None:
+            if lang_emb is None:
+                raise RuntimeError("config.lang_emb_dim is set but no lang_emb was passed to forward/sample_actions")
+            if lang_emb.ndim == 2:
+                lang_emb = lang_emb.unsqueeze(1).expand(-1, n_obs_steps, -1).contiguous()
+            obs_dict["lang_emb"] = lang_emb.to(dtype=next(iter(obs_dict.values())).dtype)
 
-        NOTE — unconditional multi-task baseline: DP receives no task signal here. The training
-        data for e.g. dp_metaworld spans all 44 ML45 tasks and the data pipeline attaches a task
-        string (via ``prompt_from_task=True``), but openpi's DP model transform drops the prompt
-        (see ``ModelTransformFactory`` DIFFUSION_POLICY case in ``openpi/training/config.py``) and
-        the conditioning vector below is built from images + state only — no tokenized_prompt,
-        no task ID, no one-hot. When trained on a multi-task dataset this yields a single policy
-        that must average motor behaviour across tasks; for fair per-task comparisons either train
-        one DP per task or add a task embedding to the concat below.
+        return obs_dict
+
+    # ---- training: forward ------------------------------------------------------------------
+
+    def forward(
+        self,
+        observation,
+        actions: torch.Tensor,
+        *,
+        lang_emb: torch.Tensor | None = None,
+        **_ignored,
+    ) -> torch.Tensor:
+        """Return per-element MSE loss shaped ``(B, horizon, action_dim)``.
+
+        Shape matches ``PI0Pytorch.forward`` so openpi's training loop (which does
+        ``loss.mean()``) works unchanged. Internally we call the vendored ``compute_loss``, which
+        normalizes inputs via the in-model ``LinearNormalizer`` — callers pass the raw
+        un-normalized actions.
         """
-        # Encode images first so we know the UNet's working dtype (float32), then cast state
-        # to match before concatenating. The data loader can hand us float64 state; silently
-        # promoting to double would later explode inside the UNet's Linear layers.
-        img_feats = []
-        for i, key in enumerate(self.camera_keys):
-            img = observation.images[key]
-            img = self._to_nchw_01(img)
-            img = self._resize(img)
-            img_feats.append(self.rgb_encoders[i](img))
-        ref_dtype = img_feats[0].dtype if img_feats else observation.state.dtype
-        state = observation.state.to(dtype=ref_dtype)
-        # State first, then images — matches LeRobot's _prepare_global_conditioning ordering.
-        return torch.cat([state, *img_feats], dim=-1)
+        obs_dict = self._openpi_obs_to_batch(observation, lang_emb=lang_emb)
+        batch = {"obs": obs_dict, "action": actions.to(torch.float32)}
+        # compute_loss returns a scalar mean; expand to (B, H, A) so openpi's .mean() stays sound.
+        scalar_loss = self._policy.compute_loss(batch)
+        return scalar_loss.expand(actions.shape[0], self.config.horizon, self.config.action_dim).clone()
 
-    # ---- training ------------------------------------------------------------------------------
-
-    def forward(self, observation, actions: Tensor, noise: Tensor | None = None, time: Tensor | None = None) -> Tensor:
-        """Returns per-element MSE loss with shape (B, horizon, action_dim)."""
-        global_cond = self._encode_global_cond(observation)
-        actions = actions.to(torch.float32)
-
-        if noise is None:
-            noise = torch.randn_like(actions)
-        if time is None:
-            time = torch.randint(
-                low=0,
-                high=self.noise_scheduler.config.num_train_timesteps,
-                size=(actions.shape[0],),
-                device=actions.device,
-            ).long()
-
-        noisy = self.noise_scheduler.add_noise(actions, noise, time)
-        pred = self.unet(noisy, time, global_cond=global_cond)
-
-        if self.config.prediction_type == "epsilon":
-            target = noise
-        elif self.config.prediction_type == "sample":
-            target = actions
-        else:
-            raise ValueError(f"Unsupported prediction type: {self.config.prediction_type}")
-
-        return F.mse_loss(pred, target, reduction="none")
-
-    # ---- inference -----------------------------------------------------------------------------
+    # ---- inference: sample_actions -----------------------------------------------------------
 
     @torch.no_grad()
     def sample_actions(
-        self, device, observation, *, noise: Tensor | None = None, num_steps: int | None = None
-    ) -> Tensor:
-        """Full K-step denoising. Returns (B, horizon, action_dim)."""
-        global_cond = self._encode_global_cond(observation)
-        b = global_cond.shape[0]
-        shape = (b, self.config.action_horizon, self.config.action_dim)
-        sample = noise if noise is not None else torch.randn(shape, device=device)
+        self,
+        device,
+        observation,
+        *,
+        lang_emb: torch.Tensor | None = None,
+        **_ignored,
+    ) -> torch.Tensor:
+        """Return sampled actions, shape ``(B, horizon, action_dim)``.
 
-        self.noise_scheduler.set_timesteps(num_steps if num_steps is not None else self.num_inference_steps)
-        for t in self.noise_scheduler.timesteps:
-            model_out = self.unet(
-                sample,
-                torch.full((b,), t, dtype=torch.long, device=device),
-                global_cond=global_cond,
-            )
-            sample = self.noise_scheduler.step(model_out, t, sample).prev_sample
-        return sample
+        Returns the full ``action_pred`` (horizon length) rather than the already-sliced
+        ``action[:, n_action_steps]`` — openpi downstream consumers (e.g., the metaworld client)
+        slice the first ``replan_steps`` entries of the returned chunk themselves.
+        """
+        obs_dict = self._openpi_obs_to_batch(observation, lang_emb=lang_emb)
+        result = self._policy.predict_action(obs_dict)
+        return result["action_pred"]
+
+    # ---- inference: sample_actions_from_dict -------------------------------------------------
+
+    @torch.no_grad()
+    def sample_actions_from_dict(self, obs_dict: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Inference entry point that bypasses openpi's typed Observation.
+
+        ``obs_dict`` must already be shape_meta-keyed with per-key tensors of shape
+        ``(B, n_obs_steps, ...)`` — i.e., exactly what ``DiffusionTransformerHybridImagePolicy``
+        expects. Useful for the robocasa inference path where the client has direct access to
+        language embeddings and robocasa-specific keys.
+
+        Returns ``action_pred`` (B, horizon, action_dim). The vendored policy also computes
+        ``action`` (B, n_action_steps, action_dim), but downstream usually wants to slice the
+        full chunk itself.
+        """
+        result = self._policy.predict_action(obs_dict)
+        return result["action_pred"]
+
+    # ---- normalizer management ---------------------------------------------------------------
+
+    @torch.no_grad()
+    def fit_normalizer(
+        self,
+        observations: list,
+        actions_list: list[torch.Tensor],
+        lang_embs: list[torch.Tensor] | None = None,
+    ) -> None:
+        """Fit the in-model ``LinearNormalizer`` from a list of openpi observations + actions.
+
+        Must be called exactly once before training starts (and before the first ``forward`` call
+        that would otherwise trip the normalizer's "stats are infinity" assertion). Samples
+        should come from the real training data — a handful of batches is enough to get a
+        usable min/max per key for the ``limits``-mode normalizer this policy uses.
+
+        Skipped at inference time when the checkpoint we're loading already carries a
+        populated normalizer.
+        """
+        from openpi.models_pytorch.diffusion_policy.vendored.normalizer import LinearNormalizer
+
+        data: dict[str, torch.Tensor] = {}
+        # Actions
+        data["action"] = torch.cat([a.to(torch.float32) for a in actions_list], dim=0)
+
+        # Images: pool all observations per key, convert to NCHW [0, 1], resize to declared shape.
+        for img_spec in self.config.images:
+            pieces = []
+            for obs in observations:
+                img = obs.images[img_spec.key]
+                img = _to_nchw_01(img)
+                if img.shape[-2:] != (img_spec.height, img_spec.width):
+                    img = nn.functional.interpolate(
+                        img, size=(img_spec.height, img_spec.width), mode="bilinear", align_corners=False
+                    )
+                pieces.append(img)
+            data[img_spec.key] = torch.cat(pieces, dim=0)
+
+        # Lowdim: slice state per declared lowdim spec, in order.
+        offset = 0
+        for lowdim in self.config.lowdims:
+            slices = [obs.state[..., offset : offset + lowdim.dim] for obs in observations]
+            data[lowdim.key] = torch.cat(slices, dim=0)
+            offset += lowdim.dim
+
+        # lang_emb (optional)
+        if self.config.lang_emb_dim is not None:
+            if not lang_embs:
+                raise RuntimeError("lang_emb_dim is set but no lang_embs were provided to fit_normalizer")
+            data["lang_emb"] = torch.cat(lang_embs, dim=0)
+
+        normalizer = LinearNormalizer()
+        normalizer.fit(data)
+        self._policy.set_normalizer(normalizer)
+
+
+def _to_nchw_01(image: torch.Tensor) -> torch.Tensor:
+    """openpi image tensor -> (B, C, H, W) float32 in [0, 1].
+
+    Input contract: either ``uint8`` in ``[0, 255]`` or ``float`` in ``[-1, 1]`` (the
+    canonical form after ``openpi.models.model.Observation.from_dict``). NHWC and NCHW both
+    accepted — auto-detected by the channel dim.
+    """
+    if image.dtype == torch.uint8:
+        if image.ndim == 4 and image.shape[-1] == 3:
+            image = image.permute(0, 3, 1, 2)
+        return image.to(torch.float32) / 255.0
+    if image.ndim == 4 and image.shape[-1] == 3 and image.shape[1] != 3:
+        image = image.permute(0, 3, 1, 2)
+    return (image / 2.0 + 0.5).clamp(0.0, 1.0)

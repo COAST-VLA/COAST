@@ -52,6 +52,25 @@ export CUDA_VISIBLE_DEVICES=0
 uv run python serve.py --port 8000     # defaults to the checkpoint path above
 ```
 
+### Diffusion Policy (root venv, released checkpoint)
+
+`dp_robocasa` loads the Transformer-Hybrid Diffusion Policy checkpoint published by the RoboCasa team directly into openpi's DP wrapper. The DP code is vendored from [`robocasa-benchmark/diffusion_policy`](https://github.com/robocasa-benchmark/diffusion_policy) (Apache 2.0) under `src/openpi/models_pytorch/diffusion_policy/vendored/`, so the released `.ckpt` loads strict — 0 missing / 0 unexpected keys (verified by `tests/robocasa/test_dp_e2e.py::test_dp_robocasa_loads_ckpt_and_samples_actions`).
+
+Download the checkpoint and run inference:
+
+```bash
+hf download robocasa/robocasa365_checkpoints \
+    --include "diffusion_policy/17.40.09_train_diffusion_transformer_hybrid_pretrain_human300/checkpoints/*.ckpt" \
+    --local-dir checkpoints/robocasa_dp
+
+# Inference-only sanity check (no env, just ckpt load + forward pass):
+CUDA_VISIBLE_DEVICES=0 uv run pytest tests/robocasa/test_dp_e2e.py -v -m manual
+```
+
+For a live env rollout against the released checkpoint you'd wire this DP path into a `serve_policy.py`-style server. The vendored policy expects the shape_meta-keyed obs dict the released training pipeline used (three robocasa cameras + pos/quat/gripper state + 768-d `lang_emb`); producing `lang_emb` from a task string at runtime requires a sentence encoder (CLIP ViT-B/32 or similar) matching whatever the upstream training run used. This bridge isn't wired into `examples/robocasa_env/main.py` yet — see `tests/robocasa/test_dp_e2e.py` for the minimal calling convention.
+
+DP training is **not** supported for `dp_robocasa` in-repo (we don't host the RoboCasa LeRobot dataset pipeline); that config exists only as the inference-side architecture spec that matches the released `.ckpt`.
+
 ## Evaluation
 
 Two entry points, identical regardless of backend:

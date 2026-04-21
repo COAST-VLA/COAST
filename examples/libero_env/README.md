@@ -96,9 +96,9 @@ hf download brandonyang/pi0fast-libero-checkpoints \
     --local-dir checkpoints/pi0_fast_libero
 ```
 
-### Diffusion Policy baseline (PyTorch-only)
+### Diffusion Policy baseline (Transformer-Hybrid, PyTorch-only)
 
-`dp_libero` is a non-VLA baseline (Chi et al., CNN 1D U-Net) for comparison against pi0/pi0.5/pi0-fast. It's trained via the PyTorch entry point; evaluation reuses the existing LIBERO server/client flow but `serve_policy.py` **must** be launched with `--pytorch` (DP has no JAX path).
+`dp_libero` is a Diffusion Policy baseline using the Transformer-Hybrid variant (Chi et al. 2023), ported from [`robocasa-benchmark/diffusion_policy`](https://github.com/robocasa-benchmark/diffusion_policy) into `src/openpi/models_pytorch/diffusion_policy/vendored/` (Apache 2.0). It's trained via the PyTorch entry point; evaluation reuses the existing LIBERO server/client flow but `serve_policy.py` **must** be launched with `--pytorch` (DP has no JAX path). Training requires robomimic in the root venv.
 
 ```bash
 # 1. Norm stats (once per dataset).

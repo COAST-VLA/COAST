@@ -93,15 +93,25 @@ hf download brandonyang/pi0fast-metaworld-checkpoints \
     --local-dir checkpoints/pi0_fast_metaworld
 ```
 
-### Diffusion Policy baseline (PyTorch-only)
+### Diffusion Policy baseline (Transformer-Hybrid, PyTorch-only)
 
-`dp_metaworld` is a non-VLA baseline (Chi et al., CNN 1D U-Net) for comparison against pi0/pi0.5/pi0-fast. It's trained via the PyTorch entry point; evaluation reuses the same server/client flow but `serve_policy.py` **must** be launched with `--pytorch` (DP has no JAX path).
+`dp_metaworld` is a Diffusion Policy baseline using the Transformer-Hybrid variant from
+Chi et al. 2023, implemented by porting the [`robocasa-benchmark/diffusion_policy`][dp-repo]
+code directly into `src/openpi/models_pytorch/diffusion_policy/vendored/` (Apache 2.0) so
+that the same model class can load the released RoboCasa checkpoint and be trained from
+scratch on MetaWorld. Training requires robomimic in the root venv (installed alongside
+the existing deps) and uses the PyTorch entry point; eval reuses the openpi server/client
+flow with `serve_policy.py --pytorch` (DP has no JAX path).
+
+[dp-repo]: https://github.com/robocasa-benchmark/diffusion_policy
 
 ```bash
 # 1. Norm stats (once per dataset).
 uv run scripts/compute_norm_stats.py --config-name dp_metaworld
 
-# 2a. Train single-GPU (defaults: 100k steps, batch 64, DDPM-100 / DDIM-10).
+# 2a. Train single-GPU (defaults: 100k steps, batch 64, DDPM-100 / DDIM-10, horizon=16,
+#     n_obs_steps=1; on train start we fit the in-model LinearNormalizer from the first
+#     handful of data-loader batches before the main loop begins).
 CUDA_VISIBLE_DEVICES=0 uv run scripts/train_pytorch.py dp_metaworld \
     --exp-name dp_metaworld_test \
     --overwrite
@@ -122,7 +132,7 @@ Then run `main.py` / `eval_all.py` in a second terminal exactly as documented un
 
 Activation collection (`--collect`) is not supported for DP — the collection path is pi0 / pi0-FAST / pi0.5 only.
 
-**Caveat — unconditional multi-task baseline.** `dp_metaworld` trains on all 44 ML45 tasks but the DP model consumes only images + state; the data pipeline drops the task prompt and the model has no task ID / one-hot input. Loss converges against the multi-task mixture but per-task success rates are expected to be weak since DP can't distinguish "reach" from "push-wall" given the same arm pose. For fair per-task numbers, train one DP per task or extend the model with a task embedding.
+**Caveat — unconditional multi-task baseline.** `dp_metaworld` trains on all 44 ML45 tasks but the DP model consumes only images + state; the data pipeline drops the task prompt and the model has no task ID / language embedding input (unlike `dp_robocasa` which routes the `lang_emb` obs through `VisualCoreLanguageConditioned`). Loss converges against the multi-task mixture but per-task success rates are expected to be weak since DP can't distinguish "reach" from "push-wall" given the same arm pose. For fair per-task numbers, train one DP per task.
 
 ## Evaluation
 
