@@ -37,6 +37,12 @@ dependencies = [
     "transformers==4.53.2",
     "rich>=14.0.0",
     "polars>=1.30.0",
+    # Diffusion Policy baseline depends on robomimic for its visual backbone
+    # (VisualCore, ResNet18Conv, CropRandomizer, ObsUtils). The vendored DP
+    # code imports ``robomimic.models.base_nets`` and ``obs_core`` at module
+    # load, so anything that imports ``openpi.training.config`` (i.e. every
+    # test that references a TrainConfig) transitively requires this dep.
+    "robomimic==0.3.0",
 ]
 
 
