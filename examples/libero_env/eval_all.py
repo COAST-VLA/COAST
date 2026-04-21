@@ -35,12 +35,26 @@ import subprocess
 import sys
 from typing import Dict, List, Literal, Optional
 
+import pathlib
+
 import numpy as np
 import tyro
 
 from main import get_task_suite
 
 logger = logging.getLogger(__name__)
+
+
+def _count_finalized_episodes(activation_dir: str, checkpoint_step: str, task_name: str) -> int:
+    """Count episodes with metadata.json (i.e. fully finalized) on disk."""
+    task_dir = pathlib.Path(activation_dir) / checkpoint_step / task_name
+    if not task_dir.exists():
+        return 0
+    count = 0
+    for ep in task_dir.iterdir():
+        if ep.is_dir() and ep.name.startswith("episode_") and (ep / "metadata.json").exists():
+            count += 1
+    return count
 
 # Pulls the last ``success_rate=0.50`` (or similar) from the main.py log stream.
 # main.py logs this once at the end of eval_task via ``logger.info``, e.g.:
@@ -102,8 +116,22 @@ class Args:
     # are resolved against the user's shell cwd.
     output_dir: Optional[str] = None
 
+    # Optional subset of task IDs to run. If None, runs all tasks in the suite.
+    # Use to fill in missing tasks from a prior partial run without re-running
+    # the tasks that already have activations on disk.
+    task_ids: Optional[List[int]] = None
 
-def _build_command(args: Args, task_id: int, output_dir: str) -> List[str]:
+    # Resume collection from the first missing episode instead of re-running
+    # from episode 0. Requires --collect. Scans the activation output dir for
+    # existing finalized episodes (those with metadata.json) and sets
+    # --start_episode for each task's subprocess accordingly.
+    resume: bool = False
+    # Root directory where activations are stored (only used with --resume to
+    # detect existing episodes). Must match the server's --output-dir.
+    activation_dir: Optional[str] = None
+
+
+def _build_command(args: Args, task_id: int, output_dir: str, start_episode: int = 0) -> List[str]:
     """Build the ``main.py`` CLI invocation for one task_id.
 
     ``output_dir`` is the absolute path where this subprocess should write its
@@ -148,11 +176,13 @@ def _build_command(args: Args, task_id: int, output_dir: str) -> List[str]:
         cmd.append("--collect")
     if args.max_steps is not None:
         cmd.extend(["--max_steps", str(args.max_steps)])
+    if start_episode > 0:
+        cmd.extend(["--start_episode", str(start_episode)])
     return cmd
 
 
 def _run_one_task(
-    args: Args, task_id: int, log_dir: str, cwd: str, output_dir: str
+    args: Args, task_id: int, log_dir: str, cwd: str, output_dir: str, start_episode: int = 0,
 ) -> Dict[str, object]:
     """Launch main.py for a single task_id and return a parsed result dict.
 
@@ -160,7 +190,7 @@ def _run_one_task(
     so the main process doesn't have to deal with interleaved output, and so
     the user can re-inspect the per-task logs after the run.
     """
-    cmd = _build_command(args, task_id, output_dir)
+    cmd = _build_command(args, task_id, output_dir, start_episode=start_episode)
     env = os.environ.copy()
     env.setdefault("MUJOCO_GL", "egl")
 
@@ -222,12 +252,26 @@ def main(args: Args) -> None:
     log_dir = os.path.join(output_dir, "parallel_logs")
     os.makedirs(log_dir, exist_ok=True)
 
+    # Resolve which task IDs to actually run: subset if requested, else all.
+    if args.task_ids is not None:
+        requested = list(args.task_ids)
+        invalid = [t for t in requested if t < 0 or t >= task_suite.n_tasks]
+        if invalid:
+            raise ValueError(
+                f"task_ids out of range [0, {task_suite.n_tasks}): {invalid}"
+            )
+        task_ids_to_run = requested
+    else:
+        task_ids_to_run = list(range(task_suite.n_tasks))
+
     logger.info(
         "Evaluating %d tasks from %s in parallel (num_workers=%d)",
-        task_suite.n_tasks,
+        len(task_ids_to_run),
         args.task_suite_name,
         args.num_workers,
     )
+    if args.task_ids is not None:
+        logger.info("Running subset task_ids=%s", task_ids_to_run)
     if args.collect:
         logger.info(
             "Collection mode enabled: each subprocess sends __collect__/__finalize_episode__ "
@@ -239,12 +283,31 @@ def main(args: Args) -> None:
     # parse them out of each subprocess's stdout. This is cheap — no env
     # construction, just a lookup against the benchmark registry.
     task_metadata: Dict[int, Dict[str, str]] = {}
-    for task_id in range(task_suite.n_tasks):
+    task_start_episode: Dict[int, int] = {}
+    for task_id in task_ids_to_run:
         task = task_suite.get_task(task_id)
         task_metadata[task_id] = {
             "task_name": getattr(task, "name", f"task_{task_id:02d}"),
             "task_description": str(task.language),
         }
+        if args.resume and args.collect and args.activation_dir:
+            existing = _count_finalized_episodes(
+                args.activation_dir, "1000", task_metadata[task_id]["task_name"],
+            )
+            task_start_episode[task_id] = existing
+            if existing >= args.num_episodes:
+                logger.info("task_%02d already has %d/%d episodes — skipping", task_id, existing, args.num_episodes)
+            elif existing > 0:
+                logger.info("task_%02d resuming from episode %d (found %d existing)", task_id, existing, existing)
+        else:
+            task_start_episode[task_id] = 0
+
+    # Filter out tasks that are already complete when resuming.
+    if args.resume:
+        task_ids_to_run = [t for t in task_ids_to_run if task_start_episode[t] < args.num_episodes]
+        if not task_ids_to_run:
+            logger.info("All tasks already complete — nothing to do.")
+            return
 
     results: List[Dict[str, object]] = []
     results_path = os.path.join(output_dir, "results.json")
@@ -256,9 +319,10 @@ def main(args: Args) -> None:
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.num_workers) as pool:
         futures = {
             pool.submit(
-                _run_one_task, args, task_id, log_dir, script_dir, output_dir
+                _run_one_task, args, task_id, log_dir, script_dir, output_dir,
+                start_episode=task_start_episode[task_id],
             ): task_id
-            for task_id in range(task_suite.n_tasks)
+            for task_id in task_ids_to_run
         }
 
         for future in concurrent.futures.as_completed(futures):

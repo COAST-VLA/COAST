@@ -458,10 +458,18 @@ class PI0Pytorch(nn.Module):
         noise=None,
         num_steps=10,
         collect_layers=(0, 5, 11, 17),
+        steering_hooks=None,
     ) -> tuple[Tensor, dict]:
         """Like sample_actions() but collects per-step intermediates via hooks.
 
         Does NOT use torch.compile — runs in eager mode for hook compatibility.
+
+        Args:
+            steering_hooks: optional list of (layer_idx, hook_callable) pairs.
+                When provided, steering hooks are registered BEFORE capture hooks
+                so that captures record the post-steering activations. Each
+                hook_callable should have an optional set_denoise_step(t) method.
+
         Returns (final_actions, intermediates_dict).
         """
         bsize = observation.state.shape[0]
@@ -486,9 +494,16 @@ class PI0Pytorch(nn.Module):
             use_cache=True,
         )
 
-        # Register hooks on Action Expert layers
+        # Register hooks on Action Expert layers.
+        # Steering hooks (if any) are registered FIRST so they fire before
+        # capture hooks — capture hooks then record the post-steering output.
         hooks = []
         step_activations = {}
+        expert_layers = self.paligemma_with_expert.gemma_expert.model.layers
+
+        if steering_hooks is not None:
+            for layer_idx, hook_fn in steering_hooks:
+                hooks.append(expert_layers[layer_idx].register_forward_hook(hook_fn))
 
         def make_output_hook(name):
             """Capture module output (for layer residual streams)."""
@@ -509,7 +524,6 @@ class PI0Pytorch(nn.Module):
 
             return hook_fn
 
-        expert_layers = self.paligemma_with_expert.gemma_expert.model.layers
         for i in collect_layers:
             hooks.append(expert_layers[i].register_forward_hook(make_output_hook(f"expert_residual_{i}")))
             hooks.append(
@@ -525,10 +539,17 @@ class PI0Pytorch(nn.Module):
 
             x_t = noise
             time = torch.tensor(1.0, dtype=torch.float32, device=device)
+            step_counter = 0
 
             while time >= -dt_tensor / 2:
                 expanded_time = time.expand(bsize)
                 step_activations.clear()
+
+                # Notify steering hooks of current denoising step
+                if steering_hooks is not None:
+                    for _, hook_fn in steering_hooks:
+                        if hasattr(hook_fn, "set_denoise_step"):
+                            hook_fn.set_denoise_step(step_counter)
 
                 # Inline denoise_step to capture adarms_cond
                 suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(
@@ -578,6 +599,7 @@ class PI0Pytorch(nn.Module):
                 # Euler step
                 x_t = x_t + dt_tensor * v_t
                 time += dt_tensor
+                step_counter += 1
         finally:
             for h in hooks:
                 h.remove()

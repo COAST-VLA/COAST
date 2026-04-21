@@ -734,22 +734,6 @@ _CONFIGS = [
         ),                                                                                                                                             
     ), 
     TrainConfig(
-        name="pi0_fast_metaworld",
-        # action_dim=4 (metaworld: dx,dy,dz,gripper — see MetaworldOutputs)
-        # action_horizon=32 to match pi05_metaworld
-        # max_token_len=250 (horizon=32 needs more tokens than libero's 180)
-        model=pi0_fast.Pi0FASTConfig(action_dim=4, action_horizon=32, max_token_len=250),
-        data=LeRobotMetaworldDataConfig(
-            repo_id="brandonyang/metaworld_ml45",
-            base_config=DataConfig(prompt_from_task=True),
-            extra_delta_transform=False,
-        ),
-        batch_size=512,
-        num_train_steps=2_501,
-        keep_period=500,
-        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
-    ),
-    TrainConfig(
         name="pi0_fast_droid",
         model=pi0_fast.Pi0FASTConfig(action_dim=8, action_horizon=10),
         data=SimpleDataConfig(

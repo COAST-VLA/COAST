@@ -18,6 +18,7 @@ import pathlib
 from typing import List, Optional
 
 import gymnasium as gym
+import jax.numpy as jnp
 import metaworld  # noqa: F401
 import numpy as np
 import tyro
@@ -105,37 +106,36 @@ def get_conceptor(npz, task: str, strategy: str, alpha: float, kind: str) -> np.
     return npz[key]
 
 
-def build_M(C: np.ndarray, beta: float) -> np.ndarray:
-    d = C.shape[0]
-    return ((1.0 - beta) * np.eye(d, dtype=C.dtype) + beta * C).astype(np.float32)
+def _uniform_step_idx(max_steps: int) -> np.ndarray:
+    return np.zeros((max_steps,), dtype=np.int32)
 
 
-def build_M_per_step_combined(
-    npz, task: str, alpha: float, beta: float, max_steps: int, kind: str = "C_contrastive",
-) -> np.ndarray:
-    """Build a (max_steps, d, d) steering tensor that applies position-aware conceptors.
-
-    Tokens 0..T/3 use per_token_first, T/3..2T/3 use per_token_mid, 2T/3..T use per_token_last.
-    """
-    C_first = get_conceptor(npz, task, "per_token_first", alpha, kind)
-    C_mid = get_conceptor(npz, task, "per_token_mid", alpha, kind)
-    C_last = get_conceptor(npz, task, "per_token_last", alpha, kind)
-
-    d = C_first.shape[0]
-    I = np.eye(d, dtype=np.float32)
-    out = np.empty((max_steps, d, d), dtype=np.float32)
-
+def _combined_step_idx(max_steps: int) -> np.ndarray:
     t1 = max_steps // 3
     t2 = 2 * max_steps // 3
-    for i in range(max_steps):
-        if i < t1:
-            C = C_first
-        elif i < t2:
-            C = C_mid
-        else:
-            C = C_last
-        out[i] = (1.0 - beta) * I + beta * C.astype(np.float32)
-    return out
+    idx = np.empty((max_steps,), dtype=np.int32)
+    idx[:t1] = 0
+    idx[t1:t2] = 1
+    idx[t2:] = 2
+    return idx
+
+
+def build_steering_single(C: np.ndarray, max_steps: int) -> tuple[np.ndarray, np.ndarray]:
+    """Same C at every step; padded to K=3 for JIT-cache consistency across strategies."""
+    Cf = C.astype(np.float32)
+    C_stack = np.stack([Cf, Cf, Cf], axis=0)
+    return C_stack, _uniform_step_idx(max_steps)
+
+
+def build_steering_combined(
+    npz, task: str, alpha: float, max_steps: int, kind: str = "C_contrastive",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Position-aware (first/mid/last) conceptor stack."""
+    C_first = get_conceptor(npz, task, "per_token_first", alpha, kind).astype(np.float32)
+    C_mid = get_conceptor(npz, task, "per_token_mid", alpha, kind).astype(np.float32)
+    C_last = get_conceptor(npz, task, "per_token_last", alpha, kind).astype(np.float32)
+    C_stack = np.stack([C_first, C_mid, C_last], axis=0)
+    return C_stack, _combined_step_idx(max_steps)
 
 
 # ── In-process MetaWorld evaluation ──────────────────────────────────────
@@ -166,11 +166,14 @@ class MultiCameraWrapper(gym.Wrapper):
 
 
 def eval_task_steered(
-    policy, task_name: str, steering_M, *,
+    policy, task_name: str, C_stack, beta, step_to_C_idx, *,
     num_envs: int = 2, max_steps: int = 300, replan_steps: int = 10,
     seed: int = 69_420, width: int = 224, height: int = 224,
 ) -> float:
-    """Run one MetaWorld task with steering and return success rate."""
+    """Run one MetaWorld task with steering and return success rate.
+
+    When ``C_stack`` is None, runs the unsteered baseline path.
+    """
     prompt = TASK_TO_PROMPT[task_name]
 
     env_fns = [
@@ -197,8 +200,10 @@ def eval_task_steered(
                     "prompt": [prompt] * num_envs,
                 }
 
-                if steering_M is not None:
-                    result, _ = policy.infer_with_steering(obs_dict, steering_M=steering_M)
+                if C_stack is not None:
+                    result = policy.infer_with_steering_fast(
+                        obs_dict, C_stack=C_stack, beta=beta, step_to_C_idx=step_to_C_idx
+                    )
                 else:
                     result = policy.infer(obs_dict)
                 action_chunk = np.clip(result["actions"], -1.0, 1.0).astype(np.float32)
@@ -313,9 +318,12 @@ def main(args: Args) -> None:
         with open(summary_path, "w") as f:
             json.dump({"task": task, "conditions": sorted_results}, f, indent=2)
 
-    def run_condition(condition_name: str, M) -> dict:
+    step_idx_single_dev = jnp.asarray(_uniform_step_idx(args.max_decoding_steps))
+    step_idx_combined_dev = jnp.asarray(_combined_step_idx(args.max_decoding_steps))
+
+    def run_condition(condition_name: str, C_stack, beta, step_to_C_idx) -> dict:
         sr = eval_task_steered(
-            policy, task, M,
+            policy, task, C_stack, beta, step_to_C_idx,
             num_envs=args.num_envs, max_steps=args.max_steps,
             replan_steps=args.replan_steps, seed=args.seed,
         )
@@ -331,7 +339,7 @@ def main(args: Args) -> None:
             all_results.append({"condition": "baseline", "success_rate": baseline_sr})
         else:
             logger.warning("  No activation data for baseline — running inference.")
-            all_results.append(run_condition("baseline", None))
+            all_results.append(run_condition("baseline", None, None, None))
         save_progress()
 
     # ── 2. Global (contrastive) ──
@@ -342,28 +350,35 @@ def main(args: Args) -> None:
         except KeyError:
             logger.warning("No global contrastive for %s/a=%s — skipping.", task, alpha)
             continue
+        C_stack_np, _ = build_steering_single(C, args.max_decoding_steps)
+        C_stack_dev = jnp.asarray(C_stack_np)
         for beta in args.betas:
             cond_name = f"global_a{alpha}_b{beta}"
             if cond_name in done:
                 continue
-            all_results.append(run_condition(cond_name, build_M(C, beta)))
+            all_results.append(
+                run_condition(cond_name, C_stack_dev, float(beta), step_idx_single_dev)
+            )
             save_progress()
 
     # ── 3. Per-step combined (contrastive, first/mid/last by position) ──
     logger.info("\n[3] Per-step combined conditions...")
     for alpha in args.per_step_combined_alphas:
+        try:
+            C_stack_np, _ = build_steering_combined(
+                npz, task, alpha, args.max_decoding_steps, kind="C_contrastive",
+            )
+        except KeyError as e:
+            logger.warning("Missing per_token conceptor for combined: %s — skipping.", e)
+            continue
+        C_stack_dev = jnp.asarray(C_stack_np)
         for beta in args.betas:
             cond_name = f"per_step_combined_a{alpha}_b{beta}"
             if cond_name in done:
                 continue
-            try:
-                M_stack = build_M_per_step_combined(
-                    npz, task, alpha, beta, args.max_decoding_steps, kind="C_contrastive",
-                )
-            except KeyError as e:
-                logger.warning("Missing per_token conceptor for combined: %s — skipping.", e)
-                continue
-            all_results.append(run_condition(cond_name, M_stack))
+            all_results.append(
+                run_condition(cond_name, C_stack_dev, float(beta), step_idx_combined_dev)
+            )
             save_progress()
 
     # ── 4. Positive-only (C_success, global) ──
@@ -374,11 +389,15 @@ def main(args: Args) -> None:
         except KeyError:
             logger.warning("No C_success for %s/a=%s — skipping.", task, alpha)
             continue
+        C_stack_np, _ = build_steering_single(C, args.max_decoding_steps)
+        C_stack_dev = jnp.asarray(C_stack_np)
         for beta in args.betas:
             cond_name = f"positive_only_a{alpha}_b{beta}"
             if cond_name in done:
                 continue
-            all_results.append(run_condition(cond_name, build_M(C, beta)))
+            all_results.append(
+                run_condition(cond_name, C_stack_dev, float(beta), step_idx_single_dev)
+            )
             save_progress()
 
     save_progress()

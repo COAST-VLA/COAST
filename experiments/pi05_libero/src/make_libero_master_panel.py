@@ -1,13 +1,12 @@
-"""Master 1x5 diagnostic panel for the paper.
+"""Master 1x4 diagnostic panel for the paper.
 
 Story: three cheap, GPU-free diagnostics jointly pick (layer, alpha, beta)
 for conceptor steering without a full sweep.
 
   (a) Quota per layer + per-layer mean success  → pick the layer
-  (b) Overlap vs success rate                    → overlap predicts success
+  (b) Overlap vs success (bar chart at L*)       → overlap as guard-rail
   (c) Aperture alpha vs overlap (per layer)      → alpha controls overlap
-  (d) Success vs beta, stratified by overlap     → beta behaviour given regime
-  (e) Sweet-spot heatmap (overlap bin x beta)    → joint pick
+  (d) Alpha x beta success heatmap at L*         → joint validation
 """
 
 import json
@@ -113,9 +112,9 @@ for t in TASKS:
                 float(e["success_rate"])
 
 # ── Figure ──────────────────────────────────────────────────────
-fig, axes = plt.subplots(1, 5, figsize=(20, 3.7),
-                         gridspec_kw={"wspace": 0.55})
-ax_a, ax_b, ax_c, ax_d, ax_e = axes
+fig, axes = plt.subplots(1, 4, figsize=(20, 3.5),
+                         gridspec_kw={"wspace": 0.45})
+ax_a, ax_b, ax_c, ax_d = axes
 
 for ax in axes:
     ax.spines["top"].set_visible(False)
@@ -129,20 +128,20 @@ def panel_label(ax, txt, dx=-0.22):
 
 
 # ── (a) Quota per layer (box) + mean success per layer (line) ───
-# Box shows distribution of quota across 10 tasks per layer.
-quota_by_layer = [[Q[(t, L)] for t in TASKS] for L in LAYERS_CONCEPTOR]
+# Only layers with steering success (L5, L11, L17) so both axes share support.
+quota_by_layer = [[Q[(t, L)] for t in TASKS] for L in LAYERS_STEER]
 bp = ax_a.boxplot(
-    quota_by_layer, positions=range(len(LAYERS_CONCEPTOR)),
+    quota_by_layer, positions=range(len(LAYERS_STEER)),
     widths=0.55, patch_artist=True, showfliers=False,
     medianprops=dict(color="black", lw=1.2),
     whiskerprops=dict(lw=0.8), capprops=dict(lw=0.8),
     boxprops=dict(lw=0.6),
 )
-for patch, L in zip(bp["boxes"], LAYERS_CONCEPTOR):
+for patch, L in zip(bp["boxes"], LAYERS_STEER):
     patch.set_facecolor(LAYER_COLORS[L]); patch.set_alpha(0.55)
 
-ax_a.set_xticks(range(len(LAYERS_CONCEPTOR)))
-ax_a.set_xticklabels([f"L{L}" for L in LAYERS_CONCEPTOR])
+ax_a.set_xticks(range(len(LAYERS_STEER)))
+ax_a.set_xticklabels([f"L{L}" for L in LAYERS_STEER])
 ax_a.set_xlabel("Layer", fontsize=11)
 ax_a.set_ylabel(r"Conceptor Quota $q(C)$", fontsize=11, color="#2b4a78")
 ax_a.tick_params(axis="y", labelcolor="#2b4a78")
@@ -151,7 +150,6 @@ ax_a.set_title("Quota and Success per Layer", fontsize=11, fontweight="bold")
 # Right axis: per-layer mean success rate across tasks and (alpha, beta).
 ax_ar = ax_a.twinx()
 ax_ar.spines["top"].set_visible(False)
-# twin axis needs its own right spine visible; colour it.
 ax_ar.spines["right"].set_visible(True)
 ax_ar.spines["right"].set_color("#b0352e")
 ax_ar.spines["left"].set_visible(False)
@@ -161,41 +159,51 @@ succ_by_layer = {L: [S[t][(L, a, b)] for t in TASKS
 mu = [np.mean(succ_by_layer[L]) for L in LAYERS_STEER]
 sd = [np.std(succ_by_layer[L]) / np.sqrt(len(succ_by_layer[L]))
       for L in LAYERS_STEER]
-# Map LAYERS_STEER back onto x-positions of LAYERS_CONCEPTOR.
-xpos = [LAYERS_CONCEPTOR.index(L) for L in LAYERS_STEER]
-ax_ar.errorbar(xpos, mu, yerr=sd, color="#b0352e", lw=1.8,
-               marker="s", markersize=6, capsize=3, label="Mean success")
+ax_ar.errorbar(range(len(LAYERS_STEER)), mu, yerr=sd,
+               color="#b0352e", lw=1.8, marker="s", markersize=6,
+               capsize=3, label="Mean success")
 ax_ar.set_ylabel("Mean Success Rate", fontsize=11, color="#b0352e")
 ax_ar.tick_params(axis="y", labelsize=9, labelcolor="#b0352e",
                   direction="out")
 ax_ar.set_ylim(0, max(mu) * 1.25)
 panel_label(ax_a, "(a)")
 
-# ── (b) Overlap vs success rate scatter, r annotation ───────────
-xs, ys, cs = [], [], []
-for t in TASKS:
-    for L in LAYERS_STEER:
-        for a in ALPHAS:
-            o = O[(t, L, a)]
-            s = float(np.mean([S[t][(L, a, b)] for b in BETAS]))
-            xs.append(o); ys.append(s); cs.append(LAYER_COLORS[L])
-xs = np.array(xs); ys = np.array(ys)
-for L in LAYERS_STEER:
-    m = np.array([cs[i] is LAYER_COLORS[L] for i in range(len(cs))])
-    ax_b.scatter(xs[m], ys[m], s=28, color=LAYER_COLORS[L],
-                 alpha=0.75, edgecolors="black", linewidths=0.3,
-                 label=f"L{L}")
-r, p = stats.pearsonr(xs, ys)
-slope, intercept = np.polyfit(xs, ys, 1)
-xf = np.linspace(xs.min(), xs.max(), 100)
-ax_b.plot(xf, slope * xf + intercept, "k--", lw=1.0)
-ax_b.text(0.04, 0.94, rf"$r = {r:.2f}$,  $p = {p:.1e}$",
-          transform=ax_b.transAxes, fontsize=9, ha="left", va="top")
-ax_b.set_xlabel(r"Overlap $\mathrm{sim}(C_s, C_f)$", fontsize=11)
-ax_b.set_ylabel(r"Mean Success Rate", fontsize=11)
+best_L = LAYERS_STEER[int(np.argmax(mu))]
+
+# ── (b) Success per overlap at L=best_L (bar chart) ─────────────
+alpha_ovl_b = [float(np.mean([O[(t, best_L, a)] for t in TASKS])) for a in ALPHAS]
+task_means_b = []
+for a in ALPHAS:
+    per_task = [float(np.mean([S[t][(best_L, a, b)] for b in BETAS]))
+                for t in TASKS]
+    task_means_b.append(per_task)
+bar_mu = np.array([np.mean(tm) for tm in task_means_b])
+bar_se = np.array([np.std(tm) / np.sqrt(len(tm)) for tm in task_means_b])
+
+# Sort by overlap ascending
+order = np.argsort(alpha_ovl_b)
+ovs_b = [alpha_ovl_b[i] for i in order]
+mus_b = bar_mu[order]
+ses_b = bar_se[order]
+als_b = [ALPHAS[i] for i in order]
+
+# Color: gold for sweet-spot overlap, light blue otherwise
+colors_b = ["#f6ad55" if 0.85 <= ov <= 0.95 else "#90cdf4" for ov in ovs_b]
+
+bars_b = ax_b.bar(range(len(ovs_b)), mus_b, yerr=ses_b, capsize=3,
+                  color=colors_b, edgecolor="black", linewidth=0.6)
+ax_b.set_xticks(range(len(ovs_b)))
+ax_b.set_xticklabels([f"{ov:.2f}" for ov in ovs_b], fontsize=9)
+
+# Annotate alpha values above each bar
+for i, (a, m_val, s_val) in enumerate(zip(als_b, mus_b, ses_b)):
+    ax_b.text(i, m_val + s_val + 0.015, rf"$\alpha\!=$\!{a:g}",
+              ha="center", va="bottom", fontsize=7.5, color="#555")
+
+ax_b.set_xlabel(r"Overlap $\mathrm{sim}(C_s, C_f)$ at $L{=}%d$" % best_L,
+                fontsize=11)
+ax_b.set_ylabel("Mean Success Rate", fontsize=11)
 ax_b.set_title("Overlap vs. Success", fontsize=11, fontweight="bold")
-ax_b.legend(fontsize=7.5, frameon=False, loc="lower right",
-            title="Layer", title_fontsize=8)
 panel_label(ax_b, "(b)")
 
 # ── (c) Alpha vs overlap (per layer, mean ± std over tasks) ─────
@@ -216,81 +224,47 @@ ax_c.legend(fontsize=7.5, frameon=False, loc="lower left",
             title="Layer", title_fontsize=8)
 panel_label(ax_c, "(c)")
 
-# ── (d) Success vs beta, stratified by overlap tertile ──────────
-tla_keys = [(t, L, a) for t in TASKS for L in LAYERS_STEER for a in ALPHAS]
-ovs = np.array([O[k] for k in tla_keys])
-q1, q2 = np.quantile(ovs, [1/3, 2/3])
-tertile = {"low": defaultdict(list), "mid": defaultdict(list),
-           "high": defaultdict(list)}
-for (t, L, a) in tla_keys:
-    o = O[(t, L, a)]
-    bucket = "low" if o <= q1 else ("mid" if o <= q2 else "high")
-    for b in BETAS:
-        tertile[bucket][b].append(S[t][(L, a, b)])
-tert_c = {"low": "#3b7dd8", "mid": "#f2a541", "high": "#c73e3a"}
-tert_l = {
-    "low":  rf"low ($\leq {q1:.2f}$)",
-    "mid":  rf"mid ({q1:.2f}–{q2:.2f})",
-    "high": rf"high ($> {q2:.2f}$)",
-}
-for bucket in ["low", "mid", "high"]:
-    mus = np.array([np.mean(tertile[bucket][b]) for b in BETAS])
-    ses = np.array([np.std(tertile[bucket][b]) /
-                    np.sqrt(len(tertile[bucket][b])) for b in BETAS])
-    ax_d.plot(BETAS, mus, color=tert_c[bucket], lw=1.6,
-              marker="o", markersize=5, label=tert_l[bucket])
-    ax_d.fill_between(BETAS, mus - ses, mus + ses,
-                      color=tert_c[bucket], alpha=0.18, linewidth=0)
-ax_d.set_xticks(BETAS)
-ax_d.set_xlabel(r"Steering Strength $\beta$", fontsize=11)
-ax_d.set_ylabel("Mean Success Rate", fontsize=11)
-ax_d.set_title(r"$\beta$ Given Overlap Regime", fontsize=11, fontweight="bold")
-ax_d.legend(fontsize=7.5, frameon=False, loc="lower left",
-            title="Overlap", title_fontsize=8)
-panel_label(ax_d, "(d)")
+# ── (d) Alpha x beta success heatmap at the best layer, with each
+#        alpha column annotated by its mean overlap across tasks. ──
+ab_H = np.zeros((len(BETAS), len(ALPHAS)))
+for j, a in enumerate(ALPHAS):
+    for i, b in enumerate(BETAS):
+        ab_H[i, j] = np.mean([S[t][(best_L, a, b)] for t in TASKS])
 
-# ── (e) Sweet-spot heatmap ──────────────────────────────────────
-r_ovl, r_beta, r_succ = [], [], []
-for t in TASKS:
-    for L in LAYERS_STEER:
-        for a in ALPHAS:
-            for b in BETAS:
-                r_ovl.append(O[(t, L, a)])
-                r_beta.append(b)
-                r_succ.append(S[t][(L, a, b)])
-r_ovl = np.array(r_ovl); r_beta = np.array(r_beta); r_succ = np.array(r_succ)
-n_ovl_bins = 4
-edges = np.quantile(r_ovl, np.linspace(0, 1, n_ovl_bins + 1))
-edges[0] -= 1e-9; edges[-1] += 1e-9
-H = np.full((n_ovl_bins, len(BETAS)), np.nan)
-for i in range(n_ovl_bins):
-    lo, hi = edges[i], edges[i + 1]
-    for j, b in enumerate(BETAS):
-        m = (r_ovl > lo) & (r_ovl <= hi) & (r_beta == b)
-        if m.sum():
-            H[i, j] = r_succ[m].mean()
+# Mean overlap per alpha across the 10 tasks at best_L.
+alpha_ovl = [float(np.mean([O[(t, best_L, a)] for t in TASKS])) for a in ALPHAS]
 
-im = ax_e.imshow(H, cmap="YlOrRd", aspect="auto", origin="lower",
+im = ax_d.imshow(ab_H, cmap="YlOrRd", aspect="auto", origin="lower",
                  vmin=0, vmax=1)
-for i in range(H.shape[0]):
-    for j in range(H.shape[1]):
-        v = H[i, j]
+for i in range(ab_H.shape[0]):
+    for j in range(ab_H.shape[1]):
+        v = ab_H[i, j]
         col = "white" if v > 0.6 else "black"
-        ax_e.text(j, i, f"{v:.2f}", ha="center", va="center",
+        ax_d.text(j, i, f"{v:.2f}", ha="center", va="center",
                   fontsize=8, color=col)
-ax_e.set_xticks(range(len(BETAS)))
-ax_e.set_xticklabels([f"{b:g}" for b in BETAS])
-ax_e.set_yticks(range(n_ovl_bins))
-ax_e.set_yticklabels([f"[{edges[i]:.2f}, {edges[i+1]:.2f}]"
-                      for i in range(n_ovl_bins)])
-ax_e.set_xlabel(r"Steering Strength $\beta$", fontsize=11)
-ax_e.set_ylabel("Overlap Quartile", fontsize=11)
-ax_e.set_title("Sweet-Spot Map", fontsize=11, fontweight="bold")
-cbar = fig.colorbar(im, ax=ax_e, fraction=0.046, pad=0.04)
+# Primary x-axis: alpha values.
+ax_d.set_xticks(range(len(ALPHAS)))
+ax_d.set_xticklabels([f"{a:g}" for a in ALPHAS], fontsize=9)
+ax_d.set_yticks(range(len(BETAS)))
+ax_d.set_yticklabels([f"{b:g}" for b in BETAS])
+ax_d.set_xlabel(r"Aperture $\alpha$", fontsize=11)
+ax_d.set_ylabel(r"Steering Strength $\beta$", fontsize=11)
+ax_d.set_title(rf"Success at $L{{=}}{best_L}$",
+               fontsize=11, fontweight="bold")
+# Secondary x-axis below showing mean overlap per alpha column.
+sec = ax_d.secondary_xaxis(-0.22)
+sec.set_xticks(range(len(ALPHAS)))
+sec.set_xticklabels([f"{o:.2f}" for o in alpha_ovl], fontsize=8,
+                    color="#555")
+sec.tick_params(length=0, pad=2, colors="#555")
+sec.set_xlabel(r"mean overlap at $L{=}%d$" % best_L,
+               fontsize=9, color="#555", labelpad=2)
+sec.spines["bottom"].set_visible(False)
+cbar = fig.colorbar(im, ax=ax_d, fraction=0.046, pad=0.04)
 cbar.set_label("Success Rate", fontsize=9)
 cbar.ax.tick_params(labelsize=8)
 cbar.outline.set_linewidth(0.6)
-panel_label(ax_e, "(e)")
+panel_label(ax_d, "(d)")
 
 # ── Save ────────────────────────────────────────────────────────
 pdf = os.path.join(OUTPUT_DIR, "libero_master_panel.pdf")

@@ -65,6 +65,8 @@ class Args:
     task_id: int = 0
     # Number of episodes / initial states to evaluate.
     num_episodes: int = 1
+    # First episode index (for resuming partial collection runs).
+    start_episode: int = 0
     # Override the suite default max steps. If None, uses SUITE_MAX_STEPS.
     max_steps: Optional[int] = None
     # Number of settling steps before policy actions.
@@ -247,7 +249,7 @@ def eval_task(
     successes = []
 
     try:
-        for episode in range(args.num_episodes):
+        for episode in range(args.start_episode, args.num_episodes):
             env.reset()
             obs = env.set_init_state(initial_states[episode])
             action_plan = collections.deque()  # type: Deque[np.ndarray]

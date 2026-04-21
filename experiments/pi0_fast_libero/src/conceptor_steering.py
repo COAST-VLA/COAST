@@ -8,11 +8,13 @@ pattern.  One SLURM job per task.
 
 Key differences from ``experiments/pi05_libero/src/conceptor_steering.py``:
 
-- pi0-fast is JAX, so there is no PyTorch forward hook; steering is done via
-  a precomputed matrix ``M = (1-β)I + βC`` passed into
-  ``Policy.infer_with_steering(steering_M=M)``.  The matrix is applied to the
-  per-token ``pre_logits`` (the final hidden state before the LM head) at
-  every generated token.
+- pi0-fast is JAX, so there is no PyTorch forward hook; steering is applied
+  via the JIT-compiled fast kernel ``Policy.infer_with_steering_fast``, which
+  takes a small ``C_stack: (K, d, d)`` plus scalar ``beta`` plus
+  ``step_to_C_idx: (max_decoding_steps,)`` — M = (1-β)I + βC is materialized
+  lazily inside the jitted decode so we avoid a (max_decoding_steps, d, d)
+  host buffer. The driver pads K=3 across all strategies so the JIT cache
+  stays hot throughout the sweep.
 
 - There is no ``layer`` axis — only one intervention point.  The sweep is
   ``alpha × beta × strategy``.
@@ -42,6 +44,7 @@ import threading
 import time
 from typing import List, Optional
 
+import jax.numpy as jnp
 import numpy as np
 import tyro
 
@@ -85,38 +88,41 @@ def get_conceptor(npz, task: str, strategy: str, alpha: float, kind: str) -> np.
     return npz[key]
 
 
-def build_M(C: np.ndarray, beta: float) -> np.ndarray:
-    """M = (1-β) I + β C applied to pre_logits via h' = h @ M.T."""
-    d = C.shape[0]
-    return ((1.0 - beta) * np.eye(d, dtype=C.dtype) + beta * C).astype(np.float32)
+def _uniform_step_idx(max_steps: int) -> np.ndarray:
+    return np.zeros((max_steps,), dtype=np.int32)
 
 
-def build_M_per_step_combined(
-    npz, task: str, alpha: float, beta: float, max_steps: int, kind: str = "C_contrastive",
-) -> np.ndarray:
-    """Build a (max_steps, d, d) steering tensor that applies position-aware conceptors.
-
-    Tokens 0..T/3 use per_token_first, T/3..2T/3 use per_token_mid, 2T/3..T use per_token_last.
-    """
-    C_first = get_conceptor(npz, task, "per_token_first", alpha, kind)
-    C_mid = get_conceptor(npz, task, "per_token_mid", alpha, kind)
-    C_last = get_conceptor(npz, task, "per_token_last", alpha, kind)
-
-    d = C_first.shape[0]
-    I = np.eye(d, dtype=np.float32)
-    out = np.empty((max_steps, d, d), dtype=np.float32)
-
+def _combined_step_idx(max_steps: int) -> np.ndarray:
+    """[0]*T/3 + [1]*T/3 + [2]*(T - 2*T/3) — per-token conceptor indices."""
     t1 = max_steps // 3
     t2 = 2 * max_steps // 3
-    for i in range(max_steps):
-        if i < t1:
-            C = C_first
-        elif i < t2:
-            C = C_mid
-        else:
-            C = C_last
-        out[i] = (1.0 - beta) * I + beta * C.astype(np.float32)
-    return out
+    idx = np.empty((max_steps,), dtype=np.int32)
+    idx[:t1] = 0
+    idx[t1:t2] = 1
+    idx[t2:] = 2
+    return idx
+
+
+def build_steering_single(C: np.ndarray, max_steps: int) -> tuple[np.ndarray, np.ndarray]:
+    """One conceptor used at every step.
+
+    Padded to K=3 so the JIT-cache signature is identical across global,
+    per-step-combined, and positive-only sweeps (same C_stack rank and shape).
+    """
+    Cf = C.astype(np.float32)
+    C_stack = np.stack([Cf, Cf, Cf], axis=0)
+    return C_stack, _uniform_step_idx(max_steps)
+
+
+def build_steering_combined(
+    npz, task: str, alpha: float, max_steps: int, kind: str = "C_contrastive",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Position-aware conceptor stack: first/mid/last by token index third."""
+    C_first = get_conceptor(npz, task, "per_token_first", alpha, kind).astype(np.float32)
+    C_mid = get_conceptor(npz, task, "per_token_mid", alpha, kind).astype(np.float32)
+    C_last = get_conceptor(npz, task, "per_token_last", alpha, kind).astype(np.float32)
+    C_stack = np.stack([C_first, C_mid, C_last], axis=0)
+    return C_stack, _combined_step_idx(max_steps)
 
 
 # ── Steered policy wrapper ───────────────────────────────────────────────
@@ -124,21 +130,38 @@ def build_M_per_step_combined(
 
 class SteeredFastPolicyWrapper:
     """Wraps a pi0-fast JAX Policy to route ``infer`` through
-    ``infer_with_steering`` when a steering matrix is set.  Single M at a
-    time (set via ``update_M`` before each eval)."""
+    ``infer_with_steering_fast`` when steering is armed.
 
-    def __init__(self, policy, steering_M=None):
+    Stores device-resident ``C_stack`` / ``beta`` / ``step_to_C_idx`` so the
+    hot path avoids host-to-device transfer per websocket call. The driver
+    calls ``arm()`` once per sweep condition; ``disarm()`` falls back to the
+    unsteered path (used for baseline inference, if ever needed)."""
+
+    def __init__(self, policy):
         self._policy = policy
-        self._M = steering_M
+        self._C_stack = None
+        self._beta = None
+        self._step_to_C_idx = None
 
-    def update_M(self, M: Optional[np.ndarray]) -> None:
-        self._M = M
+    def arm(self, C_stack, beta, step_to_C_idx) -> None:
+        self._C_stack = C_stack
+        self._beta = beta
+        self._step_to_C_idx = step_to_C_idx
+
+    def disarm(self) -> None:
+        self._C_stack = None
+        self._beta = None
+        self._step_to_C_idx = None
 
     def infer(self, obs):
-        if self._M is None:
+        if self._C_stack is None:
             return self._policy.infer(obs)
-        result, _ = self._policy.infer_with_steering(obs, steering_M=self._M)
-        return result
+        return self._policy.infer_with_steering_fast(
+            obs,
+            C_stack=self._C_stack,
+            beta=self._beta,
+            step_to_C_idx=self._step_to_C_idx,
+        )
 
     @property
     def metadata(self):
@@ -308,8 +331,11 @@ def main(args: Args) -> None:
         with open(summary_path, "w") as f:
             json.dump({"task": task, "conditions": sorted_results}, f, indent=2)
 
-    wrapper = SteeredFastPolicyWrapper(policy, steering_M=None)
+    wrapper = SteeredFastPolicyWrapper(policy)
     start_server_background(wrapper, args.port)
+
+    step_idx_single_dev = jnp.asarray(_uniform_step_idx(args.max_decoding_steps))
+    step_idx_combined_dev = jnp.asarray(_combined_step_idx(args.max_decoding_steps))
 
     # ── 1. Baseline (from activation data — no GPU inference) ──
     if "baseline" not in done:
@@ -320,7 +346,7 @@ def main(args: Args) -> None:
             all_results.append({"condition": "baseline", "success_rate": baseline_sr})
         else:
             logger.warning("  No activation data for baseline — running inference.")
-            wrapper.update_M(None)
+            wrapper.disarm()
             all_results.append(
                 run_condition(
                     task, args.port, args.task_suite_name, args.num_episodes,
@@ -337,11 +363,13 @@ def main(args: Args) -> None:
         except KeyError:
             logger.warning("No global contrastive for %s/a=%s — skipping.", task[:40], alpha)
             continue
+        C_stack_np, _ = build_steering_single(C, args.max_decoding_steps)
+        C_stack_dev = jnp.asarray(C_stack_np)
         for beta in args.betas:
             cond_name = f"global_a{alpha}_b{beta}"
             if cond_name in done:
                 continue
-            wrapper.update_M(build_M(C, beta))
+            wrapper.arm(C_stack_dev, float(beta), step_idx_single_dev)
             all_results.append(
                 run_condition(
                     task, args.port, args.task_suite_name, args.num_episodes,
@@ -353,18 +381,19 @@ def main(args: Args) -> None:
     # ── 3. Per-step combined (contrastive, first/mid/last by position) ──
     logger.info("\n[3] Per-step combined conditions...")
     for alpha in args.per_step_combined_alphas:
+        try:
+            C_stack_np, _ = build_steering_combined(
+                npz, task, alpha, args.max_decoding_steps, kind="C_contrastive",
+            )
+        except KeyError as e:
+            logger.warning("Missing per_token conceptor for combined: %s — skipping.", e)
+            continue
+        C_stack_dev = jnp.asarray(C_stack_np)
         for beta in args.betas:
             cond_name = f"per_step_combined_a{alpha}_b{beta}"
             if cond_name in done:
                 continue
-            try:
-                M_stack = build_M_per_step_combined(
-                    npz, task, alpha, beta, args.max_decoding_steps, kind="C_contrastive",
-                )
-            except KeyError as e:
-                logger.warning("Missing per_token conceptor for combined: %s — skipping.", e)
-                continue
-            wrapper.update_M(M_stack)
+            wrapper.arm(C_stack_dev, float(beta), step_idx_combined_dev)
             all_results.append(
                 run_condition(
                     task, args.port, args.task_suite_name, args.num_episodes,
@@ -381,11 +410,13 @@ def main(args: Args) -> None:
         except KeyError:
             logger.warning("No C_success for %s/a=%s — skipping.", task[:40], alpha)
             continue
+        C_stack_np, _ = build_steering_single(C, args.max_decoding_steps)
+        C_stack_dev = jnp.asarray(C_stack_np)
         for beta in args.betas:
             cond_name = f"positive_only_a{alpha}_b{beta}"
             if cond_name in done:
                 continue
-            wrapper.update_M(build_M(C, beta))
+            wrapper.arm(C_stack_dev, float(beta), step_idx_single_dev)
             all_results.append(
                 run_condition(
                     task, args.port, args.task_suite_name, args.num_episodes,

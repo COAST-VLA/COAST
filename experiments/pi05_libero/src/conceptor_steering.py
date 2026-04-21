@@ -251,6 +251,7 @@ class Args:
     task_suite_name: str = "libero_10"
     num_episodes: int = 15
     port: int = 8000
+    n_random_controls: int = -1  # -1 = full layer×beta grid, 0 = skip
 
     output_dir: str = "experiments/pi05_libero/steering_results"
 
@@ -338,19 +339,21 @@ def main(args: Args):
                     save_progress()
 
     # ── 3. Random controls ──
-    n_rand = len(args.layers) * len(args.betas)
+    random_pairs = [(l, b) for l in args.layers for b in args.betas]
+    if args.n_random_controls >= 0:
+        random_pairs = random_pairs[: args.n_random_controls]
+    n_rand = len(random_pairs)
     logger.info(f"\n[3/4] Random controls ({n_rand})...")
-    for layer in args.layers:
-        for beta in args.betas:
-            cond_name = f"random_L{layer}_b{beta}"
-            C_rand = compute_random_conceptor(seed=layer * 100 + int(beta * 10))
-            hook = ConceptorSteeringHook(C_rand, beta=beta, device=device)
-            wrapper.update_hooks([(layer, hook)])
-            r = run_condition(task, args.port, args.task_suite_name,
-                              args.num_episodes,
-                              cond_name, task_output_dir)
-            all_results.append(r)
-            save_progress()
+    for layer, beta in random_pairs:
+        cond_name = f"random_L{layer}_b{beta}"
+        C_rand = compute_random_conceptor(seed=layer * 100 + int(beta * 10))
+        hook = ConceptorSteeringHook(C_rand, beta=beta, device=device)
+        wrapper.update_hooks([(layer, hook)])
+        r = run_condition(task, args.port, args.task_suite_name,
+                          args.num_episodes,
+                          cond_name, task_output_dir)
+        all_results.append(r)
+        save_progress()
 
     # ── 4. Final summary ──
     logger.info(f"\n[4/4] Saving final summary...")

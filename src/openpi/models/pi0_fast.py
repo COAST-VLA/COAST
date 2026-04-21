@@ -433,3 +433,264 @@ class Pi0FAST(_model.BaseModel):
         }
 
         return output_tokens, intermediates
+
+    def sample_actions_with_steering(
+        self,
+        rng: at.KeyArrayLike,
+        observation: _model.Observation,
+        *,
+        steering_M,
+        max_decoding_steps: int = 256,
+        temperature: float = 0.0,
+    ) -> tuple[_model.Actions, dict]:
+        """Like sample_actions_with_intermediates but applies a conceptor
+        steering matrix to the pre_logits before the LM head at each token.
+
+        Uses the same single-lax.while_loop structure so the entire decode
+        compiles into one XLA dispatch.
+
+        Intervention: ``h' = h @ M.T`` where ``M = (1 - beta) I + beta C``.
+
+        Args:
+            steering_M: jax/np array of shape (width, width) applied every token,
+                or (max_steps, width, width) for per-token-index steering
+                (M[step_idx]; clamped to last M if step_idx >= max_steps).
+            max_decoding_steps: max tokens to generate.
+            temperature: sampling temperature.
+
+        Returns:
+            (output_tokens, diagnostics) with the same buffer layout as
+            ``sample_actions_with_intermediates`` plus ``intervention_norms``
+            and ``token_pre_logits_steered``.
+        """
+        observation = _model.preprocess_observation(
+            None, observation, train=False, image_keys=list(observation.images.keys())
+        )
+
+        prefix_token_embeddings, prefix_mask, prefix_ar_mask = self.embed_inputs(observation)
+        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
+
+        prefix_token_embeddings, prefix_mask, prefix_attn_mask = left_to_right_align(
+            prefix_token_embeddings, prefix_mask, prefix_attn_mask
+        )
+        prefill_size = prefix_token_embeddings.shape[1]
+        prefill_len = jnp.sum(prefix_mask, axis=-1)
+        prefix_start = prefill_size - prefill_len
+
+        prefix_attn_mask = jnp.pad(prefix_attn_mask, ((0, 0), (0, 0), (0, max_decoding_steps)))
+        prefix_positions = jnp.cumsum(prefix_mask, axis=-1) - 1
+        prefix_pre_logits, kv_cache, _ = self.PaliGemma.llm(
+            embedded_prefix=prefix_token_embeddings,
+            mask=prefix_attn_mask,
+            positions=prefix_positions,
+            decode=True,
+            return_prelogits=True,
+        )
+
+        steering_M = jnp.asarray(steering_M)
+        per_step = steering_M.ndim == 3
+        if not per_step:
+            steering_M_t = steering_M.T
+        else:
+            steering_M_t = jnp.transpose(steering_M, (0, 2, 1))
+
+        def apply_steering(pre_logits, step_idx):
+            if per_step:
+                k = jnp.minimum(step_idx, steering_M_t.shape[0] - 1)
+                Mt = steering_M_t[k]
+            else:
+                Mt = steering_M_t
+            steered = pre_logits @ Mt
+            delta = jnp.linalg.norm(steered - pre_logits) / jnp.sqrt(jnp.float32(pre_logits.size))
+            return steered, delta
+
+        first_prelogit = prefix_pre_logits[:, -1:, :]
+        first_steered, delta0 = apply_steering(first_prelogit, 0)
+        first_logit, _ = self.PaliGemma.llm(pre_logits=first_steered)
+
+        batch_size = first_logit.shape[0]
+        width = prefix_pre_logits.shape[-1]
+
+        output_tokens = jnp.zeros((batch_size, max_decoding_steps))
+        pre_logits_buf = jnp.zeros((max_decoding_steps, batch_size, width), dtype=prefix_pre_logits.dtype)
+        steered_buf = jnp.zeros((max_decoding_steps, batch_size, width), dtype=prefix_pre_logits.dtype)
+        logprobs_buf = jnp.zeros((max_decoding_steps, batch_size), dtype=jnp.float32)
+        deltas_buf = jnp.zeros((max_decoding_steps + 1,), dtype=jnp.float32).at[0].set(delta0)
+
+        def step(carry):
+            rng, last_logit, output_tokens, pre_logits_buf, steered_buf, logprobs_buf, deltas_buf, cache, _, step_idx = carry
+
+            rng, rng_step = jax.random.split(rng)
+            token = jax.lax.cond(
+                temperature > 0.0,
+                lambda _: jax.random.categorical(rng_step, last_logit / temperature, axis=-1),
+                lambda _: jnp.argmax(last_logit, axis=-1),
+                operand=None,
+            )
+
+            log_probs = jax.nn.log_softmax(last_logit, axis=-1)
+            token_logprob = jnp.take_along_axis(log_probs[:, 0, :], token, axis=-1)[:, 0]
+
+            output_tokens = put_along_last_axis(output_tokens, jnp.broadcast_to(step_idx, (token.shape[0], 1)), token)
+            logprobs_buf = logprobs_buf.at[step_idx].set(token_logprob)
+
+            has_eos = jnp.any(token == PALIGEMMA_EOS_TOKEN, axis=-1)
+            all_eos = jnp.all(has_eos)
+
+            token_embedding = self.PaliGemma.llm(token, embed_only=True)
+            positions = prefill_len[:, None] + step_idx + 1
+            mask = jnp.logical_and(
+                jnp.arange(prefill_size + max_decoding_steps)[None, None, :] >= prefix_start[:, None, None],
+                jnp.arange(prefill_size + max_decoding_steps)[None, None, :]
+                < (jnp.broadcast_to(prefill_size + step_idx + 1, (prefix_start.shape[0], 1, 1))),
+            )
+            step_pre_logits, cache, _ = self.PaliGemma.llm(
+                embedded_prefix=token_embedding,
+                mask=mask,
+                positions=positions,
+                decode=True,
+                kv_cache=cache,
+                return_prelogits=True,
+            )
+            pre_logits_buf = pre_logits_buf.at[step_idx].set(step_pre_logits[:, 0, :])
+
+            step_steered, delta = apply_steering(step_pre_logits, step_idx + 1)
+            steered_buf = steered_buf.at[step_idx].set(step_steered[:, 0, :])
+            deltas_buf = deltas_buf.at[step_idx + 1].set(delta)
+
+            new_last_logit, _ = self.PaliGemma.llm(pre_logits=step_steered)
+
+            return (rng, new_last_logit, output_tokens, pre_logits_buf, steered_buf, logprobs_buf, deltas_buf, cache, all_eos, step_idx + 1)
+
+        def cond(carry):
+            _, _, _, _, _, _, _, _, all_eos, step_idx = carry
+            return (~all_eos) & (step_idx < max_decoding_steps)
+
+        init = (rng, first_logit, output_tokens, pre_logits_buf, steered_buf, logprobs_buf, deltas_buf, kv_cache, False, 0)
+        _, _, output_tokens, pre_logits_buf, steered_buf, logprobs_buf, deltas_buf, _, _, final_step = jax.lax.while_loop(cond, step, init)
+
+        diagnostics = {
+            "generated_tokens": output_tokens.astype(jnp.int32).T,
+            "token_pre_logits": pre_logits_buf,
+            "token_pre_logits_steered": steered_buf,
+            "token_logprobs": logprobs_buf,
+            "intervention_norms": deltas_buf,
+            "prefix_pre_logits": prefix_pre_logits,
+            "num_tokens": final_step,
+        }
+
+        return output_tokens, diagnostics
+
+    def sample_actions_with_steering_fast(
+        self,
+        rng: at.KeyArrayLike,
+        observation: _model.Observation,
+        *,
+        C_stack,
+        beta,
+        step_to_C_idx,
+        max_decoding_steps: int = 256,
+        temperature: float = 0.0,
+    ) -> _model.Actions:
+        """Diagnostics-free steered decode.
+
+        Builds the Mt stack lazily from a small (K, d, d) ``C_stack`` inside
+        jit so the caller never materializes a (max_decoding_steps, d, d)
+        tensor, and skips all per-token buffers (pre_logits/steered/norms)
+        that ``sample_actions_with_steering`` keeps for diagnostics.
+
+        Args:
+            C_stack: (K, d, d) float conceptor stack. K is fixed across sweep
+                calls to keep JIT cache hot; the driver pads to K=3 even for
+                "global" (just tile the same C 3 times).
+            beta: scalar float mix coefficient. M = (1-β) I + β C.
+            step_to_C_idx: (max_decoding_steps,) int32 selecting which C to
+                use at each generated-token index.
+            max_decoding_steps, temperature: same as sample_actions.
+        """
+        observation = _model.preprocess_observation(
+            None, observation, train=False, image_keys=list(observation.images.keys())
+        )
+
+        prefix_token_embeddings, prefix_mask, prefix_ar_mask = self.embed_inputs(observation)
+        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
+
+        prefix_token_embeddings, prefix_mask, prefix_attn_mask = left_to_right_align(
+            prefix_token_embeddings, prefix_mask, prefix_attn_mask
+        )
+        prefill_size = prefix_token_embeddings.shape[1]
+        prefill_len = jnp.sum(prefix_mask, axis=-1)
+        prefix_start = prefill_size - prefill_len
+
+        prefix_attn_mask = jnp.pad(prefix_attn_mask, ((0, 0), (0, 0), (0, max_decoding_steps)))
+        prefix_positions = jnp.cumsum(prefix_mask, axis=-1) - 1
+        prefix_pre_logits, kv_cache, _ = self.PaliGemma.llm(
+            embedded_prefix=prefix_token_embeddings,
+            mask=prefix_attn_mask,
+            positions=prefix_positions,
+            decode=True,
+            return_prelogits=True,
+        )
+
+        C_stack = jnp.asarray(C_stack, dtype=jnp.bfloat16)
+        step_to_C_idx = jnp.asarray(step_to_C_idx, dtype=jnp.int32)
+        d = C_stack.shape[-1]
+        eye = jnp.eye(d, dtype=jnp.bfloat16)
+        # Mt = M.T; apply_steering uses `pre_logits @ Mt`. Keep bf16 to match
+        # model dtype and use B200 tensor cores at full throughput.
+        Mt_stack = (1.0 - beta) * eye + beta * jnp.transpose(C_stack, (0, 2, 1))
+
+        def select_Mt(step_idx):
+            k = jnp.minimum(step_idx, step_to_C_idx.shape[0] - 1)
+            return Mt_stack[step_to_C_idx[k]]
+
+        first_steered = prefix_pre_logits[:, -1:, :] @ select_Mt(0)
+        first_logit, _ = self.PaliGemma.llm(pre_logits=first_steered)
+        batch_size = first_logit.shape[0]
+        output_tokens = jnp.zeros((batch_size, max_decoding_steps))
+
+        def step(carry):
+            rng, last_logit, output_tokens, cache, _, step_idx = carry
+
+            rng, rng_step = jax.random.split(rng)
+            token = jax.lax.cond(
+                temperature > 0.0,
+                lambda _: jax.random.categorical(rng_step, last_logit / temperature, axis=-1),
+                lambda _: jnp.argmax(last_logit, axis=-1),
+                operand=None,
+            )
+            output_tokens = put_along_last_axis(
+                output_tokens, jnp.broadcast_to(step_idx, (token.shape[0], 1)), token
+            )
+
+            has_eos = jnp.any(token == PALIGEMMA_EOS_TOKEN, axis=-1)
+            all_eos = jnp.all(has_eos)
+
+            token_embedding = self.PaliGemma.llm(token, embed_only=True)
+            positions = prefill_len[:, None] + step_idx + 1
+            mask = jnp.logical_and(
+                jnp.arange(prefill_size + max_decoding_steps)[None, None, :] >= prefix_start[:, None, None],
+                jnp.arange(prefill_size + max_decoding_steps)[None, None, :]
+                < (jnp.broadcast_to(prefill_size + step_idx + 1, (prefix_start.shape[0], 1, 1))),
+            )
+            step_pre_logits, cache, _ = self.PaliGemma.llm(
+                embedded_prefix=token_embedding,
+                mask=mask,
+                positions=positions,
+                decode=True,
+                kv_cache=cache,
+                return_prelogits=True,
+            )
+            step_steered = step_pre_logits @ select_Mt(step_idx + 1)
+            new_last_logit, _ = self.PaliGemma.llm(pre_logits=step_steered)
+
+            return (rng, new_last_logit, output_tokens, cache, all_eos, step_idx + 1)
+
+        def cond(carry):
+            _, _, _, _, all_eos, step_idx = carry
+            return (~all_eos) & (step_idx < max_decoding_steps)
+
+        _, _, output_tokens, _, _, _ = jax.lax.while_loop(
+            cond, step, (rng, first_logit, output_tokens, kv_cache, False, 0)
+        )
+        return output_tokens
