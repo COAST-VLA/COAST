@@ -154,10 +154,23 @@ Pre-collected datasets:
 
 ## Results
 
-Mean success rate and per-task comparisons across released checkpoints:
+Mean success rate and per-task comparisons across released checkpoints, ML45 train (45 tasks, 15 episodes per task):
 
-![Comparison](figures/compare_means_5000_vs_25000.png)
-![Comparison Per Task](figures/compare_per_task_5000_vs_25000.png)
+### pi0.5 training curve (`pi05_metaworld` @ 5k vs 25k)
+
+![pi05 means](figures/compare_means_5000_vs_25000.png)
+![pi05 per-task](figures/compare_per_task_5000_vs_25000.png)
+
+Raw numbers: [`figures/results_5000_25000.json`](figures/results_5000_25000.json).
+
+### pi0.5 vs Diffusion Policy (`dp_metaworld_lang_v1` @ 50k)
+
+DP is ~50% through a 100k-step schedule here (partial), while pi0.5 @ 25k is at its peak. Useful as a mid-training snapshot of the DP baseline's architectural ceiling — not a final head-to-head. A rerun at DP step 85k (the latest slurm checkpoint) is a follow-up.
+
+![pi05 vs DP means](figures/compare_means_pi05_vs_dp.png)
+![pi05 vs DP per-task](figures/compare_per_task_pi05_vs_dp.png)
+
+Raw numbers: [`figures/results_dp_metaworld_50000.json`](figures/results_dp_metaworld_50000.json).
 
 ## Testing
 
