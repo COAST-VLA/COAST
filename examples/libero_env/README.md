@@ -127,6 +127,27 @@ Activation collection (`--collect`) is not supported for DP — the collection p
 
 **Language-conditioned multi-task baseline.** `dp_libero` trains on the `physical-intelligence/libero` dataset with the per-task prompt routed through `ComputeLangEmb` (CLIP ViT-L/14 `text_embeds` projection, 768-d, `padding="max_length", max_length=25`) into a `lang_emb` obs field. The DP model's `VisualCoreLanguageConditioned` branch consumes this both via FiLM modulation of the ResNet18 image features and as a raw concatenated feature — same language-conditioning path as `dp_robocasa` / `dp_metaworld`. CLIP runs on the DataLoader worker CPUs (one cached encoder per worker, lazy-init).
 
+**Reference training run.** The `dp_libero_lang_v1` checkpoint was produced with:
+
+| Param | Value |
+|---|---|
+| Hardware | 4× L40 (DDP via `torchrun --nproc_per_node=4`) |
+| `--batch-size` | 256 (global; 64/GPU) |
+| `--num-train-steps` | 100000 |
+| `--save-interval` / `--keep-period` | 5000 / 10000 |
+| `--num-workers` | 4 per rank |
+| LR schedule (config default) | CosineDecay, warmup=500, peak=1e-4, decay to 1e-5 |
+| Optimizer (config default) | AdamW, β=(0.95, 0.999), wd=1e-6, clip=10.0 |
+| Model (config default) | horizon=16, n_obs_steps=1, n_action_steps=8, DDPM-100 train / DDIM-10 infer, lang_emb_dim=768 |
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 uv run torchrun --standalone --nnodes=1 --nproc_per_node=4 \
+    scripts/train_pytorch.py dp_libero \
+    --exp-name=dp_libero_lang_v1 \
+    --batch-size=256 --num-train-steps=100000 \
+    --save-interval=5000 --keep-period=10000 --num-workers=4
+```
+
 ## Evaluation
 
 ### Serving the LIBERO Policy
