@@ -43,29 +43,33 @@ Each client has different commands and venv requirements:
 
 ### MetaWorld (root venv, from repo root)
 ```bash
-MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py            # defaults --split subset (26 tasks)
 MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3  # single task
 ```
-- Use `--split train|test` for full ML45 eval, `--env_name` for single task
-- Parallelism: `--num_envs N` (default 15 for eval_all, 10 for main)
+- Use `--split subset|train|test` to pick the sweep. `subset` (default) is a curated 26-task subset; `train` = 45 ML45-train; `test` = 5 held-out.
+- `--tasks reach-v3 push-v3 ...` overrides `--split` with an explicit list.
+- Parallelism: `--num_envs N` (eval_all default 15, main default 10).
 
 ### LIBERO (libero_env venv, from examples/libero_env/)
 ```bash
 cd examples/libero_env
-MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_spatial
-MUJOCO_GL=egl uv run python main.py --task_suite_name libero_spatial --task_id 0  # single task
+MUJOCO_GL=egl uv run python eval_all.py                        # defaults --task_suite_name libero_10
+MUJOCO_GL=egl uv run python main.py --task_suite_name libero_10 --task_id 0  # single task
 ```
-- Use `--task_suite_name` to pick suite (libero_spatial, libero_object, libero_goal, libero_10, libero_90)
-- Parallelism: `--num_workers N` (default 5)
+- Use `--task_suite_name` to pick suite: `libero_10` (default), `libero_spatial`, `libero_object`, `libero_goal`.
+- `--num_episodes` default: eval_all = 15, main = 1.
+- Parallelism: `--num_workers N` (default 10).
 
 ### RoboCasa (robocasa_env venv, from examples/robocasa_env/)
 ```bash
 cd examples/robocasa_env
-MUJOCO_GL=egl uv run python eval_all.py --task_set atomic_seen
+MUJOCO_GL=egl uv run python eval_all.py                        # defaults --task_set subset (7 curated tasks)
 MUJOCO_GL=egl uv run python main.py --env_name CloseBlenderLid  # single task
 ```
-- Use `--task_set` to pick set (atomic_seen, composite_seen, composite_unseen, pretrain50)
-- Parallelism: `--num_workers N` (default 5)
+- Use `--task_set` to pick set: `subset` (default, 7 curated), `atomic_seen`, `composite_seen`, `composite_unseen`, `target50`, `pretrain50`.
+- `--tasks OpenDrawer CloseFridge ...` overrides `--task_set` with an explicit list.
+- `--num_episodes` default: eval_all = 15, main = 1.
+- Parallelism: `--num_workers N` (default 10).
 
 ## Step 5: Report Results
 

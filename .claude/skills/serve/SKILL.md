@@ -34,7 +34,7 @@ Defaults (override with flags):
 If no checkpoint path is provided, list recent checkpoints and ask the user to choose:
 
 ```bash
-ls -dt outputs/*/checkpoints/*/ 2>/dev/null | head -10
+ls -dt checkpoints/*/ 2>/dev/null | head -10
 ```
 
 ## Step 3: Validate Checkpoint
@@ -66,10 +66,18 @@ Report the full command you are running before executing it.
 
 ## After Serving
 
-Once the server is running, remind the user they can evaluate in a separate terminal:
+Once the server is running, remind the user they can evaluate in a separate terminal — pick the client that matches `--policy.config`:
 
 ```bash
+# MetaWorld (root venv, from repo root)
 MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3
-MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train
-MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split test
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py              # defaults --split subset
+
+# LIBERO (libero_env venv)
+cd examples/libero_env
+MUJOCO_GL=egl uv run python eval_all.py                          # defaults --task_suite_name libero_10
+
+# RoboCasa (robocasa_env venv)
+cd examples/robocasa_env
+MUJOCO_GL=egl uv run python eval_all.py                          # defaults --task_set subset
 ```

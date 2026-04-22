@@ -2,7 +2,7 @@
 name: collect
 description: Collect intermediate activations from VLA models for mechanistic interpretability
 disable-model-invocation: true
-argument-hint: --client metaworld|libero|robocasa --checkpoint PATH [--version v1|v2] [--tasks TASK...]
+argument-hint: --client metaworld|libero|robocasa --checkpoint PATH [--tasks TASK...]
 allowed-tools: Bash(uv run:*) Bash(export:*) Bash(nvidia-smi:*) Bash(cd:*) Bash(pgrep:*) Read Glob
 ---
 
@@ -27,15 +27,16 @@ Required:
 - `--checkpoint`: path to checkpoint directory
 
 Optional:
-- `--version`: `v1` or `v2` (default `v2`, MetaWorld only)
-- `--tasks`: specific tasks to collect (MetaWorld only)
-- `--split`: `train` or `test` (default `train`)
-- `--num_envs`: parallel envs (default 2 for MetaWorld)
-- `--gpus`: GPU IDs for multi-GPU collection (MetaWorld only)
-- `--output-dir`: activation output directory
-- `--task_suite_name`: LIBERO suite (e.g., `libero_spatial`)
-- `--task_set`: RoboCasa task set (e.g., `atomic_seen`)
-- `--num_workers`: parallel workers (LIBERO/RoboCasa, default 5)
+- `--tasks`: explicit task list — MetaWorld (`reach-v3 push-v3 ...`) or RoboCasa (`OpenDrawer CloseFridge ...`)
+- `--split`: MetaWorld `subset` (default, 26 curated tasks) / `train` / `test`
+- `--num_envs`: MetaWorld parallel envs (eval_all default 15, main default 10)
+- `--gpus`: GPU IDs for multi-GPU collection (MetaWorld eval_all only)
+- `--output-dir`: activation output directory (server-side for LIBERO/RoboCasa)
+- `--collect_output_dir`: activation root for MetaWorld in-process collection
+- `--task_suite_name`: LIBERO suite — `libero_10` (default) / `libero_spatial` / `libero_object` / `libero_goal`
+- `--task_set`: RoboCasa task set — `subset` (default, 7 curated tasks) / `atomic_seen` / `composite_seen` / `composite_unseen` / `target50` / `pretrain50`
+- `--num_episodes`: episodes per task (eval_all default 15 for LIBERO/RoboCasa; main default 1)
+- `--num_workers`: LIBERO/RoboCasa subprocess concurrency (default 10)
 
 If `--client` is not specified, ask the user.
 If `--checkpoint` is not specified, list available checkpoints and ask:
@@ -137,8 +138,9 @@ echo "Collecting: client=<CLIENT> checkpoint=<CHECKPOINT> GPU=<GPU_ID> started=$
 
 - Report the output directory path
 - For LIBERO/RoboCasa: activations are on the **server's** filesystem under `--output-dir`
-- Suggest validation:
-  - MetaWorld V2: `ACTIVATIONS_V2_DIR=<dir>/<task> ACTIVATIONS_V2_BASE=<dir> uv run pytest tests/test_activations_v2.py -v`
-  - MetaWorld V1: `ACTIVATIONS_DIR=<dir>/<task> uv run pytest tests/test_activations.py -v`
+- Suggest validation (pick the validator that matches the `collection_mode` of the run):
+  - pi0 / pi0.5 (`v1`): `ACTIVATIONS_DIR=<dir>/<task> uv run pytest tests/test_activations.py -v`
+  - pi0-FAST (`fast_v1`): `ACTIVATIONS_FAST_DIR=<dir>/<task> uv run pytest tests/test_activations_fast.py -v`
+  - GR00T N1.5 (`groot_v1`): `cd groot_env && ACTIVATIONS_DIR=<dir>/<task> uv run pytest tests/test_groot_activations.py -v`
 
 Report the full commands you are running before executing them.
