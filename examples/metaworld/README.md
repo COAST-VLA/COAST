@@ -43,6 +43,7 @@ The `pi05_metaworld` and `pi0_fast_metaworld` configs are registered in `src/ope
 |---|---|
 | `pi05_metaworld`       | [`brandonyang/openpi-metaworld-5000`](https://huggingface.co/brandonyang/openpi-metaworld-5000), [`brandonyang/openpi-metaworld-25000`](https://huggingface.co/brandonyang/openpi-metaworld-25000) |
 | `pi0_fast_metaworld`   | [`1000`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints/tree/main/pi0_fast_metaworld_b200_bs512/1000), [`2000`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints/tree/main/pi0_fast_metaworld_b200_bs512/2000), [`2500`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints/tree/main/pi0_fast_metaworld_b200_bs512/2500) (subdirs of [`brandonyang/pi0fast-metaworld-checkpoints`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints)) |
+| `dp_metaworld_lang_v1` | [`30000`](https://huggingface.co/brandonyang/dp-metaworld-checkpoints/tree/main/dp_metaworld_lang_v1/30000), [`85000`](https://huggingface.co/brandonyang/dp-metaworld-checkpoints/tree/main/dp_metaworld_lang_v1/85000) (subdirs of [`brandonyang/dp-metaworld-checkpoints`](https://huggingface.co/brandonyang/dp-metaworld-checkpoints)) |
 
 ## Serving the policy
 
