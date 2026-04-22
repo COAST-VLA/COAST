@@ -115,7 +115,10 @@ CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
 
 Start `--num_envs` at 16 and halve it if you OOM — memory scales linearly.
 
-Pre-collected datasets and per-schema file lists are in the canonical reference.
+Pre-collected datasets:
+
+- [`brandonyang/pi05-metaworld-activations-v1-ml45train-16env`](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v1-ml45train-16env) — pi0.5, `v1` schema, 16 envs × 45 ML45-train tasks.
+- [`brandonyang/pi0fast-metaworld-activations-v1-ml45train-16env`](https://huggingface.co/datasets/brandonyang/pi0fast-metaworld-activations-v1-ml45train-16env) — pi0-FAST, `fast_v1` schema, 16 envs × 45 ML45-train tasks.
 
 ## Results
 

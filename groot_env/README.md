@@ -126,7 +126,9 @@ for task in ../activations/groot_n15-robocasa-activations-v1-15env/checkpoint-12
 done
 ```
 
-Pre-collected: [`brandonyang/groot_n15-robocasa-activations-v1-15env`](https://huggingface.co/datasets/brandonyang/groot_n15-robocasa-activations-v1-15env) — 7 tasks × 15 episodes on `multitask_learning/checkpoint-120000`.
+Pre-collected datasets:
+
+- [`brandonyang/groot_n15-robocasa-activations-v1-15env`](https://huggingface.co/datasets/brandonyang/groot_n15-robocasa-activations-v1-15env) — GR00T N1.5, `groot_v1` schema, 7 tasks × 15 episodes on `multitask_learning/checkpoint-120000`.
 
 ## Results
 
