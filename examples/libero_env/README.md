@@ -79,25 +79,11 @@ uv run scripts/serve_policy.py --pytorch policy:checkpoint \
     --policy.dir=/path/to/checkpoint
 ```
 
-**Reference training run.** The `dp_libero_lang_v1` checkpoint was produced with:
-
-| Param | Value |
-|---|---|
-| Hardware | 4× L40 (DDP via `torchrun --nproc_per_node=4`) |
-| `--batch_size` | 256 (global; 64/GPU) |
-| `--num_train_steps` | 100000 |
-| `--save_interval` / `--keep_period` | 5000 / 10000 |
-| `--num_workers` | 4 per rank |
-| LR schedule (config default) | CosineDecay, warmup=500, peak=1e-4, decay to 1e-5 |
-| Optimizer (config default) | AdamW, β=(0.95, 0.999), wd=1e-6, clip=10.0 |
-| Model (config default) | horizon=16, n_obs_steps=1, n_action_steps=8, DDPM-100 train / DDIM-10 infer, lang_emb_dim=768 |
+The `dp_libero_lang_v1` config reproduces the 4× L40 reference training run (`batch_size=256`, `keep_period=10_000`, all other hyperparameters inherited from `dp_libero`):
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3 uv run torchrun --standalone --nnodes=1 --nproc_per_node=4 \
-    scripts/train_pytorch.py dp_libero \
-    --exp-name dp_libero_lang_v1 \
-    --batch_size 256 --num_train_steps 100000 \
-    --save_interval 5000 --keep_period 10000 --num_workers 4
+    scripts/train_pytorch.py dp_libero_lang_v1
 ```
 
 ## Evaluation

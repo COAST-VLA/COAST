@@ -718,6 +718,51 @@ def _make_dp_config(
     )
 
 
+# Shared Diffusion Policy model + data configs. Extracted to module scope so the base
+# configs (dp_metaworld, dp_libero) and their reference-training-run variants
+# (dp_metaworld_lang_v1, dp_libero_lang_v1) reference the same objects — changes to the
+# per-env model spec or dataset propagate to the scale-up variants automatically without
+# needing to remember to edit two entries.
+_DP_METAWORLD_MODEL = diffusion_policy.DiffusionPolicyConfig(
+    action_dim=4,
+    action_horizon=16,
+    horizon=16,
+    n_obs_steps=1,
+    n_action_steps=16,
+    crop_shape=(84, 84),
+    images=(
+        diffusion_policy.ImageSpec("base_0_rgb", 3, 96, 96),
+        diffusion_policy.ImageSpec("left_wrist_0_rgb", 3, 96, 96),
+    ),
+    lowdims=(diffusion_policy.LowdimSpec("state", 4),),
+    lang_emb_dim=768,
+)
+_DP_METAWORLD_DATA = LeRobotMetaworldDataConfig(
+    repo_id="brandonyang/metaworld_ml45",
+    base_config=DataConfig(prompt_from_task=True),
+    extra_delta_transform=False,
+)
+_DP_LIBERO_MODEL = diffusion_policy.DiffusionPolicyConfig(
+    action_dim=7,
+    action_horizon=16,
+    horizon=16,
+    n_obs_steps=1,
+    n_action_steps=16,
+    crop_shape=(84, 84),
+    images=(
+        diffusion_policy.ImageSpec("base_0_rgb", 3, 96, 96),
+        diffusion_policy.ImageSpec("left_wrist_0_rgb", 3, 96, 96),
+    ),
+    lowdims=(diffusion_policy.LowdimSpec("state", 8),),
+    lang_emb_dim=768,
+)
+_DP_LIBERO_DATA = LeRobotLiberoDataConfig(
+    repo_id="physical-intelligence/libero",
+    base_config=DataConfig(prompt_from_task=True),
+    extra_delta_transform=False,
+)
+
+
 # Use `get_config` if you need to get a config by name in your code.
 _CONFIGS = [
     #
@@ -976,49 +1021,39 @@ _CONFIGS = [
         # existing dp_metaworld data/norm-stats still apply. Images at 96x96 with 84x84 crop
         # follows Chi et al.'s paper defaults and leaves the CropRandomizer a real crop window
         # (the robomimic randomizer asserts crop<input).
-        model=diffusion_policy.DiffusionPolicyConfig(
-            action_dim=4,
-            action_horizon=16,
-            horizon=16,
-            n_obs_steps=1,
-            n_action_steps=16,
-            crop_shape=(84, 84),
-            images=(
-                diffusion_policy.ImageSpec("base_0_rgb", 3, 96, 96),
-                diffusion_policy.ImageSpec("left_wrist_0_rgb", 3, 96, 96),
-            ),
-            lowdims=(diffusion_policy.LowdimSpec("state", 4),),
-            lang_emb_dim=768,
-        ),
-        data=LeRobotMetaworldDataConfig(
-            repo_id="brandonyang/metaworld_ml45",
-            base_config=DataConfig(prompt_from_task=True),
-            extra_delta_transform=False,
-        ),
+        model=_DP_METAWORLD_MODEL,
+        data=_DP_METAWORLD_DATA,
+    ),
+    # Reference training run for dp_metaworld. Same model + data as dp_metaworld above; only
+    # batch_size and keep_period are overridden to match the 4x L40 slurm run that produced
+    # the dp_metaworld_lang_v1 checkpoint. Reproduce with:
+    #   uv run torchrun --standalone --nnodes=1 --nproc_per_node=4 \
+    #       scripts/train_pytorch.py dp_metaworld_lang_v1
+    _make_dp_config(
+        name="dp_metaworld_lang_v1",
+        model=_DP_METAWORLD_MODEL,
+        data=_DP_METAWORLD_DATA,
+        batch_size=256,
+        keep_period=10_000,
     ),
     _make_dp_config(
         name="dp_libero",
         # LIBERO: 2 openpi cameras, 8-dim state, 7-dim action. Same 768-d CLIP ViT-L/14 lang_emb
         # path as dp_metaworld.
-        model=diffusion_policy.DiffusionPolicyConfig(
-            action_dim=7,
-            action_horizon=16,
-            horizon=16,
-            n_obs_steps=1,
-            n_action_steps=16,
-            crop_shape=(84, 84),
-            images=(
-                diffusion_policy.ImageSpec("base_0_rgb", 3, 96, 96),
-                diffusion_policy.ImageSpec("left_wrist_0_rgb", 3, 96, 96),
-            ),
-            lowdims=(diffusion_policy.LowdimSpec("state", 8),),
-            lang_emb_dim=768,
-        ),
-        data=LeRobotLiberoDataConfig(
-            repo_id="physical-intelligence/libero",
-            base_config=DataConfig(prompt_from_task=True),
-            extra_delta_transform=False,
-        ),
+        model=_DP_LIBERO_MODEL,
+        data=_DP_LIBERO_DATA,
+    ),
+    # Reference training run for dp_libero. Same model + data as dp_libero above; only
+    # batch_size and keep_period are overridden to match the 4x L40 slurm run that produced
+    # the dp_libero_lang_v1 checkpoint. Reproduce with:
+    #   uv run torchrun --standalone --nnodes=1 --nproc_per_node=4 \
+    #       scripts/train_pytorch.py dp_libero_lang_v1
+    _make_dp_config(
+        name="dp_libero_lang_v1",
+        model=_DP_LIBERO_MODEL,
+        data=_DP_LIBERO_DATA,
+        batch_size=256,
+        keep_period=10_000,
     ),
     # dp_robocasa is inference-only: we never train this in-repo, just load the released
     # checkpoint at robocasa/robocasa365_checkpoints/diffusion_policy/.../epoch=0500*.ckpt.
