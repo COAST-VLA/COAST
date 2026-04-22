@@ -7,8 +7,8 @@ code — the generic ``scripts/serve_policy.py --pytorch policy:checkpoint`` pat
 They depend on having a trained checkpoint on disk (norm_stats + model.safetensors).
 For ``dp_metaworld`` this is produced by ``tests/metaworld/test_dp_e2e.py`` on first run;
 for ``dp_libero`` by ``tests/libero/test_dp_e2e.py``. Both tests are ``manual`` since they
-require a GPU. The released robocasa ``.ckpt`` is not eval'd via this repo — see
-``examples/robocasa_env/README.md`` for the upstream ``eval_robocasa.py`` path.
+require a GPU. The released robocasa ``.ckpt`` is not eval'd via this repo — use
+upstream's ``eval_robocasa.py`` at https://github.com/robocasa-benchmark/diffusion_policy.
 """
 
 from __future__ import annotations

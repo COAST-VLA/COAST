@@ -70,24 +70,6 @@ The client always emits three camera keys; each server reads what it needs:
 
 Same payload, same client, either server.
 
-### Diffusion Policy (released checkpoint — use upstream's repo, not ours)
-
-The Transformer-Hybrid DP architecture is vendored from [`robocasa-benchmark/diffusion_policy`](https://github.com/robocasa-benchmark/diffusion_policy) (Apache 2.0) under `src/openpi/models_pytorch/diffusion_policy/vendored/` and used here only for **training** the DP baseline on MetaWorld / LIBERO (see those READMEs). We verify the port's bit-compatibility with the released RoboCasa `pretrain_human300` checkpoint via `tests/robocasa/test_dp_e2e.py::test_dp_robocasa_loads_ckpt_and_samples_actions` — strict load of 589 keys / 106M params, 0 missing / 0 unexpected.
-
-**This repo does not ship a DP inference server for RoboCasa.** We tried; the mechanical pipeline worked (actions flowed, envs stepped) but eval success was 0/N against the released checkpoint even after porting upstream's text encoder (`CLIPTextModelWithProjection` + `text_embeds` + `max_length=25`), action slice (`action_pred[:, n_obs_steps-1:...]`), obs stacking (zero-padded first step), state slice (`pos[0:3], quat[3:7], gripper[14:16]`), image preprocessing, and env seed 1111111. Further debugging requires a live per-step action diff against upstream's own `eval_robocasa.py` — which needs the `NVlabs/sage` robomimic fork + Python 3.9 + PyTorch 1.12 pin. Rather than maintain that adapter here, the recommended path is:
-
-```bash
-# Clone upstream in a separate repo (NOT a submodule of openpi-metaworld)
-git clone https://github.com/robocasa-benchmark/diffusion_policy ~/diffusion_policy_robocasa
-cd ~/diffusion_policy_robocasa && pip install -e .  # follow their conda_environment.yaml
-# Then run their eval directly against the released .ckpt:
-python eval_robocasa.py --checkpoint <ckpt_path> --task_set atomic_seen --split pretrain
-```
-
-The `dp_robocasa` **config** in `src/openpi/training/config.py` stays in the repo — its defaults match the released checkpoint's architecture exactly, which is what makes the strict-load test in `tests/robocasa/test_dp_e2e.py` possible.
-
-DP training is **not** supported for `dp_robocasa` in-repo (we don't host the RoboCasa LeRobot dataset pipeline); that config exists only as the inference-side architecture spec that matches the released `.ckpt`.
-
 ## Evaluation
 
 Two entry points, identical regardless of backend:
