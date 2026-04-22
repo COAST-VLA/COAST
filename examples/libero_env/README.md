@@ -57,44 +57,37 @@ uv run scripts/serve_policy.py policy:checkpoint \
 
 ### Diffusion Policy baseline (Transformer-Hybrid, PyTorch-only)
 
-`dp_libero` is a Diffusion Policy baseline using the Transformer-Hybrid variant (Chi et al. 2023), ported from [`robocasa-benchmark/diffusion_policy`](https://github.com/robocasa-benchmark/diffusion_policy) into `src/openpi/models_pytorch/diffusion_policy/vendored/` (Apache 2.0). It's trained via the PyTorch entry point; evaluation reuses the existing LIBERO server/client flow but `serve_policy.py` **must** be launched with `--pytorch` (DP has no JAX path). Training requires robomimic in the root venv.
+`dp_libero` is a Diffusion Policy baseline using the Transformer-Hybrid variant (Chi et al. 2023), vendored from [`robocasa-benchmark/diffusion_policy`](https://github.com/robocasa-benchmark/diffusion_policy) (Apache 2.0) into `src/openpi/models_pytorch/diffusion_policy/vendored/` so the same model class can load the released RoboCasa checkpoint and be trained from scratch on LIBERO. Training uses the PyTorch entry point; eval reuses the openpi server/client flow but `serve_policy.py` **must** be launched with `--pytorch` (DP has no JAX path). Activation collection (`--collect`) is not supported for DP — the collection path is pi0 / pi0-FAST / pi0.5 only.
+
+**Language-conditioned multi-task baseline.** `dp_libero` trains on the `physical-intelligence/libero` dataset with the per-task prompt routed through `ComputeLangEmb` (CLIP ViT-L/14 `text_embeds` projection, 768-d, `padding="max_length", max_length=25`) into a `lang_emb` obs field. The DP model's `VisualCoreLanguageConditioned` branch consumes it both via FiLM modulation of the ResNet18 image features and as a raw concatenated feature — same language-conditioning path as `dp_robocasa` / `dp_metaworld`. CLIP is forced to CPU in the model_transform so each of the `num_workers × world_size` DataLoader workers caches encodings locally without fragmenting GPU memory.
 
 ```bash
 # 1. Norm stats (once per dataset).
 uv run scripts/compute_norm_stats.py --config-name dp_libero
 
-# 2a. Train single-GPU (defaults: 100k steps, batch 64, DDPM-100 / DDIM-10).
+# 2a. Train — single-GPU.
 CUDA_VISIBLE_DEVICES=0 uv run scripts/train_pytorch.py dp_libero \
-    --exp-name dp_libero_test \
-    --overwrite
+    --exp-name dp_libero_test --overwrite
 
-# 2b. Train multi-GPU via torchrun (DDP; batch_size is the total across GPUs).
+# 2b. Train — multi-GPU via torchrun (DDP; batch_size is the total across GPUs).
 CUDA_VISIBLE_DEVICES=0,1 uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 \
-    scripts/train_pytorch.py dp_libero \
-    --exp-name dp_libero_test \
-    --overwrite
+    scripts/train_pytorch.py dp_libero --exp-name dp_libero_test --overwrite
 
 # 3. Serve the resulting checkpoint. --pytorch is required.
 uv run scripts/serve_policy.py --pytorch policy:checkpoint \
     --policy.config=dp_libero \
-    --policy.dir=checkpoints/dp_libero/dp_libero_test/<step>
+    --policy.dir=/path/to/checkpoint
 ```
-
-Then run `main.py` / `eval_all.py` from `examples/libero_env/` exactly as documented under [Evaluation](#evaluation) below — the client talks to the server and doesn't need to know which model is loaded.
-
-Activation collection (`--collect`) is not supported for DP — the collection path is pi0 / pi0-FAST / pi0.5 only.
-
-**Language-conditioned multi-task baseline.** `dp_libero` trains on the `physical-intelligence/libero` dataset with the per-task prompt routed through `ComputeLangEmb` (CLIP ViT-L/14 `text_embeds` projection, 768-d, `padding="max_length", max_length=25`) into a `lang_emb` obs field. The DP model's `VisualCoreLanguageConditioned` branch consumes this both via FiLM modulation of the ResNet18 image features and as a raw concatenated feature — same language-conditioning path as `dp_robocasa` / `dp_metaworld`. CLIP runs on the DataLoader worker CPUs (one cached encoder per worker, lazy-init).
 
 **Reference training run.** The `dp_libero_lang_v1` checkpoint was produced with:
 
 | Param | Value |
 |---|---|
 | Hardware | 4× L40 (DDP via `torchrun --nproc_per_node=4`) |
-| `--batch-size` | 256 (global; 64/GPU) |
-| `--num-train-steps` | 100000 |
-| `--save-interval` / `--keep-period` | 5000 / 10000 |
-| `--num-workers` | 4 per rank |
+| `--batch_size` | 256 (global; 64/GPU) |
+| `--num_train_steps` | 100000 |
+| `--save_interval` / `--keep_period` | 5000 / 10000 |
+| `--num_workers` | 4 per rank |
 | LR schedule (config default) | CosineDecay, warmup=500, peak=1e-4, decay to 1e-5 |
 | Optimizer (config default) | AdamW, β=(0.95, 0.999), wd=1e-6, clip=10.0 |
 | Model (config default) | horizon=16, n_obs_steps=1, n_action_steps=8, DDPM-100 train / DDIM-10 infer, lang_emb_dim=768 |
@@ -102,9 +95,9 @@ Activation collection (`--collect`) is not supported for DP — the collection p
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3 uv run torchrun --standalone --nnodes=1 --nproc_per_node=4 \
     scripts/train_pytorch.py dp_libero \
-    --exp-name=dp_libero_lang_v1 \
-    --batch-size=256 --num-train-steps=100000 \
-    --save-interval=5000 --keep-period=10000 --num-workers=4
+    --exp-name dp_libero_lang_v1 \
+    --batch_size 256 --num_train_steps 100000 \
+    --save_interval 5000 --keep_period 10000 --num_workers 4
 ```
 
 ## Evaluation

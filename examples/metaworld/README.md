@@ -72,7 +72,7 @@ uv run scripts/serve_policy.py policy:checkpoint \
 # 1. Norm stats (once per dataset).
 uv run scripts/compute_norm_stats.py --config-name dp_metaworld
 
-# 2. Train — single-GPU.
+# 2a. Train — single-GPU.
 CUDA_VISIBLE_DEVICES=0 uv run scripts/train_pytorch.py dp_metaworld \
     --exp-name dp_metaworld_test --overwrite
 
@@ -91,10 +91,10 @@ uv run scripts/serve_policy.py --pytorch policy:checkpoint \
 | Param | Value |
 |---|---|
 | Hardware | 4× L40 (DDP via `torchrun --nproc_per_node=4`) |
-| `--batch-size` | 256 (global; 64/GPU) |
-| `--num-train-steps` | 100000 |
-| `--save-interval` / `--keep-period` | 5000 / 10000 |
-| `--num-workers` | 4 per rank |
+| `--batch_size` | 256 (global; 64/GPU) |
+| `--num_train_steps` | 100000 |
+| `--save_interval` / `--keep_period` | 5000 / 10000 |
+| `--num_workers` | 4 per rank |
 | LR schedule (config default) | CosineDecay, warmup=500, peak=1e-4, decay to 1e-5 |
 | Optimizer (config default) | AdamW, β=(0.95, 0.999), wd=1e-6, clip=10.0 |
 | Model (config default) | horizon=16, n_obs_steps=1, n_action_steps=8, DDPM-100 train / DDIM-10 infer, lang_emb_dim=768 |
@@ -102,9 +102,9 @@ uv run scripts/serve_policy.py --pytorch policy:checkpoint \
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3 uv run torchrun --standalone --nnodes=1 --nproc_per_node=4 \
     scripts/train_pytorch.py dp_metaworld \
-    --exp-name=dp_metaworld_lang_v1 \
-    --batch-size=256 --num-train-steps=100000 \
-    --save-interval=5000 --keep-period=10000 --num-workers=4
+    --exp-name dp_metaworld_lang_v1 \
+    --batch_size 256 --num_train_steps 100000 \
+    --save_interval 5000 --keep_period 10000 --num_workers 4
 ```
 
 ## Evaluation
