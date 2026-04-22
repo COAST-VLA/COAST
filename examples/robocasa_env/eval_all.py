@@ -157,8 +157,9 @@ def _build_command(
 
     ``output_dir`` is the absolute path where this subprocess should write its
     per-task video directory. It is unconditionally forwarded as ``--output_dir``
-    so that main.py does not fall back to its own default (which would land
-    videos in a separate ``output/{env_name}/`` tree).
+    so that main.py does not fall back to its own bare ``output/`` default,
+    which — via ``eval_task``'s per-env nesting — would scatter videos into a
+    sibling ``output/{env_name}/`` tree instead of alongside ``results.json``.
 
     ``task_idx`` is unused in the argv but accepted here so the call site can
     pass it uniformly alongside env_name; it's only consumed for log filename
@@ -290,7 +291,8 @@ def main(args: Args) -> None:
     # parallel_logs/, and each subprocess's per-task video directory. The same
     # dir is forwarded to main.py subprocesses via --output_dir so their
     # per-task video dirs land alongside results.json instead of in a sibling
-    # ``output/{env_name}/`` tree.
+    # ``output/{env_name}/`` tree (main.py's default parent is the bare
+    # ``output/``; ``eval_task`` inside main.py then nests ``{env_name}/``).
     #
     # ``os.path.abspath`` matters when the user passes a relative --output_dir:
     # main.py subprocesses run with cwd=script_dir, so a relative path would
