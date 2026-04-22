@@ -56,7 +56,7 @@ We run fine-tuning in-repo for MetaWorld and LIBERO, and release a series of **i
 
 ### Activation Collection
 
-Schema identifiers (reported on the server's `collection_mode` metadata field): `v1` = diffusion (pi0 / pi0.5 denoising-step tensors), `fast_v1` = pi0-FAST (per-token tensors), `groot_v1` = GR00T N1.5 DiT tensors. MetaWorld runs collection in-process (loads the policy directly); the other clients route through a `--collect_activations` policy server.
+MetaWorld runs collection in-process (loads the policy directly); the other clients route through a `--collect_activations` policy server. Protocol, output directory layout, per-schema file lists (`v1` / `fast_v1` / `groot_v1`), and verification are all in [`docs/activation_collection.md`](docs/activation_collection.md).
 
 | Client | pi0.5 | pi0-FAST | GR00T-N1.5 |
 |---|---|---|---|

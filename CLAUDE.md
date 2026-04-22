@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This is a fork of Physical Intelligence's openpi repository for **activation collection and mechanistic interpretability** on Vision-Language-Action (VLA) models (pi0, pi0-FAST, pi0.5). The models are implemented in JAX (primary) and PyTorch, with fine-tuning, evaluation, and activation collection pipelines across three robot environments.
+This is a fork of Physical Intelligence's openpi repository for **activation collection and mechanistic interpretability** on Vision-Language-Action (VLA) models (pi0, pi0-FAST, pi0.5) plus NVIDIA GR00T N1.5. The models are implemented in JAX (primary) and PyTorch, with fine-tuning, evaluation, and activation collection pipelines across four robot environments.
 
 ## Evaluation & Collection Clients
 
@@ -11,18 +11,20 @@ This is a fork of Physical Intelligence's openpi repository for **activation col
 | **MetaWorld** | In-process (loads policy directly) | Root venv | In-process (`main.py --collect`, `eval_all.py --collect`) |
 | **LIBERO** | Server-client over WebSocket | **Separate venv (Python 3.8)** in `examples/libero_env/` | Server-side (`--collect_activations` on server, `--collect` on client) |
 | **RoboCasa** | Server-client over WebSocket | **Separate venv (Python 3.11)** in `examples/robocasa_env/` | Server-side (same protocol as LIBERO) |
+| **DROID** | Server-client over WebSocket; real-robot control laptop | Root venv (server), DROID conda env + `openpi-client` (laptop) | Server-side (same protocol as LIBERO) |
 
-For workflow details (dataset generation, training configs, eval commands, activation formats), read the respective `examples/{client}/README.md`.
+Canonical activation-collection reference: [`docs/activation_collection.md`](docs/activation_collection.md). For per-client workflow details (dataset generation, training configs, eval commands), read the respective `examples/{client}/README.md`.
 
 ## Multi-Venv Setup (IMPORTANT)
 
-This repo has **three separate Python environments**. Running commands from the wrong directory will use the wrong venv and fail.
+This repo has **four separate Python environments**. Running commands from the wrong directory will use the wrong venv and fail.
 
 | Venv | Python | Directory | When to use |
 |------|--------|-----------|-------------|
-| **Root** | 3.11 | Repo root | Training, serving, MetaWorld eval/collection, tests |
+| **Root** | 3.11 | Repo root | Training, serving (pi0/pi0.5/pi0-FAST), MetaWorld eval/collection, DROID eval server, tests |
 | **libero_env** | 3.8 | `examples/libero_env/` | LIBERO client eval/collection |
 | **robocasa_env** | 3.11 | `examples/robocasa_env/` | RoboCasa client eval/collection |
+| **groot_env** | 3.10 | `groot_env/` | GR00T N1.5 policy server (separate due to `torch==2.5.1` pin) |
 
 ```bash
 # Root venv (training, serving, metaworld)
@@ -118,9 +120,10 @@ WebSocket policy server. Collection-mode server (`--collect_activations`) saves 
 Always use the `hf download` CLI and download into the project tree — never into `~/.cache/huggingface` or any user-global cache.
 
 ```bash
-# Datasets (e.g., activation datasets) — local dir mirrors the repo basename
-hf download brandonyang/pi05-metaworld-activations-v2-15env \
-    --repo-type dataset --local-dir pi05-metaworld-activations-v2-15env
+# Activation datasets — land under activations/<dataset-name>/ (one
+# canonical root so mech-interp tooling + .gitignore can use a single rule)
+hf download brandonyang/pi05-metaworld-activations-v1-ml45train-16env \
+    --repo-type dataset --local-dir activations/pi05-metaworld-activations-v1-ml45train-16env
 
 # Checkpoints — place under checkpoints/, optionally --include a subpath
 hf download robocasa/robocasa365_checkpoints \
@@ -136,6 +139,25 @@ Rules:
 - Datasets require `--repo-type dataset`; models are the default.
 - Run from the directory where the asset will be consumed (repo root for shared assets, `examples/{client}/` for client-specific ones).
 - When unsure about flags, run `hf download --help` rather than guessing.
+
+## HuggingFace Uploads (activation datasets)
+
+`hf upload <root>` rejects a commit once it crosses the **25k file limit**, which activation datasets routinely exceed. Use [`scripts/upload_activations_by_task.sh`](scripts/upload_activations_by_task.sh) — it creates the HF repo idempotently and splits the upload into one commit per task.
+
+```bash
+# Upload every step subdir of the local dataset (auto-detect steps):
+scripts/upload_activations_by_task.sh \
+    brandonyang/pi0fast-metaworld-activations-v1-ml45train-16env \
+    activations/pi0fast-metaworld-activations-v1-ml45train-16env
+
+# Upload one step only (argv[3]):
+scripts/upload_activations_by_task.sh \
+    brandonyang/pi0fast-metaworld-activations-v1-ml45train-16env \
+    activations/pi0fast-metaworld-activations-v1-ml45train-16env \
+    2500
+```
+
+Expected local layout: `<local_root>/<step>/<task>/...`. Each `<task>` becomes a separate HF commit at `path_in_repo=<step>/<task>`. Do not use bare `hf upload` on a multi-task activation tree — it will fail with `413 Payload Too Large`.
 
 ## Key Conventions
 

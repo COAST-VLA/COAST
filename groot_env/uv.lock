@@ -797,7 +797,7 @@ dev = [
 requires-dist = [
     { name = "gr00t", extras = ["base"], editable = "../third_party/Isaac-GR00T" },
     { name = "openpi-client", editable = "../packages/openpi-client" },
-    { name = "tyro", specifier = ">=0.8" },
+    { name = "tyro", specifier = ">=0.9" },
 ]
 
 [package.metadata.requires-dev]
