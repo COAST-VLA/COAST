@@ -394,6 +394,44 @@ class TestRobocasaEnv:
         MUJOCO_GL=osmesa uv run pytest tests/test_robocasa_env.py::TestRobocasaEnv -m manual -v
     """
 
+    def test_seed_controls_initial_state(self) -> None:
+        """Different ``--seed`` values yield different initial env observations.
+
+        Regression test for the claim that RoboCasa's seed (passed into
+        ``gym.make(..., seed=args.seed)`` at env construction) actually
+        randomizes the scene per seed. The env's internal RNG is seeded
+        once at construction; each ``env.reset()`` then draws a fresh
+        configuration from that seeded RNG stream.
+        """
+        from main import make_env
+
+        env_a = make_env(env_name="CloseBlenderLid", split="pretrain", seed=100)
+        env_b = make_env(env_name="CloseBlenderLid", split="pretrain", seed=200)
+        env_a_repeat = make_env(env_name="CloseBlenderLid", split="pretrain", seed=100)
+        try:
+            obs_a, _ = env_a.reset()
+            obs_b, _ = env_b.reset()
+            obs_a_repeat, _ = env_a_repeat.reset()
+
+            # Different seeds → different scene → different first-camera image.
+            cam_key = next(iter(CAMERA_KEYS.values()))
+            diff = float(
+                np.abs(
+                    obs_a[cam_key].astype(np.int32) - obs_b[cam_key].astype(np.int32)
+                ).mean()
+            )
+            assert diff > 1.0, (
+                f"expected seed=100 vs seed=200 to render different initial scenes "
+                f"(mean |Δpixel| > 1.0), got {diff:.3f}"
+            )
+
+            # Same seed → same initial scene (deterministic construction).
+            np.testing.assert_array_equal(obs_a[cam_key], obs_a_repeat[cam_key])
+        finally:
+            env_a.close()
+            env_b.close()
+            env_a_repeat.close()
+
     def test_make_env_reset_and_step(self) -> None:
         """The env can be created, reset, and stepped once with a no-op action."""
         from main import make_env

@@ -81,6 +81,13 @@ class Args:
     )
 
     fps: int = 10
+
+    # RNG seed. Threads through to the env physics seed and np.random, AND
+    # acts as an offset into LIBERO's canonical initial-state list so that
+    # different seeds evaluate on disjoint start conditions. Episode k picks
+    # initial_states[(seed + k) % N]. To get a proper held-out split between
+    # activation collection and steered eval, pick seeds ≥ num_episodes apart
+    # (e.g. collect at --seed 0 --num_episodes 15, eval at --seed 15).
     seed: int = 7
 
     # If True, attach activation-collection metadata to every infer call so the
@@ -246,10 +253,16 @@ def eval_task(
     env = make_env(task, LIBERO_ENV_RESOLUTION, args.seed)
     successes = []
 
+    # --seed acts as an offset into LIBERO's canonical initial-state list so
+    # different seeds evaluate on disjoint start conditions. Pick seeds ≥
+    # num_episodes apart (e.g. collect at --seed 0 --num_episodes 15; eval at
+    # --seed 15 --num_episodes 15) for a proper held-out split.
+    num_init_states = len(initial_states)
     try:
         for episode in range(args.num_episodes):
+            state_idx = (args.seed + episode) % num_init_states
             env.reset()
-            obs = env.set_init_state(initial_states[episode])
+            obs = env.set_init_state(initial_states[state_idx])
             action_plan = collections.deque()  # type: Deque[np.ndarray]
             success = False
             video_path = os.path.join(
