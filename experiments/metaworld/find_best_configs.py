@@ -74,6 +74,13 @@ class Args:
     max_steps: int = 300
     port: int = 8103
 
+    # Forwarded to each main.py subprocess as --seed. MetaWorld resets each
+    # episode with env.reset(seed=args.seed + episode), so different base
+    # seeds yield different per-episode seeds and thus different object
+    # placements / joint initial angles. Pick a seed distinct from the one
+    # used for activation collection for a clean held-out sweep.
+    seed: int = 69_420
+
     output_dir: pathlib.Path = pathlib.Path("experiments/metaworld/steering_results")
     best_configs_path: pathlib.Path = pathlib.Path("experiments/metaworld/best_configs.json")
 
@@ -117,6 +124,7 @@ def _run_one_eval(
     alpha: float | None = None,
     beta: float | None = None,
     strategy: str | None = None,
+    seed: int = 69_420,
 ) -> float:
     """Launch examples/metaworld/main.py for one (task, condition) and parse SR."""
     main_py = REPO_ROOT / "examples" / "metaworld" / "main.py"
@@ -131,6 +139,8 @@ def _run_one_eval(
         str(num_envs),
         "--max_steps",
         str(max_steps),
+        "--seed",
+        str(seed),
         "--port",
         str(port),
         "--output_dir",
@@ -221,6 +231,7 @@ def main(args: Args) -> None:
             args.port,
             task_dir / "baseline",
             steer=False,
+            seed=args.seed,
         )
         per_task_results[task]["baseline"] = sr
         with open(partial_results_path, "a") as f:
@@ -245,6 +256,7 @@ def main(args: Args) -> None:
                 alpha=effective_alpha,
                 beta=effective_beta,
                 strategy=strategy,
+                seed=args.seed,
             )
             per_task_results[task][cond_name] = sr
             with open(partial_results_path, "a") as f:

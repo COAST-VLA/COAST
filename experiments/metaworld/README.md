@@ -1,120 +1,110 @@
-# MetaWorld ML45 Steering Sweep
+# MetaWorld Steering — Full End-to-End Pipeline
 
-This directory produces `best_configs.json` — the tuned per-task
-`(layer, α, β, strategy)` quadruple to use with
-`examples/metaworld/eval_all.py --steer --steering_config experiments/metaworld/best_configs.json`.
+This directory contains the scripts that produce `best_configs.json` — the
+per-task `(layer, α, β, strategy)` quadruple consumed by
+`examples/metaworld/eval_all.py --steer --steering_config ...`.
 
-**This README is for researchers reproducing the sweep.** If you just want
-to run a steered eval, see `examples/metaworld/README.md`.
+MetaWorld differs from LIBERO/RoboCasa in the collection phase: `--collect`
+is **in-process** (no server needed — the script loads the pi0.5 PyTorch
+policy directly). Steering itself still requires a WebSocket server
+(`--steer` is incompatible with in-process `--collect`), so the eval phases
+(sweep + final held-out) use the server-client path.
 
-## What this produces
+MetaWorld's `--seed` feeds `env.reset(seed=args.seed + episode)`, so
+different base seeds yield different per-episode seeds and thus different
+object placements / joint initial angles. Collection (seed `0`), sweep
+(seed `15`), and final eval (seed `30`) sample disjoint start distributions.
 
-`best_configs.json` — one entry per MetaWorld env_name with the
-`(layer, α, β, strategy)` tuple that maximized success rate over the sweep,
-plus raw baseline / steered success rates for context.
-
-## Prereqs
-
-1. **Conceptor NPZ**:
-
-   ```bash
-   hf download brandonyang/metaworld-conceptors metaworld_conceptors.npz \
-       --repo-type dataset --local-dir conceptors/
-   ```
-
-   This NPZ is the canonical source. If you need to rebuild from fresh
-   activations (e.g., a new checkpoint), see "Rebuilding the conceptor NPZ"
-   below.
-
-2. **GPU**: one GPU — inference only.
-
-   ```bash
-   nvidia-smi
-   export CUDA_VISIBLE_DEVICES=<lowest-util-id>
-   ```
-
-3. **PyTorch checkpoint**: pi0.5 MetaWorld checkpoint at
-   `checkpoints/openpi-metaworld-5000` (the first invocation auto-converts
-   from JAX if needed).
-
-4. **Root venv only** — unlike LIBERO, MetaWorld has no sub-venv; everything
-   runs from the repo-root `uv run`.
-
-## Running the sweep
+## Commands
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run python experiments/metaworld/find_best_configs.py
+# (a) Collect activations IN-PROCESS on every ML45 train task: seed=0
+#     No server needed — --collect loads the policy from --policy.dir.
+CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+    --collect --split train --num_envs 16 --seed 0 \
+    --policy.config=pi05_metaworld \
+    --policy.dir=checkpoints/openpi-metaworld-5000 \
+    --collect_output_dir activations
+
+# (b) Build the conceptor NPZ (CPU-only, ~10 min)
+CUDA_VISIBLE_DEVICES="" uv run python experiments/metaworld/compute_conceptors.py \
+    --activation_root activations \
+    --output_path conceptors/metaworld_conceptors.npz
+
+# (c) Start the steering server on GPU 0, port 8301
+CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --steer \
+    --conceptor_npz conceptors/metaworld_conceptors.npz --port 8301 \
+    policy:checkpoint --policy.config pi05_metaworld \
+    --policy.dir checkpoints/openpi-metaworld-5000
+
+# (d) Sweep hyperparameters: seed=15 → disjoint env seeds vs collection.
+#     Spawns examples/metaworld/main.py per (task, condition) via WebSocket.
+CUDA_VISIBLE_DEVICES=0 uv run python experiments/metaworld/find_best_configs.py \
+    --port 8301 --num_episodes 10 --num_envs 10 --seed 15
+
+# (e) Final held-out eval with per-task tuned configs: seed=30 → another disjoint
+#     env-seed population. Run twice — once unsteered for baseline, once steered.
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+    --split train --num_episodes 15 --seed 30 --port 8301 \
+    --output_dir /tmp/metaworld_eval_seed30
+#     Steered invocation adds:
+#     --steer --steering_config experiments/metaworld/best_configs.json
 ```
 
-Default grid: 5 tasks × (6 strategies × 3 alphas × 2 betas × 1 layer) + 1
-baseline = 185 eval runs × 10 episodes. MetaWorld stepping is fast
-(`AsyncVectorEnv` with 10 parallel envs per task), so plan for **~2–3 hours**
-wall-clock on one GPU.
+## What each step produces
 
-Partial results stream to
-`experiments/metaworld/steering_results/<timestamp>/partial_results.jsonl`
-and `per_task_results.json` updates after every task. Neither file is
-committed.
+| Step | Output | Notes |
+|------|--------|-------|
+| (a) | `activations/openpi-metaworld-5000/<env_name>/episode_NNN_env_NNN/step_NNNN/*.npz` | 16 envs × 45 ML45-train tasks |
+| (b) | `conceptors/metaworld_conceptors.npz` | `{env_name}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
+| (d) | `experiments/metaworld/steering_results/<ts>/partial_results.jsonl` + `per_task_results.json` | Streaming SR |
+| (d) | `experiments/metaworld/best_configs.json` | Per-task winners |
+| (e) | `/tmp/metaworld_eval_seed30/results.json` | Final mean SR per task |
 
 ## Customizing the sweep
 
+`find_best_configs.py` Args:
+
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--tasks`      | 5 representative ML45 train tasks | Pass env-names to override |
+| `--layers`     | `(11,)` | Which layer(s) to hook |
+| `--alphas`     | `(0.1, 0.5, 1.0)` | Ignored for `per_step`/`linear` |
+| `--betas`      | `(0.1, 0.3)` | Ignored for `linear` |
+| `--strategies` | `(global, per_step, positive_only, random_matched, linear)` | Any subset |
+| `--num_episodes` | 10 | Eps per (task, condition) |
+| `--num_envs`   | 10 | In-process AsyncVectorEnv width (keeps policy calls batched) |
+| `--max_steps`  | 300 | Per-episode cap |
+| `--seed`       | 69420 | Forwarded to main.py; base seed for `env.reset(seed=args.seed + episode)` |
+
+Default grid: 5 tasks × strategy-gated grid × 1 layer + 1 baseline.
+MetaWorld batches `num_envs` envs in one process, so wall-clock scales with
+conditions not episodes — plan ~**3-4 hours** for a default sweep on one
+GPU.
+
+## Skipping activation collection
+
+If you have a pre-built NPZ, skip (a)-(b):
+
 ```bash
-# Subset of tasks
-uv run python experiments/metaworld/find_best_configs.py --tasks reach-v3 pick-place-v3
-
-# Different grid
-uv run python experiments/metaworld/find_best_configs.py \
-    --layers 5 11 17 --alphas 0.1 1.0 --betas 0.3 --strategies global per_step
-
-# Fast smoke run
-uv run python experiments/metaworld/find_best_configs.py --num_episodes 3 \
-    --tasks reach-v3
+hf download brandonyang/metaworld-conceptors metaworld_conceptors.npz \
+    --repo-type dataset --local-dir conceptors/
 ```
 
-## Interpreting outputs
+Then start at (c). As with LIBERO / RoboCasa, the held-out split in (d)/(e)
+is only scientifically clean if you know the pre-built NPZ's collection
+seed and pick disjoint sweep/eval seeds.
 
-- `best_configs.json` is the canonical output and is committed.
-  `baseline_sr` / `steered_sr` are informational.
-- `steering_results/<timestamp>/` holds raw per-condition runs; gitignored.
-- Sweep driver logs the whole grid to stdout.
+## Steering is WebSocket-only
 
-## After the sweep
+`--steer` requires a steering-capable server and is incompatible with
+in-process `--collect` (which bypasses `SteeredPolicyWrapper` entirely by
+design). If you need both, do collection first (step a), then start the
+steering server (step c), then run the WebSocket-based sweep / eval
+(steps d-e).
 
-```bash
-# Terminal 1 — steering-aware server
-uv run scripts/serve_policy.py --env METAWORLD --pytorch --steer \
-    --conceptor_npz conceptors/metaworld_conceptors.npz \
-    policy:checkpoint \
-    --policy.config pi05_metaworld --policy.dir checkpoints/openpi-metaworld-5000
+## See also
 
-# Terminal 2 — eval all tasks using the tuned configs
-MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
-    --split train --num_episodes 10 \
-    --steer --steering_config experiments/metaworld/best_configs.json
-```
-
-## Rebuilding the conceptor NPZ (advanced)
-
-MetaWorld collection is **in-process** (unlike LIBERO/RoboCasa's server-side
-collection), but the on-disk layout is identical.
-
-1. Collect activations:
-
-   ```bash
-   CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
-       --collect --split train --num_envs 16 --num_episodes 10 \
-       --policy.config=pi05_metaworld \
-       --policy.dir=checkpoints/openpi-metaworld-5000
-   ```
-
-2. Compute conceptors:
-
-   ```bash
-   uv run python experiments/metaworld/compute_conceptors.py \
-       --activation_root activations/openpi-metaworld-5000 \
-       --output_path conceptors/metaworld_conceptors_fresh.npz
-   ```
-
-The output NPZ uses the same key format as LIBERO/RoboCasa
-(`{task}__L{layer}__{alpha|per_step_N}__{C_success|C_failure|C_contrastive}`)
-and is drop-in usable with `serve_policy.py --steer`.
+- `examples/metaworld/README.md` — end-user `--steer` flag documentation.
+- `src/openpi/serving/steering.py` — the runtime (hooks + wrapper).
+- `src/openpi/serving/conceptors.py` — the NPZ builder.

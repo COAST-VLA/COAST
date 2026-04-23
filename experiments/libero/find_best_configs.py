@@ -77,6 +77,13 @@ class Args:
     num_episodes: int = 10
     port: int = 8003
 
+    # Forwarded to each main.py subprocess as --seed. Under PR #48's seeding
+    # semantics, this controls which canonical init-state slots are used
+    # (episode k → initial_states[(seed + k) % N]). To run the sweep on
+    # init states disjoint from activation collection, pick a seed ≥ the
+    # num_episodes used for collection.
+    seed: int = 7
+
     # Top-level output directory. A timestamped subdir is created below it.
     output_dir: pathlib.Path = pathlib.Path("experiments/libero/steering_results")
 
@@ -127,6 +134,7 @@ def _run_one_eval(
     alpha: float | None = None,
     beta: float | None = None,
     strategy: str | None = None,
+    seed: int = 7,
 ) -> float:
     """Launch examples/libero_env/main.py for one (task, condition) and parse SR."""
     task_id = LIBERO_10_TASK_IDS[task]
@@ -140,6 +148,8 @@ def _run_one_eval(
         str(task_id),
         "--num_episodes",
         str(num_episodes),
+        "--seed",
+        str(seed),
         "--port",
         str(port),
         "--output_dir",
@@ -232,7 +242,7 @@ def main(args: Args) -> None:
         logger.info("TASK: %s", task)
 
         # Baseline
-        sr = _run_one_eval(task, args.task_suite_name, args.num_episodes, args.port, task_dir / "baseline", steer=False)
+        sr = _run_one_eval(task, args.task_suite_name, args.num_episodes, args.port, task_dir / "baseline", steer=False, seed=args.seed)
         per_task_results[task]["baseline"] = sr
         with open(partial_results_path, "a") as f:
             f.write(json.dumps({"task": task, "condition": "baseline", "success_rate": sr}) + "\n")
@@ -258,6 +268,7 @@ def main(args: Args) -> None:
                 alpha=effective_alpha,
                 beta=effective_beta,
                 strategy=strategy,
+                seed=args.seed,
             )
             per_task_results[task][cond_name] = sr
             with open(partial_results_path, "a") as f:

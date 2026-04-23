@@ -70,6 +70,12 @@ class Args:
     num_episodes: int = 10
     port: int = 8203
 
+    # Forwarded to each main.py subprocess as --seed. RoboCasa seeds the
+    # gym env's internal RNG at construction, so different seeds draw
+    # different scene configurations. Pick a seed distinct from the one
+    # used for activation collection for a clean held-out sweep.
+    seed: int = 7
+
     output_dir: pathlib.Path = pathlib.Path("experiments/robocasa/steering_results")
     best_configs_path: pathlib.Path = pathlib.Path("experiments/robocasa/best_configs.json")
 
@@ -109,6 +115,7 @@ def _run_one_eval(
     alpha: float | None = None,
     beta: float | None = None,
     strategy: str | None = None,
+    seed: int = 7,
 ) -> float:
     robocasa_env_dir = REPO_ROOT / "examples" / "robocasa_env"
     cmd = [
@@ -120,6 +127,8 @@ def _run_one_eval(
         split,
         "--num_episodes",
         str(num_episodes),
+        "--seed",
+        str(seed),
         "--port",
         str(port),
         "--output_dir",
@@ -200,7 +209,7 @@ def main(args: Args) -> None:
         logger.info("=" * 70)
         logger.info("TASK: %s", task)
 
-        sr = _run_one_eval(task, args.split, args.num_episodes, args.port, task_dir / "baseline", steer=False)
+        sr = _run_one_eval(task, args.split, args.num_episodes, args.port, task_dir / "baseline", steer=False, seed=args.seed)
         per_task_results[task]["baseline"] = sr
         with open(partial_results_path, "a") as f:
             f.write(json.dumps({"task": task, "condition": "baseline", "success_rate": sr}) + "\n")
@@ -223,6 +232,7 @@ def main(args: Args) -> None:
                 alpha=effective_alpha,
                 beta=effective_beta,
                 strategy=strategy,
+                seed=args.seed,
             )
             per_task_results[task][cond_name] = sr
             with open(partial_results_path, "a") as f:

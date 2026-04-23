@@ -1,112 +1,115 @@
-# DROID Steering (Real Robot)
+# DROID Steering — Full End-to-End Pipeline (Real Robot)
 
-DROID is a real-robot evaluation harness — there is **no simulator**, and
-success is labeled by the human operator after each rollout. That rules out
-the automated sweep pattern LIBERO / RoboCasa / MetaWorld use (those produce
-`best_configs.json` via a subprocess grid search). DROID's tuning tool is
-`select_parameters.py`: a diagnostic-based narrower that picks a short list
-of promising `(layer, α, β)` values from the conceptor NPZ alone, and the
-operator evaluates each condition manually.
+DROID is a real-robot harness — there is **no simulator**, success is
+labeled by the operator after each rollout, and there is no "task suite" in
+the LIBERO / RoboCasa / MetaWorld sense. That rules out the automated
+subprocess-grid sweep pattern used for the sim envs. Instead, tuning uses
+`select_parameters.py`: a diagnostic-based narrower that picks a short
+shortlist of `(layer, α, β)` candidates from the conceptor NPZ alone,
+which the operator then evaluates manually per free-form instruction.
 
-**This README is for researchers running real-robot eval.** If you just want
-to understand the `--steer` client flag, see `examples/droid/README.md`.
+The workflow is **1 server + 1 build + 1 diagnostic + N manual rollouts**,
+with collection, diagnostic narrowing, and steered eval all separated in
+time (collection typically happens on day 0; steered eval on day 1+).
 
-## What this produces
-
-`selected_params.json` — a short list of `(best_layer, selected_alphas, selected_betas)`
-picked by two diagnostics:
-
-1. **Layer** — highest mean quota `tr(C)/d` across tasks at `α = 10.0`.
-2. **Alphas** — α values whose mean success/failure overlap
-   `tr(C_s C_f) / sqrt(tr(C_s²) tr(C_f²))` falls in the band `[0.85, 0.95]`
-   (empirically the sweet spot where success and failure subspaces are
-   distinguishable but not disjoint).
-
-Unlike LIBERO's `best_configs.json`, this file is NOT a per-task best — it's
-a shortlist you then evaluate by hand on the real robot.
-
-## Prereqs
-
-1. **Conceptor NPZ**:
-
-   ```bash
-   hf download brandonyang/droid-conceptors droid_conceptors.npz \
-       --repo-type dataset --local-dir conceptors/
-   ```
-
-2. **DROID hardware**: Panda arm, 3 cameras (left / right Zed stereo +
-   wrist), DROID codebase installed on the control laptop.
-
-3. **PyTorch checkpoint**: pi0.5 DROID checkpoint. `--collect`-mode activation
-   collection requires the checkpoint to be loadable in PyTorch on the remote
-   server.
-
-## Workflow
-
-### 1. Collect activations (if rebuilding the NPZ)
-
-Real-robot rollouts with the operator labeling success after each:
+## Commands
 
 ```bash
-# Terminal 1 — remote server with activation collection
-uv run scripts/serve_policy.py --pytorch --collect_activations \
-    --output_dir activations/pi05_droid \
-    policy:checkpoint --policy.config pi05_droid --policy.dir checkpoints/pi05_droid
+# (a) Start collection server on the GPU host, port 8000
+CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --collect_activations \
+    --output_dir activations --port 8000 \
+    policy:checkpoint --policy.config pi05_droid \
+    --policy.dir gs://openpi-assets/checkpoints/pi05_droid
 
-# Terminal 2 — DROID laptop
-python examples/droid/main.py --collect \
-    --external_camera left \
-    --left_camera_id <ID> --right_camera_id <ID> --wrist_camera_id <ID> \
-    --remote_host <server-ip>
-# ... run many rollouts per instruction, label success at prompt
-```
+# (b) On the DROID control laptop, run collection rollouts per instruction.
+#     Operator enters the free-form instruction, executes the episode, and
+#     labels success at the prompt. Each instruction should be repeated ~15-30
+#     times for enough success/failure volume to build a stable conceptor.
+python3 scripts/main.py --remote_host=<server_ip> --remote_port=8000 \
+    --external_camera="left" --collect
 
-### 2. Build conceptors
+# (c) Kill the collection server (on the GPU host)
+pkill -f "scripts/serve_policy.py.*port 8000"
 
-```bash
-uv run python experiments/droid/compute_conceptors.py \
-    --activation_root activations/pi05_droid \
-    --output_path conceptors/droid_conceptors_fresh.npz
-```
+# (d) Build the conceptor NPZ from the collected activations (CPU-only)
+CUDA_VISIBLE_DEVICES="" uv run python experiments/droid/compute_conceptors.py \
+    --activation_root activations \
+    --output_path conceptors/droid_conceptors.npz
 
-### 3. Narrow the parameter grid
+# (e) Run the diagnostic narrower — no robot time, no eval rollouts. Picks
+#     the best layer via per-layer quota and narrows α to values whose
+#     success/failure overlap falls inside a target band.
+CUDA_VISIBLE_DEVICES="" uv run python experiments/droid/select_parameters.py \
+    --conceptor-npz conceptors/droid_conceptors.npz \
+    --output-json experiments/droid/selected_params.json
 
-```bash
-uv run python experiments/droid/select_parameters.py \
-    --conceptor_npz conceptors/droid_conceptors.npz \
-    --output_json experiments/droid/selected_params.json
-```
+# (f) Start the steering server, port 8001
+CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --steer \
+    --conceptor_npz conceptors/droid_conceptors.npz --port 8001 \
+    policy:checkpoint --policy.config pi05_droid \
+    --policy.dir gs://openpi-assets/checkpoints/pi05_droid
 
-### 4. Manual eval
-
-Launch a steering server for each `(strategy, layer, α, β)` you want to test:
-
-```bash
-# Server (one condition per launch — restart to change params)
-uv run scripts/serve_policy.py --env DROID --pytorch --steer \
-    --conceptor_npz conceptors/droid_conceptors.npz \
-    policy:checkpoint --policy.config pi05_droid --policy.dir checkpoints/pi05_droid
-
-# DROID laptop — each rollout uses the server's currently-loaded conditions;
-# pass the matching flags so obs[__steering__] is set correctly:
-python examples/droid/main.py \
-    --external_camera left \
-    --left_camera_id <ID> --right_camera_id <ID> --wrist_camera_id <ID> \
-    --remote_host <server-ip> \
+# (g) Operator runs manual steered eval for each shortlisted config.
+#     Example — one (layer=11, α=0.1, β=0.3) condition, one instruction.
+#     Repeat for every (layer, α, β) in selected_params.json, ~15-30 rollouts each.
+python3 scripts/main.py --remote_host=<server_ip> --remote_port=8001 \
+    --external_camera="left" \
     --steer --steering_layer 11 --steering_alpha 0.1 --steering_beta 0.3 \
     --steering_strategy global
+#     The operator labels success per rollout; main.py saves results/eval_<ts>.csv
+#     which is the authoritative per-condition record.
+
+# (h) Baseline (unsteered) rollouts for comparison — same instruction, same
+#     rollout count, drop the steering flags.
+python3 scripts/main.py --remote_host=<server_ip> --remote_port=8001 \
+    --external_camera="left"
 ```
 
-Log success rates by hand, compare conditions. There is intentionally no
-automated accounting — the data is too precious for a blind argmax.
+## What each step produces
 
-## Why no `find_best_configs.py`?
+| Step | Output | Notes |
+|------|--------|-------|
+| (b) | `activations/<checkpoint>/<instruction-slug>/episode_NNN_env_000/step_NNNN/*.npz` | One dir per instruction; 15-30 rollouts recommended per class |
+| (d) | `conceptors/droid_conceptors.npz` | `{slug}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
+| (e) | `experiments/droid/selected_params.json` | `{best_layer, selected_alphas, selected_betas, overlap_band, diagnostics}` |
+| (g) | `results/eval_<ts>.csv` (on the DROID laptop), one per condition | `success` (0/1), `duration`, `video_filename` per rollout |
+| (h) | `results/eval_<ts>.csv` (baseline) | Same schema |
 
-Because:
-- Real-robot rollouts cost ~5 minutes each of operator time.
-- Success labels are human judgment calls, often partial credit.
-- Environment drift (object placement, lighting, wear) matters more than
-  hyperparameter choice.
+## Why there's no `find_best_configs.py`
 
-`select_parameters.py` cuts the grid 10× so the operator can ablate a
-realistic number of conditions in one session.
+Real-robot eval doesn't have enough throughput to support the LIBERO-style
+grid (10 tasks × ~20 conditions × 10 eps = 2000 rollouts is 40+ hours of
+operator time). The `select_parameters.py` diagnostic uses only the
+conceptor NPZ — no rollouts, no GPU — to cut the search space down to ~3-5
+(layer, α, β) candidates that the operator can actually test.
+
+## Customizing `select_parameters.py`
+
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--conceptor-npz` | — | Path to the NPZ built in (d) |
+| `--output-json`   | `experiments/droid/selected_params.json` | Narrower's output |
+| `--overlap-band`  | `(0.85, 0.95)` | Keep α whose mean s/f overlap falls in this band |
+| `--beta-shortlist` | `(0.1, 0.3)` | Candidate β values (orthogonal to the α narrower) |
+
+Lower overlap → less room for steering to help; higher overlap → too much
+noise. 0.85-0.95 is the band the diagnostic ships with and matches what
+was used in published DROID work.
+
+## Seeding notes
+
+DROID is interactive — there's no notion of a "canonical initial state" to
+offset into like LIBERO. Each rollout starts at whatever physical scene
+the operator has set up. Held-out separation between collection and eval
+is therefore a matter of **different real-world setups / scenes / objects
+between collection day and eval day**, not a `--seed` value. Budget for
+this explicitly when planning the operator schedule.
+
+## See also
+
+- `examples/droid/README.md` — end-user `--steer` flag documentation + the
+  interactive main.py loop.
+- `experiments/shared/select_parameters.py` — the underlying diagnostic
+  math (shared between DROID and any future real-robot envs).
+- `src/openpi/serving/steering.py` — the runtime (hooks + wrapper).
+- `src/openpi/serving/conceptors.py` — the NPZ builder.

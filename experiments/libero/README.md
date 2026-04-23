@@ -1,158 +1,115 @@
-# LIBERO-10 Steering Sweep
+# LIBERO-10 Steering — Full End-to-End Pipeline
 
-This directory produces `best_configs.json` — the tuned per-task
-`(layer, α, β, strategy)` quadruple to use with
-`examples/libero_env/eval_all.py --steer --steering_config experiments/libero/best_configs.json`.
+This directory contains the scripts that produce `best_configs.json` — the
+per-task `(layer, α, β, strategy)` quadruple consumed by
+`examples/libero_env/eval_all.py --steer --steering_config ...`.
 
-**This README is for researchers reproducing the sweep.** If you just want to
-run a steered eval, see `examples/libero_env/README.md`.
+The pipeline is **3 server phases + 1 build phase**, run on one GPU, with
+three disjoint `--seed` values chosen so collection, sweep, and final eval
+operate on disjoint LIBERO initial-state slots. Under PR #48's seeding
+semantics, episode `k` pulls `initial_states[(seed + k) % N]`, so seeds
+`0 / 15 / 30` with `--num_episodes 15` give three non-overlapping 15-state
+windows on every libero_10 task (N = 50 canonical states per task).
 
-## What this produces
-
-`best_configs.json` — one entry per LIBERO-10 task with the `(layer, α, β, strategy)`
-tuple that maximized success rate over the sweep, plus the raw baseline /
-steered success rates for context:
-
-```json
-{
-  "task_suite": "libero_10",
-  "source_sweep": "experiments/libero/steering_results/2026-04-14_180000/",
-  "generated_at": "2026-04-14T18:00:00Z",
-  "num_episodes_per_condition": 10,
-  "defaults": {"layer": 11, "alpha": 0.1, "beta": 0.3, "strategy": "global"},
-  "tasks": {
-    "KITCHEN_SCENE3_turn_on_the_stove_and_put_the_moka_pot_on_it": {
-      "layer": 11, "alpha": 0.1, "beta": 0.3, "strategy": "global",
-      "baseline_sr": 0.60, "steered_sr": 1.00
-    }
-  }
-}
-```
-
-## Prereqs
-
-1. **Conceptor NPZ**:
-
-   ```bash
-   hf download brandonyang/libero-conceptors libero_conceptors.npz \
-       --repo-type dataset --local-dir conceptors/
-   ```
-
-   This NPZ is the canonical source. If you need to rebuild it from fresh
-   activations (e.g., a new checkpoint), see the "Rebuilding the conceptor NPZ"
-   section near the bottom of this file.
-
-2. **GPU**: one GPU — inference only.
-
-   ```bash
-   nvidia-smi
-   export CUDA_VISIBLE_DEVICES=<lowest-util-id>
-   ```
-
-3. **PyTorch checkpoint**: pi0.5 LIBERO checkpoint at
-   `checkpoints/openpi-libero-2000` (the first sweep invocation auto-converts
-   from JAX if needed).
-
-4. **LIBERO sub-venv**: `examples/libero_env/.venv` must exist (it's the
-   Python 3.8 LIBERO / robosuite env). Build it from
-   `examples/libero_env/pyproject.toml` if missing.
-
-## Running the sweep
+## Commands
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 uv run python experiments/libero/find_best_configs.py
+# (a) Start collection server on GPU 0, port 8100
+CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --collect_activations \
+    --output_dir activations --port 8100 \
+    policy:checkpoint --policy.config pi05_libero \
+    --policy.dir checkpoints/openpi-libero-2000
+
+# (b) Collect activations on every libero_10 task: seed=0 → init-state slots 0..14
+cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
+    --task_suite_name libero_10 \
+    --num_episodes 15 --seed 0 --collect --port 8100 \
+    --num_workers 5 \
+    --output_dir /tmp/libero_collect_seed0
+
+# (c) Kill the collection server
+pkill -f "scripts/serve_policy.py.*port 8100"
+
+# (d) Build the conceptor NPZ from the collected activations (CPU-only, ~5 min)
+CUDA_VISIBLE_DEVICES="" uv run python experiments/libero/compute_conceptors.py \
+    --activation_root activations \
+    --output_path conceptors/libero_conceptors.npz
+
+# (e) Start the steering server with the new NPZ, port 8101
+CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --steer \
+    --conceptor_npz conceptors/libero_conceptors.npz --port 8101 \
+    policy:checkpoint --policy.config pi05_libero \
+    --policy.dir checkpoints/openpi-libero-2000
+
+# (f) Sweep hyperparameters: seed=15 → init-state slots 15..29 (DISJOINT from
+#     collection). This produces best_configs.json, the per-task winners.
+CUDA_VISIBLE_DEVICES=0 uv run python experiments/libero/find_best_configs.py \
+    --port 8101 --num_episodes 15 --seed 15
+
+# (g) Final held-out eval with per-task tuned configs: seed=30 → slots 30..44
+#     (disjoint from both (b) and (f)). Baseline + steered in one invocation.
+cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
+    --task_suite_name libero_10 \
+    --num_episodes 15 --seed 30 --port 8101 \
+    --num_workers 5 \
+    --output_dir /tmp/libero_eval_seed30
+#     Run this twice — once without --steer for baseline, once with:
+#     --steer --steering_config experiments/libero/best_configs.json
 ```
 
-Default grid: 10 tasks × (3 strategies × 3 alphas × 2 betas × 1 layer) + 1 baseline
-= 190 eval runs × 10 episodes. At ~2 min/eval (LIBERO-10 long-horizon), plan
-for **~6 hours** wall-clock on one GPU.
+## What each step produces
 
-Partial results stream to
-`experiments/libero/steering_results/<timestamp>/partial_results.jsonl`
-(append-only, one JSON record per completed condition). The script also saves
-`per_task_results.json` after every completed task. Neither file is committed.
+| Step | Output | Notes |
+|------|--------|-------|
+| (b) | `activations/openpi-libero-2000/<task>/episode_NNN_env_000/step_NNNN/*.npz` | Per-step intermediates for each of 10 tasks × 15 eps |
+| (d) | `conceptors/libero_conceptors.npz` | ~2k keys: `{task}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
+| (f) | `experiments/libero/steering_results/<ts>/partial_results.jsonl` + `per_task_results.json` | Streaming per-condition SR |
+| (f) | `experiments/libero/best_configs.json` | Per-task `(layer, α, β, strategy)` + baseline and steered SR |
+| (g) | `/tmp/libero_eval_seed30/results.json` | Final baseline / steered mean SR per task |
 
 ## Customizing the sweep
 
-```bash
-# Subset of tasks
-uv run python experiments/libero/find_best_configs.py \
-    --tasks KITCHEN_SCENE3_turn_on_the_stove_and_put_the_moka_pot_on_it
+`find_best_configs.py` Args (selected):
 
-# Different grid
-uv run python experiments/libero/find_best_configs.py \
-    --layers 5 11 17 --alphas 0.1 1.0 --betas 0.3 --strategies global per_step
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--tasks`      | all 10 libero_10 tasks | Restrict to a subset |
+| `--layers`     | `(11,)` | Which transformer layer(s) to hook |
+| `--alphas`     | `(0.1, 0.5, 1.0)` | Ignored for `per_step` (baked in as 1.0) and `linear` |
+| `--betas`      | `(0.1, 0.3)` | Ignored for `linear` (baked in as 0.0) |
+| `--strategies` | `(global, per_step, positive_only, random_matched, linear)` | Drop any to shrink grid |
+| `--num_episodes` | 10 | Eps per (task, condition) |
+| `--seed`       | 7 | Forwarded to each main.py subprocess; controls init-state window |
 
-# Fewer episodes for a fast smoke run
-uv run python experiments/libero/find_best_configs.py --num_episodes 5 \
-    --tasks KITCHEN_SCENE3_turn_on_the_stove_and_put_the_moka_pot_on_it
-```
+Default grid: 10 tasks × strategy-gated grid × 1 layer + 1 baseline =
+**190 eval runs × 10 eps**. ~2 min/eval → **~6 hours** wall-clock on one GPU.
 
-## Interpreting outputs
+## Skipping activation collection
 
-- `best_configs.json` is the canonical output and is committed to the repo.
-  `baseline_sr` / `steered_sr` are informational — they show *why* a config was
-  chosen but are not consumed by the server or `eval_all.py`.
-- `steering_results/<timestamp>/` holds the raw per-task, per-condition runs
-  and is gitignored.
-- Server-side logs live inside each per-condition video output dir.
-
-## After the sweep
-
-Verify the winners reproduce under `eval_all.py`:
+If you trust a pre-built NPZ (e.g. the published checkpoint's), skip (a)-(d):
 
 ```bash
-# Terminal 1 — steering-aware server
-uv run scripts/serve_policy.py --pytorch --steer \
-    --conceptor_npz conceptors/libero_conceptors.npz \
-    policy:checkpoint \
-    --policy.config pi05_libero --policy.dir checkpoints/openpi-libero-2000
-
-# Terminal 2 — eval all tasks using the tuned configs
-cd examples/libero_env
-MUJOCO_GL=egl uv run eval_all.py \
-    --task_suite_name libero_10 --num_episodes 10 \
-    --steer --steering_config ../../experiments/libero/best_configs.json
+hf download brandonyang/libero-conceptors libero_conceptors.npz \
+    --repo-type dataset --local-dir conceptors/
 ```
 
-If the mean success rate matches the sum of per-task `steered_sr` values in
-`best_configs.json` (within ±0.05 run-to-run variance), the sweep is valid.
+Then jump straight to (e). Note: the held-out split in (f)/(g) is only
+meaningful if you know the seed used for the NPZ's underlying collection —
+pick a sweep/eval seed disjoint from it. When in doubt, re-collect (steps
+(a)-(d)) yourself for scientifically clean results.
 
-## Rebuilding the conceptor NPZ (advanced)
+## Rebuilding `best_configs.json` from partial sweep output
 
-The shipped `conceptors/libero_conceptors.npz` from HuggingFace is canonical.
-We keep `compute_conceptors.py` here for reproducibility and for rebuilding
-when the checkpoint changes. Normal sweep workflow (above) never needs it.
+If a sweep crashes partway, the partial JSONL is valid — re-aggregate:
 
-**Pipeline**:
+```python
+import json, pathlib
+rows = [json.loads(l) for l in open("experiments/libero/steering_results/<ts>/partial_results.jsonl")]
+# ... group by task, pick argmax, emit best_configs.json
+```
 
-1. Start a collection-mode server (writes per-step hidden states to disk):
+## See also
 
-   ```bash
-   uv run scripts/serve_policy.py --pytorch --collect_activations \
-       --output_dir activations \
-       policy:checkpoint --policy.config pi05_libero \
-       --policy.dir checkpoints/openpi-libero-2000
-   ```
-
-2. Run rollouts with `--collect` on as many episodes as you can afford (more
-   episodes → better-conditioned correlation matrices → closer match to the
-   HF reference):
-
-   ```bash
-   cd examples/libero_env
-   MUJOCO_GL=egl uv run python eval_all.py \
-       --task_suite_name libero_10 --num_episodes 25 --collect
-   ```
-
-3. Compute conceptors from the collected activations:
-
-   ```bash
-   uv run python experiments/libero/compute_conceptors.py \
-       --activation_root activations/openpi-libero-2000 \
-       --output_path conceptors/libero_conceptors_fresh.npz
-   ```
-
-The output NPZ uses the same key format as the HF reference (`{task}__L{layer}__{alpha|per_step_N}__{C_success|C_failure|C_contrastive}`)
-and is drop-in usable: pass `--conceptor_npz conceptors/libero_conceptors_fresh.npz`
-to `serve_policy.py --steer`. All math lives in `src/openpi/serving/conceptors.py`.
+- `examples/libero_env/README.md` — end-user `--steer` flag documentation.
+- `src/openpi/serving/steering.py` — the runtime (hooks + wrapper).
+- `src/openpi/serving/conceptors.py` — the NPZ builder.
