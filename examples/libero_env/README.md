@@ -38,6 +38,7 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_libero \
 |---|---|
 | `pi05_libero`      | [`brandonyang/openpi-libero-2000`](https://huggingface.co/brandonyang/openpi-libero-2000), [`brandonyang/openpi-libero-3000`](https://huggingface.co/brandonyang/openpi-libero-3000), [`brandonyang/openpi-libero-9000`](https://huggingface.co/brandonyang/openpi-libero-9000) |
 | `pi0_fast_libero`  | [`1000`](https://huggingface.co/brandonyang/pi0fast-libero-checkpoints/tree/main/pi0_fast_libero_b200_bs512/1000), [`2000`](https://huggingface.co/brandonyang/pi0fast-libero-checkpoints/tree/main/pi0_fast_libero_b200_bs512/2000) (subdirs of [`brandonyang/pi0fast-libero-checkpoints`](https://huggingface.co/brandonyang/pi0fast-libero-checkpoints)) |
+| `dp_libero_lang_v1` | [`30000`](https://huggingface.co/brandonyang/dp-libero-checkpoints/tree/main/dp_libero_lang_v1/30000) (subdir of [`brandonyang/dp-libero-checkpoints`](https://huggingface.co/brandonyang/dp-libero-checkpoints); training crashed at step 30k, partial run) |
 
 ## Serving the policy
 
@@ -53,6 +54,39 @@ uv run scripts/serve_policy.py policy:checkpoint \
 uv run scripts/serve_policy.py policy:checkpoint \
     --policy.config=pi0_fast_libero \
     --policy.dir=/path/to/checkpoint
+```
+
+### Diffusion Policy baseline (Transformer-Hybrid, PyTorch-only)
+
+`dp_libero` is a Diffusion Policy baseline using the Transformer-Hybrid variant (Chi et al. 2023), vendored from [`robocasa-benchmark/diffusion_policy`](https://github.com/robocasa-benchmark/diffusion_policy) (Apache 2.0) into `src/openpi/models_pytorch/diffusion_policy/vendored/` so the same model class can load the released RoboCasa checkpoint and be trained from scratch on LIBERO. Training uses the PyTorch entry point; eval reuses the openpi server/client flow but `serve_policy.py` **must** be launched with `--pytorch` (DP has no JAX path). Activation collection (`--collect`) is not supported for DP — the collection path is pi0 / pi0-FAST / pi0.5 only.
+
+**Language-conditioned multi-task baseline.** `dp_libero` trains on the `physical-intelligence/libero` dataset with the per-task prompt routed through `ComputeLangEmb` (CLIP ViT-L/14 `text_embeds` projection, 768-d, `padding="max_length", max_length=25`) into a `lang_emb` obs field. The DP model's `VisualCoreLanguageConditioned` branch consumes it both via FiLM modulation of the ResNet18 image features and as a raw concatenated feature — same language-conditioning path as `dp_robocasa` / `dp_metaworld`. CLIP is forced to CPU in the model_transform so each of the `num_workers × world_size` DataLoader workers caches encodings locally without fragmenting GPU memory.
+
+```bash
+# 1. Norm stats (once per dataset).
+uv run scripts/compute_norm_stats.py --config-name dp_libero
+
+# 2a. Train — single-GPU.
+CUDA_VISIBLE_DEVICES=0 uv run scripts/train_pytorch.py dp_libero \
+    --exp-name dp_libero_test --overwrite
+
+# 2b. Train — multi-GPU via torchrun (DDP; batch_size is the total across GPUs).
+CUDA_VISIBLE_DEVICES=0,1 uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 \
+    scripts/train_pytorch.py dp_libero --exp-name dp_libero_test --overwrite
+
+# 3. Serve the resulting checkpoint. --pytorch is required.
+uv run scripts/serve_policy.py --pytorch policy:checkpoint \
+    --policy.config=dp_libero \
+    --policy.dir=/path/to/checkpoint
+```
+
+The `dp_libero_lang_v1` config reproduces the 4× L40 reference training run (`batch_size=256`, `keep_period=10_000`, all other hyperparameters inherited from `dp_libero`). Norm stats are looked up by config name, so run `compute_norm_stats` once for `dp_libero_lang_v1` as well:
+
+```bash
+uv run scripts/compute_norm_stats.py --config-name dp_libero_lang_v1
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 uv run torchrun --standalone --nnodes=1 --nproc_per_node=4 \
+    scripts/train_pytorch.py dp_libero_lang_v1
 ```
 
 ## Evaluation
@@ -134,8 +168,31 @@ Pre-collected datasets:
 
 ## Results
 
+### pi0.5 training curve (`pi05_libero` @ 2k vs 3k vs 9k)
+
 ![Comparison of Mean Performance](figures/compare_means_2000_vs_3000_vs_9000.png)
 ![Per-task comparison](figures/compare_per_task_2000_vs_3000_vs_9000.png)
+
+Raw numbers: [`figures/results_2000_3000_9000.json`](figures/results_2000_3000_9000.json).
+
+### Diffusion Policy (`dp_libero_lang_v1` @ 30k)
+
+Eval of the step-30000 checkpoint on `libero_10`, 15 episodes per task (150 total). Training crashed at step 30k before the 100k-step target, so this is a partial-run snapshot — not a final head-to-head with the pi0.5 rows above (those are from `physical-intelligence/libero`-trained runs on the same suite). Mean success rate: **0.067 (7%)**.
+
+| task_id | task | success rate |
+|---------|------|--------------|
+| 3 | KITCHEN_SCENE4 put the black bowl in the bottom drawer of the cabinet and close it | 0.27 (4/15) |
+| 2 | KITCHEN_SCENE3 turn on the stove and put the moka pot on it | 0.13 (2/15) |
+| 9 | KITCHEN_SCENE6 put the yellow and white mug in the microwave and close it | 0.13 (2/15) |
+| 1 | LIVING_ROOM_SCENE2 put both the cream cheese box and the butter in the basket | 0.07 (1/15) |
+| 8 | KITCHEN_SCENE8 put both moka pots on the stove | 0.07 (1/15) |
+| 0 | LIVING_ROOM_SCENE2 put both the alphabet soup and the tomato sauce in the basket | 0.00 |
+| 4 | LIVING_ROOM_SCENE5 put the white mug on the left plate and put the yellow and white mug on the right plate | 0.00 |
+| 5 | STUDY_SCENE1 pick up the book and place it in the back compartment of the caddy | 0.00 |
+| 6 | LIVING_ROOM_SCENE6 put the white mug on the plate and put the chocolate pudding to the right of the plate | 0.00 |
+| 7 | LIVING_ROOM_SCENE1 put both the alphabet soup and the cream cheese box in the basket | 0.00 |
+
+Raw numbers: [`figures/results_dp_libero_30000.json`](figures/results_dp_libero_30000.json).
 
 ## Testing
 

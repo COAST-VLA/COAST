@@ -40,7 +40,9 @@ import torch.nn.parallel
 import tqdm
 import wandb
 
+import openpi.models.model as _model
 import openpi.models.pi0_config
+import openpi.models_pytorch.diffusion_policy as diffusion_policy
 import openpi.models_pytorch.pi0_pytorch
 import openpi.shared.normalize as _normalize
 import openpi.training.config as _config
@@ -389,24 +391,29 @@ def train_loop(config: _config.TrainConfig):
             torch.cuda.empty_cache()
         logging.info("Cleared sample batch and data loader from memory")
 
-    # Build model
-    if not isinstance(config.model, openpi.models.pi0_config.Pi0Config):
-        # Convert dataclass to Pi0Config if needed
-        model_cfg = openpi.models.pi0_config.Pi0Config(
-            dtype=config.pytorch_training_precision,
-            action_dim=config.model.action_dim,
-            action_horizon=config.model.action_horizon,
-            max_token_len=config.model.max_token_len,
-            paligemma_variant=getattr(config.model, "paligemma_variant", "gemma_2b"),
-            action_expert_variant=getattr(config.model, "action_expert_variant", "gemma_300m"),
-            pi05=getattr(config.model, "pi05", False),
-        )
-    else:
+    # Build model — dispatch on model_type.
+    if config.model.model_type == _model.ModelType.DIFFUSION_POLICY:
+        assert isinstance(config.model, diffusion_policy.DiffusionPolicyConfig)
         model_cfg = config.model
-        # Update dtype to match pytorch_training_precision
-        object.__setattr__(model_cfg, "dtype", config.pytorch_training_precision)
+        model = diffusion_policy.DiffusionPolicy(model_cfg).to(device)
+    else:
+        if not isinstance(config.model, openpi.models.pi0_config.Pi0Config):
+            # Convert dataclass to Pi0Config if needed
+            model_cfg = openpi.models.pi0_config.Pi0Config(
+                dtype=config.pytorch_training_precision,
+                action_dim=config.model.action_dim,
+                action_horizon=config.model.action_horizon,
+                max_token_len=config.model.max_token_len,
+                paligemma_variant=getattr(config.model, "paligemma_variant", "gemma_2b"),
+                action_expert_variant=getattr(config.model, "action_expert_variant", "gemma_300m"),
+                pi05=getattr(config.model, "pi05", False),
+            )
+        else:
+            model_cfg = config.model
+            # Update dtype to match pytorch_training_precision
+            object.__setattr__(model_cfg, "dtype", config.pytorch_training_precision)
 
-    model = openpi.models_pytorch.pi0_pytorch.PI0Pytorch(model_cfg).to(device)
+        model = openpi.models_pytorch.pi0_pytorch.PI0Pytorch(model_cfg).to(device)
 
     if hasattr(model, "gradient_checkpointing_enable"):
         enable_gradient_checkpointing = True
@@ -463,6 +470,26 @@ def train_loop(config: _config.TrainConfig):
         weight_decay=config.optimizer.weight_decay,
     )
 
+    # Fit the in-model LinearNormalizer for DP before any forward pass. The vendored
+    # DiffusionTransformerHybridImagePolicy computes_loss/predict_action by normalizing the
+    # observation/action tensors through LinearNormalizer, which is initialized with stats = +inf
+    # and will assert at first use. Pool ~8 batches from the data loader to get a usable
+    # min/max per shape_meta key. Only do this on fresh runs — when resuming, the normalizer is
+    # already inside the saved model state_dict.
+    if config.model.model_type == _model.ModelType.DIFFUSION_POLICY and not resuming:
+        dp_inner = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
+        if is_main:
+            logging.info("DP: fitting LinearNormalizer from data loader samples")
+        obs_buf, act_buf = [], []
+        for obs, act in loader:
+            obs_buf.append(jax.tree.map(lambda x: x.to(device), obs))
+            act_buf.append(act.to(torch.float32).to(device))
+            if len(obs_buf) >= 8:
+                break
+        dp_inner.fit_normalizer(obs_buf, act_buf)
+        if is_main:
+            logging.info("DP: LinearNormalizer fitted")
+
     # Load checkpoint if resuming
     global_step = 0
     if resuming:
@@ -497,7 +524,7 @@ def train_loop(config: _config.TrainConfig):
             f"Optimizer: {type(config.optimizer).__name__}, weight_decay={config.optimizer.weight_decay}, clip_norm={config.optimizer.clip_gradient_norm}"
         )
         logging.info("EMA is not supported for PyTorch training")
-        logging.info(f"Training precision: {model_cfg.dtype}")
+        logging.info(f"Training precision: {getattr(model_cfg, 'dtype', 'float32')}")
 
     # Training loop - iterate until we reach num_train_steps
     pbar = (

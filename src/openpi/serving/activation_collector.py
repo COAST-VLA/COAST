@@ -262,7 +262,7 @@ class CollectingPolicy(_base_policy.BasePolicy):
             )
 
         # Serialize calls into infer_with_intermediates: the underlying
-        # sample_actions_with_intermediates_v2 registers forward hooks on shared
+        # sample_actions_with_intermediates registers forward hooks on shared
         # module instances, so two in-flight calls would pollute each other's
         # capture dicts. The current single-threaded asyncio server already
         # serializes calls implicitly, but this lock makes the invariant explicit

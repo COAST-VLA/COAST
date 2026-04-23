@@ -43,6 +43,7 @@ The `pi05_metaworld` and `pi0_fast_metaworld` configs are registered in `src/ope
 |---|---|
 | `pi05_metaworld`       | [`brandonyang/openpi-metaworld-5000`](https://huggingface.co/brandonyang/openpi-metaworld-5000), [`brandonyang/openpi-metaworld-25000`](https://huggingface.co/brandonyang/openpi-metaworld-25000) |
 | `pi0_fast_metaworld`   | [`1000`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints/tree/main/pi0_fast_metaworld_b200_bs512/1000), [`2000`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints/tree/main/pi0_fast_metaworld_b200_bs512/2000), [`2500`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints/tree/main/pi0_fast_metaworld_b200_bs512/2500) (subdirs of [`brandonyang/pi0fast-metaworld-checkpoints`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints)) |
+| `dp_metaworld_lang_v1` | [`30000`](https://huggingface.co/brandonyang/dp-metaworld-checkpoints/tree/main/dp_metaworld_lang_v1/30000), [`85000`](https://huggingface.co/brandonyang/dp-metaworld-checkpoints/tree/main/dp_metaworld_lang_v1/85000) (subdirs of [`brandonyang/dp-metaworld-checkpoints`](https://huggingface.co/brandonyang/dp-metaworld-checkpoints)) |
 
 ## Serving the policy
 
@@ -60,6 +61,39 @@ uv run scripts/serve_policy.py policy:checkpoint \
 uv run scripts/serve_policy.py policy:checkpoint \
     --policy.config=pi0_fast_metaworld \
     --policy.dir=/path/to/checkpoint
+```
+
+### Diffusion Policy baseline (Transformer-Hybrid, PyTorch-only)
+
+`dp_metaworld` is a Diffusion Policy baseline using the Transformer-Hybrid variant from Chi et al. 2023, vendored from [`robocasa-benchmark/diffusion_policy`](https://github.com/robocasa-benchmark/diffusion_policy) (Apache 2.0) into `src/openpi/models_pytorch/diffusion_policy/vendored/` so the same model class can load the released RoboCasa checkpoint and be trained from scratch on MetaWorld. Training uses the PyTorch entry point; eval reuses the openpi server/client flow but `serve_policy.py` **must** be launched with `--pytorch` (DP has no JAX path). Activation collection (`--collect`) is not supported for DP — the collection path is pi0 / pi0-FAST / pi0.5 only.
+
+**Language-conditioned multi-task baseline.** `dp_metaworld` trains on all 44 ML45 tasks with the per-task prompt routed through `ComputeLangEmb` (CLIP ViT-L/14 `text_embeds` projection, 768-d, `padding="max_length", max_length=25`) into a `lang_emb` obs field. The DP model's `VisualCoreLanguageConditioned` branch consumes it both via FiLM modulation of the ResNet18 image features and as a raw concatenated feature — same language-conditioning path as `dp_robocasa`. CLIP is forced to CPU in the model_transform so each of the `num_workers × world_size` DataLoader workers caches encodings locally without fragmenting GPU memory.
+
+```bash
+# 1. Norm stats (once per dataset).
+uv run scripts/compute_norm_stats.py --config-name dp_metaworld
+
+# 2a. Train — single-GPU.
+CUDA_VISIBLE_DEVICES=0 uv run scripts/train_pytorch.py dp_metaworld \
+    --exp-name dp_metaworld_test --overwrite
+
+# 2b. Train — multi-GPU via torchrun (DDP; batch_size is the total across GPUs).
+CUDA_VISIBLE_DEVICES=0,1 uv run torchrun --standalone --nnodes=1 --nproc_per_node=2 \
+    scripts/train_pytorch.py dp_metaworld --exp-name dp_metaworld_test --overwrite
+
+# 3. Serve the resulting checkpoint. --pytorch is required.
+uv run scripts/serve_policy.py --pytorch policy:checkpoint \
+    --policy.config=dp_metaworld \
+    --policy.dir=/path/to/checkpoint
+```
+
+The `dp_metaworld_lang_v1` config reproduces the 4× L40 reference training run (`batch_size=256`, `keep_period=10_000`, all other hyperparameters inherited from `dp_metaworld`). Norm stats are looked up by config name, so run `compute_norm_stats` once for `dp_metaworld_lang_v1` as well:
+
+```bash
+uv run scripts/compute_norm_stats.py --config-name dp_metaworld_lang_v1
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 uv run torchrun --standalone --nnodes=1 --nproc_per_node=4 \
+    scripts/train_pytorch.py dp_metaworld_lang_v1
 ```
 
 ## Evaluation
@@ -122,10 +156,23 @@ Pre-collected datasets:
 
 ## Results
 
-Mean success rate and per-task comparisons across released checkpoints:
+Mean success rate and per-task comparisons across released checkpoints, ML45 train (45 tasks, 15 episodes per task):
 
-![Comparison](figures/compare_means_5000_vs_25000.png)
-![Comparison Per Task](figures/compare_per_task_5000_vs_25000.png)
+### pi0.5 training curve (`pi05_metaworld` @ 5k vs 25k)
+
+![pi05 means](figures/compare_means_5000_vs_25000.png)
+![pi05 per-task](figures/compare_per_task_5000_vs_25000.png)
+
+Raw numbers: [`figures/results_5000_25000.json`](figures/results_5000_25000.json).
+
+### pi0.5 vs Diffusion Policy (`dp_metaworld_lang_v1` @ 50k)
+
+DP is ~50% through a 100k-step schedule here (partial), while pi0.5 @ 25k is at its peak. Useful as a mid-training snapshot of the DP baseline's architectural ceiling — not a final head-to-head. A rerun at DP step 85k (the latest slurm checkpoint) is a follow-up.
+
+![pi05 vs DP means](figures/compare_means_pi05_vs_dp.png)
+![pi05 vs DP per-task](figures/compare_per_task_pi05_vs_dp.png)
+
+Raw numbers: [`figures/results_dp_metaworld_50000.json`](figures/results_dp_metaworld_50000.json).
 
 ## Testing
 

@@ -90,6 +90,20 @@ class TestEnsurePytorchCheckpoint:
             assert hash_path.exists()
             assert len(hash_path.read_text().strip()) == 64
 
+    def test_native_pytorch_checkpoint_skips_conversion(self, tmp_path):
+        """PyTorch-native checkpoints (no orbax params/ dir) must short-circuit.
+
+        Regression: Diffusion Policy checkpoints saved by train_pytorch.py write
+        only model.safetensors — no JAX params/ dir. Previously ensure_pytorch_checkpoint
+        tried to convert anyway and crashed with FileNotFoundError on params/_METADATA.
+        """
+        (tmp_path / "model.safetensors").write_text("pytorch_native_weights")
+        # Deliberately no params/ subdir.
+
+        with patch("openpi.models_pytorch.convert._import_conversion_module") as mock_import:
+            ensure_pytorch_checkpoint(str(tmp_path), "dp_metaworld")
+            mock_import.assert_not_called()
+
     def test_reconverts_when_hash_stale(self, fake_checkpoint):
         """Should reconvert when stored hash doesn't match current."""
         safetensors = fake_checkpoint / "model.safetensors"

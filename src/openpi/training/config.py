@@ -17,6 +17,7 @@ import openpi.models.model as _model
 import openpi.models.pi0_config as pi0_config
 import openpi.models.pi0_fast as pi0_fast
 import openpi.models.tokenizer as _tokenizer
+import openpi.models_pytorch.diffusion_policy as diffusion_policy
 from openpi.policies import metaworld_lerobot_policy
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
@@ -163,6 +164,21 @@ class ModelTransformFactory(GroupFactory):
                         )
                     ],
                 )
+            case _model.ModelType.DIFFUSION_POLICY:
+                # DP uses raw state/action dims (no tokenize/pad). Image resize happens in the
+                # model forward. For language conditioning, encode ``prompt`` into the 768-d
+                # ``lang_emb`` field via CLIP ViT-L/14's text-tower projection (matches the
+                # robocasa-benchmark training pipeline); the transform drops ``prompt`` afterwards
+                # so the PyTorch collator doesn't choke on the string leaf. For DP configs that
+                # don't use language (lang_emb_dim=None), ComputeLangEmb still runs and emits
+                # ``lang_emb`` — the model just ignores it.
+                #
+                # Force CPU: PyTorch DataLoader workers are CPU-side. If we leave device=None,
+                # each of the (num_workers * world_size) workers would lazy-init CLIP on
+                # whichever GPU happens to be visible, fragmenting GPU memory and racing against
+                # the training forward pass. Prompts are per-task and heavily cached (only ~44
+                # unique strings in metaworld_ml45), so CPU encoding is cheap after warmup.
+                return _transforms.Group(inputs=[_transforms.ComputeLangEmb(device="cpu")])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -659,6 +675,94 @@ class TrainConfig:
             raise ValueError("Cannot resume and overwrite at the same time.")
 
 
+def _make_dp_config(
+    *,
+    name: str,
+    model: "diffusion_policy.DiffusionPolicyConfig",
+    data: "DataConfigFactory",
+    batch_size: int = 64,
+    num_train_steps: int = 100_000,
+    warmup_steps: int = 500,
+    peak_lr: float = 1e-4,
+    decay_lr: float = 1e-5,
+    num_workers: int = 4,
+    save_interval: int = 5_000,
+    keep_period: int | None = 20_000,
+) -> TrainConfig:
+    """Build a TrainConfig for Diffusion Policy with shared defaults.
+
+    DP hyperparams that don't vary across envs (LR schedule, optimizer, batch size, step count,
+    save cadence) live here to prevent drift across dp_metaworld / dp_libero / dp_robocasa / etc.
+    Per-env differences (action/state dim, dataset) are passed in via ``model`` and ``data``.
+    """
+    return TrainConfig(
+        name=name,
+        model=model,
+        data=data,
+        batch_size=batch_size,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=warmup_steps,
+            peak_lr=peak_lr,
+            decay_steps=num_train_steps - warmup_steps,
+            decay_lr=decay_lr,
+        ),
+        # AdamW betas/eps mirror LeRobot's DiffusionConfig defaults: (0.95, 0.999) / 1e-8. openpi's
+        # AdamW default betas are (0.9, 0.95) (inherited from the pi0 training setup) which would
+        # give different convergence dynamics than the reference DP training.
+        optimizer=_optimizer.AdamW(b1=0.95, b2=0.999, eps=1e-8, clip_gradient_norm=10.0, weight_decay=1e-6),
+        ema_decay=None,  # EMA not wired up in train_pytorch.py yet; add in follow-up.
+        num_train_steps=num_train_steps,
+        num_workers=num_workers,
+        save_interval=save_interval,
+        keep_period=keep_period,
+    )
+
+
+# Shared Diffusion Policy model + data configs. Extracted to module scope so the base
+# configs (dp_metaworld, dp_libero) and their reference-training-run variants
+# (dp_metaworld_lang_v1, dp_libero_lang_v1) reference the same objects — changes to the
+# per-env model spec or dataset propagate to the scale-up variants automatically without
+# needing to remember to edit two entries.
+_DP_METAWORLD_MODEL = diffusion_policy.DiffusionPolicyConfig(
+    action_dim=4,
+    action_horizon=16,
+    horizon=16,
+    n_obs_steps=1,
+    n_action_steps=16,
+    crop_shape=(84, 84),
+    images=(
+        diffusion_policy.ImageSpec("base_0_rgb", 3, 96, 96),
+        diffusion_policy.ImageSpec("left_wrist_0_rgb", 3, 96, 96),
+    ),
+    lowdims=(diffusion_policy.LowdimSpec("state", 4),),
+    lang_emb_dim=768,
+)
+_DP_METAWORLD_DATA = LeRobotMetaworldDataConfig(
+    repo_id="brandonyang/metaworld_ml45",
+    base_config=DataConfig(prompt_from_task=True),
+    extra_delta_transform=False,
+)
+_DP_LIBERO_MODEL = diffusion_policy.DiffusionPolicyConfig(
+    action_dim=7,
+    action_horizon=16,
+    horizon=16,
+    n_obs_steps=1,
+    n_action_steps=16,
+    crop_shape=(84, 84),
+    images=(
+        diffusion_policy.ImageSpec("base_0_rgb", 3, 96, 96),
+        diffusion_policy.ImageSpec("left_wrist_0_rgb", 3, 96, 96),
+    ),
+    lowdims=(diffusion_policy.LowdimSpec("state", 8),),
+    lang_emb_dim=768,
+)
+_DP_LIBERO_DATA = LeRobotLiberoDataConfig(
+    repo_id="physical-intelligence/libero",
+    base_config=DataConfig(prompt_from_task=True),
+    extra_delta_transform=False,
+)
+
+
 # Use `get_config` if you need to get a config by name in your code.
 _CONFIGS = [
     #
@@ -900,6 +1004,68 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         pytorch_weight_path="/path/to/your/pytorch_weight_path",
         num_train_steps=30_000,
+    ),
+    #
+    # Diffusion Policy configs (PyTorch-only baseline for VLA comparison).
+    # Shared DP training hyperparameters (batch, LR schedule, optimizer, steps, save cadence) are kept
+    # identical across envs via _make_dp_config below. Per-env differences live in the model (state/action
+    # dims) and data configs. Adding a new env should only mean adding a DiffusionPolicyConfig + data
+    # config and calling _make_dp_config.
+    _make_dp_config(
+        name="dp_metaworld",
+        # MetaWorld: 2 openpi cameras, flat 4-dim state, 4-dim action. Language conditioning is
+        # ON — the ``prompt`` string is encoded by ComputeLangEmb (CLIP ViT-L/14, 768-d
+        # text_embeds projection, max_length=25) into a per-step ``lang_emb`` feature that the
+        # DP model consumes via ``VisualCoreLanguageConditioned`` (FiLM-modulated ResNet18 + raw
+        # feature concat). horizon=16 stays consistent with the pre-Transformer DP variant so
+        # existing dp_metaworld data/norm-stats still apply. Images at 96x96 with 84x84 crop
+        # follows Chi et al.'s paper defaults and leaves the CropRandomizer a real crop window
+        # (the robomimic randomizer asserts crop<input).
+        model=_DP_METAWORLD_MODEL,
+        data=_DP_METAWORLD_DATA,
+    ),
+    # Reference training run for dp_metaworld. Same model + data as dp_metaworld above; only
+    # batch_size and keep_period are overridden to match the 4x L40 slurm run that produced
+    # the dp_metaworld_lang_v1 checkpoint. Reproduce with:
+    #   uv run torchrun --standalone --nnodes=1 --nproc_per_node=4 \
+    #       scripts/train_pytorch.py dp_metaworld_lang_v1
+    _make_dp_config(
+        name="dp_metaworld_lang_v1",
+        model=_DP_METAWORLD_MODEL,
+        data=_DP_METAWORLD_DATA,
+        batch_size=256,
+        keep_period=10_000,
+    ),
+    _make_dp_config(
+        name="dp_libero",
+        # LIBERO: 2 openpi cameras, 8-dim state, 7-dim action. Same 768-d CLIP ViT-L/14 lang_emb
+        # path as dp_metaworld.
+        model=_DP_LIBERO_MODEL,
+        data=_DP_LIBERO_DATA,
+    ),
+    # Reference training run for dp_libero. Same model + data as dp_libero above; only
+    # batch_size and keep_period are overridden to match the 4x L40 slurm run that produced
+    # the dp_libero_lang_v1 checkpoint. Reproduce with:
+    #   uv run torchrun --standalone --nnodes=1 --nproc_per_node=4 \
+    #       scripts/train_pytorch.py dp_libero_lang_v1
+    _make_dp_config(
+        name="dp_libero_lang_v1",
+        model=_DP_LIBERO_MODEL,
+        data=_DP_LIBERO_DATA,
+        batch_size=256,
+        keep_period=10_000,
+    ),
+    # dp_robocasa is inference-only: we never train this in-repo, just load the released
+    # checkpoint at robocasa/robocasa365_checkpoints/diffusion_policy/.../epoch=0500*.ckpt.
+    # Defaults mirror the checkpoint exactly so load_weights succeeds with strict=True.
+    _make_dp_config(
+        name="dp_robocasa",
+        model=diffusion_policy.DiffusionPolicyConfig(),  # all-defaults = checkpoint-compatible
+        data=LeRobotRobocasaDataConfig(
+            assets=AssetsConfig(asset_id="robocasa"),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        num_train_steps=1,  # placeholder — never actually trained locally
     ),
     #
     # Robocasa configs.

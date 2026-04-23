@@ -62,7 +62,10 @@ def create_trained_policy(
     logging.info("Loading model...")
     if is_pytorch:
         model = train_config.model.load_pytorch(train_config, weight_path)
-        model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
+        # Pi0 models have a Gemma backbone that benefits from bf16; smaller PyTorch models (e.g., DP)
+        # don't have this module and stay in float32.
+        if hasattr(model, "paligemma_with_expert"):
+            model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
     else:
         model = train_config.model.load(_model.restore_params(checkpoint_dir / "params", dtype=jnp.bfloat16))
     data_config = train_config.data.create(train_config.assets_dirs, train_config.model)

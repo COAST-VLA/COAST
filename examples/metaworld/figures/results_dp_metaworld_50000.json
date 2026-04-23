@@ -1,0 +1,283 @@
+{
+  "description": "dp_metaworld_lang_v1 eval results, ML45 train, 15 episodes per task (15 envs x 1 ep)",
+  "config": "dp_metaworld_lang_v1",
+  "checkpoint": "brandonyang/dp-metaworld-checkpoints/dp_metaworld_lang_v1/50000",
+  "split": "train",
+  "checkpoints": {
+    "50000": {
+      "mean_success_rate": 0.5867,
+      "per_task": [
+        {
+          "task_name": "assembly-v3",
+          "num_success": 0,
+          "num_episodes": 15,
+          "success_rate": 0.0
+        },
+        {
+          "task_name": "basketball-v3",
+          "num_success": 11,
+          "num_episodes": 15,
+          "success_rate": 0.7333
+        },
+        {
+          "task_name": "button-press-topdown-v3",
+          "num_success": 2,
+          "num_episodes": 15,
+          "success_rate": 0.1333
+        },
+        {
+          "task_name": "button-press-topdown-wall-v3",
+          "num_success": 9,
+          "num_episodes": 15,
+          "success_rate": 0.6
+        },
+        {
+          "task_name": "button-press-v3",
+          "num_success": 13,
+          "num_episodes": 15,
+          "success_rate": 0.8667
+        },
+        {
+          "task_name": "button-press-wall-v3",
+          "num_success": 4,
+          "num_episodes": 15,
+          "success_rate": 0.2667
+        },
+        {
+          "task_name": "coffee-button-v3",
+          "num_success": 15,
+          "num_episodes": 15,
+          "success_rate": 1.0
+        },
+        {
+          "task_name": "coffee-pull-v3",
+          "num_success": 8,
+          "num_episodes": 15,
+          "success_rate": 0.5333
+        },
+        {
+          "task_name": "coffee-push-v3",
+          "num_success": 6,
+          "num_episodes": 15,
+          "success_rate": 0.4
+        },
+        {
+          "task_name": "dial-turn-v3",
+          "num_success": 0,
+          "num_episodes": 15,
+          "success_rate": 0.0
+        },
+        {
+          "task_name": "disassemble-v3",
+          "num_success": 12,
+          "num_episodes": 15,
+          "success_rate": 0.8
+        },
+        {
+          "task_name": "door-close-v3",
+          "num_success": 15,
+          "num_episodes": 15,
+          "success_rate": 1.0
+        },
+        {
+          "task_name": "door-open-v3",
+          "num_success": 12,
+          "num_episodes": 15,
+          "success_rate": 0.8
+        },
+        {
+          "task_name": "drawer-close-v3",
+          "num_success": 15,
+          "num_episodes": 15,
+          "success_rate": 1.0
+        },
+        {
+          "task_name": "drawer-open-v3",
+          "num_success": 15,
+          "num_episodes": 15,
+          "success_rate": 1.0
+        },
+        {
+          "task_name": "faucet-close-v3",
+          "num_success": 15,
+          "num_episodes": 15,
+          "success_rate": 1.0
+        },
+        {
+          "task_name": "faucet-open-v3",
+          "num_success": 15,
+          "num_episodes": 15,
+          "success_rate": 1.0
+        },
+        {
+          "task_name": "hammer-v3",
+          "num_success": 6,
+          "num_episodes": 15,
+          "success_rate": 0.4
+        },
+        {
+          "task_name": "handle-press-side-v3",
+          "num_success": 13,
+          "num_episodes": 15,
+          "success_rate": 0.8667
+        },
+        {
+          "task_name": "handle-press-v3",
+          "num_success": 15,
+          "num_episodes": 15,
+          "success_rate": 1.0
+        },
+        {
+          "task_name": "handle-pull-side-v3",
+          "num_success": 10,
+          "num_episodes": 15,
+          "success_rate": 0.6667
+        },
+        {
+          "task_name": "handle-pull-v3",
+          "num_success": 8,
+          "num_episodes": 15,
+          "success_rate": 0.5333
+        },
+        {
+          "task_name": "lever-pull-v3",
+          "num_success": 0,
+          "num_episodes": 15,
+          "success_rate": 0.0
+        },
+        {
+          "task_name": "peg-insert-side-v3",
+          "num_success": 4,
+          "num_episodes": 15,
+          "success_rate": 0.2667
+        },
+        {
+          "task_name": "peg-unplug-side-v3",
+          "num_success": 11,
+          "num_episodes": 15,
+          "success_rate": 0.7333
+        },
+        {
+          "task_name": "pick-out-of-hole-v3",
+          "num_success": 2,
+          "num_episodes": 15,
+          "success_rate": 0.1333
+        },
+        {
+          "task_name": "pick-place-v3",
+          "num_success": 8,
+          "num_episodes": 15,
+          "success_rate": 0.5333
+        },
+        {
+          "task_name": "pick-place-wall-v3",
+          "num_success": 4,
+          "num_episodes": 15,
+          "success_rate": 0.2667
+        },
+        {
+          "task_name": "plate-slide-back-side-v3",
+          "num_success": 14,
+          "num_episodes": 15,
+          "success_rate": 0.9333
+        },
+        {
+          "task_name": "plate-slide-back-v3",
+          "num_success": 14,
+          "num_episodes": 15,
+          "success_rate": 0.9333
+        },
+        {
+          "task_name": "plate-slide-side-v3",
+          "num_success": 15,
+          "num_episodes": 15,
+          "success_rate": 1.0
+        },
+        {
+          "task_name": "plate-slide-v3",
+          "num_success": 10,
+          "num_episodes": 15,
+          "success_rate": 0.6667
+        },
+        {
+          "task_name": "push-back-v3",
+          "num_success": 5,
+          "num_episodes": 15,
+          "success_rate": 0.3333
+        },
+        {
+          "task_name": "push-v3",
+          "num_success": 12,
+          "num_episodes": 15,
+          "success_rate": 0.8
+        },
+        {
+          "task_name": "push-wall-v3",
+          "num_success": 6,
+          "num_episodes": 15,
+          "success_rate": 0.4
+        },
+        {
+          "task_name": "reach-v3",
+          "num_success": 8,
+          "num_episodes": 15,
+          "success_rate": 0.5333
+        },
+        {
+          "task_name": "reach-wall-v3",
+          "num_success": 7,
+          "num_episodes": 15,
+          "success_rate": 0.4667
+        },
+        {
+          "task_name": "shelf-place-v3",
+          "num_success": 2,
+          "num_episodes": 15,
+          "success_rate": 0.1333
+        },
+        {
+          "task_name": "soccer-v3",
+          "num_success": 0,
+          "num_episodes": 15,
+          "success_rate": 0.0
+        },
+        {
+          "task_name": "stick-pull-v3",
+          "num_success": 2,
+          "num_episodes": 15,
+          "success_rate": 0.1333
+        },
+        {
+          "task_name": "stick-push-v3",
+          "num_success": 10,
+          "num_episodes": 15,
+          "success_rate": 0.6667
+        },
+        {
+          "task_name": "sweep-into-v3",
+          "num_success": 8,
+          "num_episodes": 15,
+          "success_rate": 0.5333
+        },
+        {
+          "task_name": "sweep-v3",
+          "num_success": 5,
+          "num_episodes": 15,
+          "success_rate": 0.3333
+        },
+        {
+          "task_name": "window-close-v3",
+          "num_success": 15,
+          "num_episodes": 15,
+          "success_rate": 1.0
+        },
+        {
+          "task_name": "window-open-v3",
+          "num_success": 15,
+          "num_episodes": 15,
+          "success_rate": 1.0
+        }
+      ]
+    }
+  }
+}

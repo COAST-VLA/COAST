@@ -37,6 +37,12 @@ dependencies = [
     "transformers==4.53.2",
     "rich>=14.0.0",
     "polars>=1.30.0",
+    # Diffusion Policy baseline depends on robomimic for its visual backbone
+    # (VisualCore, ResNet18Conv, CropRandomizer, ObsUtils). The vendored DP
+    # code imports ``robomimic.models.base_nets`` and ``obs_core`` at module
+    # load, so anything that imports ``openpi.training.config`` (i.e. every
+    # test that references a TrainConfig) transitively requires this dep.
+    "robomimic==0.3.0",
 ]
 
 
@@ -83,7 +89,7 @@ exclude = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = [".claude", "docker", "third_party", "src/openpi/models_pytorch/transformers_replace/*", "scripts/analysis/*"]
+extend-exclude = [".claude", "docker", "third_party", "src/openpi/models_pytorch/transformers_replace/*", "src/openpi/models_pytorch/diffusion_policy/vendored/*", "scripts/analysis/*"]
 
 [tool.ruff.lint]
 # https://docs.astral.sh/ruff/rules/

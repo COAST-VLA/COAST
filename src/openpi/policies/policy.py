@@ -22,19 +22,22 @@ BasePolicy: TypeAlias = _base_policy.BasePolicy
 
 
 def collate_transformed_singles(singles: list[dict]) -> dict:
-    # TODO(branyang02): This is hardcoded, but it should be fine??
-
     # singles: list[dict] where each dict has keys:
-    # state (array), tokenized_prompt (array), tokenized_prompt_mask (array),
-    # image (dict[str, array]), image_mask (dict[str, array])
-    # pi0-fast also adds: token_ar_mask, token_loss_mask
+    #   state (array), image (dict[str, array]), image_mask (dict[str, array])
+    # plus optional per-model fields:
+    #   - VLA models (pi0 / pi0.5 / pi0-fast): tokenized_prompt, tokenized_prompt_mask
+    #   - pi0-fast additionally: token_ar_mask, token_loss_mask
+    #   - non-language models (Diffusion Policy): none of the above
+    # Everything except state is conditional so DP (no prompt) coexists with pi0-fast
+    # (prompt + autoregressive masks) without the collator knowing which it is.
     out = {}
 
-    # Stack flat array fields (include optional pi0-fast fields if present)
-    flat_keys = ["state", "tokenized_prompt", "tokenized_prompt_mask"]
-    flat_keys.extend(k for k in ["token_ar_mask", "token_loss_mask"] if k in singles[0])
-    for k in flat_keys:
-        out[k] = jnp.stack([jnp.asarray(ex[k]) for ex in singles], axis=0)
+    # state is always present; prompt / mask fields are stacked when they show up.
+    out["state"] = jnp.stack([jnp.asarray(ex["state"]) for ex in singles], axis=0)
+    optional_keys = ["tokenized_prompt", "tokenized_prompt_mask", "token_ar_mask", "token_loss_mask", "lang_emb"]
+    for k in optional_keys:
+        if k in singles[0]:
+            out[k] = jnp.stack([jnp.asarray(ex[k]) for ex in singles], axis=0)
 
     # Stack nested dict fields
     for k in ["image", "image_mask"]:
@@ -217,14 +220,22 @@ class Policy(BasePolicy):
     def infer_with_intermediates(self, obs: dict) -> tuple[dict, dict]:
         """Like infer_batched() but also returns intermediate activations.
 
-        Supports both PyTorch pi0/pi0.5 models (via forward hooks) and JAX pi0-fast
-        models (via unrolled autoregressive decoding).
+        Supports PyTorch pi0/pi0.5 (via forward hooks on the diffusion/expert path) and JAX
+        pi0-fast (via unrolled autoregressive decoding). Non-VLA PyTorch baselines such as
+        Diffusion Policy are rejected with a clear NotImplementedError because their
+        architectures don't expose the hook points downstream interp tooling expects.
         """
         is_fast = self._model_type == _model.ModelType.PI0_FAST and not self._is_pytorch_model
 
         if not self._is_pytorch_model and not is_fast:
             raise NotImplementedError(
                 "infer_with_intermediates requires either a PyTorch model or a JAX pi0-fast model"
+            )
+        if self._is_pytorch_model and not hasattr(self._model, "sample_actions_with_intermediates"):
+            raise NotImplementedError(
+                f"{type(self._model).__name__} does not implement sample_actions_with_intermediates; "
+                "activation collection is only wired up for pi0 / pi0-FAST / pi0.5. "
+                "For non-VLA baselines (e.g., Diffusion Policy), use the normal --collect=False eval path."
             )
 
         # Make a copy since transformations may modify the inputs in place.
@@ -293,49 +304,6 @@ class Policy(BasePolicy):
                 outputs,
             )
             outputs = self._output_transform(outputs)
-        outputs["policy_timing"] = {"infer_ms": model_time * 1000}
-        return outputs, intermediates
-
-    def infer_with_intermediates_v2(self, obs: dict) -> tuple[dict, dict]:
-        """Like infer_batched() but returns v2 intermediates (selective steps, attention, adaRMS). PyTorch only."""
-        if not self._is_pytorch_model:
-            raise NotImplementedError("infer_with_intermediates_v2 is only supported for PyTorch models")
-
-        # Make a copy since transformations may modify the inputs in place.
-        inputs = jax.tree.map(lambda x: x, obs)
-
-        # 1) unbatch -> list of single-example dicts
-        eval_batch_size = int(inputs["observation/state"].shape[0])
-        singles = []
-        for i in range(eval_batch_size):
-            ex = {}
-            for k, v in inputs.items():
-                if k == "prompt":
-                    ex[k] = v[i]
-                else:
-                    ex[k] = v[i]
-            singles.append(ex)
-        # 2) run single-example transform per item
-        singles = [self._input_transform(ex) for ex in singles]
-        # 3) collate back -> batch dict
-        inputs = collate_transformed_singles(singles)
-
-        inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device), inputs)
-
-        observation = _model.Observation.from_dict(inputs)
-        start_time = time.monotonic()
-        actions, intermediates = self._model.sample_actions_with_intermediates_v2(self._pytorch_device, observation)
-        model_time = time.monotonic() - start_time
-
-        outputs = {
-            "state": inputs["state"],
-            "actions": actions,
-        }
-        outputs = jax.tree.map(
-            lambda x: np.asarray(x.detach().cpu()) if isinstance(x, torch.Tensor) else np.asarray(x),
-            outputs,
-        )
-        outputs = self._output_transform(outputs)
         outputs["policy_timing"] = {"infer_ms": model_time * 1000}
         return outputs, intermediates
 
