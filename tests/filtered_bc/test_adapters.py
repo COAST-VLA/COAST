@@ -121,8 +121,7 @@ def test_libero_rollout_eval_seeds_land_on_disjoint_init_states():
     eval_states = {(base_seed + num_episodes + i) % num_init_states for i in range(num_episodes)}
 
     assert rollout_states.isdisjoint(eval_states), (
-        f"LIBERO rollout/eval init states overlap: rollout={sorted(rollout_states)}, "
-        f"eval={sorted(eval_states)}"
+        f"LIBERO rollout/eval init states overlap: rollout={sorted(rollout_states)}, eval={sorted(eval_states)}"
     )
     assert len(rollout_states) == num_episodes
     assert len(eval_states) == num_episodes
