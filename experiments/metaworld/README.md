@@ -53,12 +53,12 @@ CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --steer \
 #     env-seed population. Run TWICE — once unsteered for baseline, once steered.
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
     --split train --num_episodes 15 --seed 30 --port 8301 \
-    --output_dir /tmp/metaworld_eval_seed30_baseline
+    --output_dir examples/metaworld/output/ML45-train-eval-seed30-baseline
 
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
     --split train --num_episodes 15 --seed 30 --port 8301 \
     --steer --steering_config experiments/metaworld/best_configs.json \
-    --output_dir /tmp/metaworld_eval_seed30_steered
+    --output_dir examples/metaworld/output/ML45-train-eval-seed30-steered
 ```
 
 ## What each step produces
@@ -69,7 +69,7 @@ MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
 | (b) | `conceptors/metaworld_conceptors.npz` | `{env_name}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
 | (d) | `experiments/metaworld/steering_results/<ts>/partial_results.jsonl` + `per_task_results.json` | Streaming SR |
 | (d) | `experiments/metaworld/best_configs.json` | Per-task winners |
-| (e) | `/tmp/metaworld_eval_seed30/results.json` | Final mean SR per task |
+| (e) | `examples/metaworld/output/ML45-train-eval-seed30-{baseline,steered}/results.json` | Final mean SR per task |
 
 ## Customizing the sweep
 

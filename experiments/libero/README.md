@@ -25,7 +25,7 @@ cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
     --task_suite_name libero_10 \
     --num_episodes 15 --seed 0 --collect --port 8100 \
     --num_workers 5 \
-    --output_dir /tmp/libero_collect_seed0
+    --output_dir examples/libero_env/output/libero_10-collect-seed0
 
 # (c) Kill the collection server
 pkill -f "scripts/serve_policy.py.*port 8100"
@@ -58,14 +58,14 @@ cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
     --task_suite_name libero_10 \
     --num_episodes 15 --seed 30 --port 8101 \
     --num_workers 5 \
-    --output_dir /tmp/libero_eval_seed30_baseline
+    --output_dir examples/libero_env/output/libero_10-eval-seed30-baseline
 
 cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
     --task_suite_name libero_10 \
     --num_episodes 15 --seed 30 --port 8101 \
     --num_workers 5 \
     --steer --steering_config experiments/libero/best_configs.json \
-    --output_dir /tmp/libero_eval_seed30_steered
+    --output_dir examples/libero_env/output/libero_10-eval-seed30-steered
 ```
 
 ## What each step produces
@@ -76,7 +76,7 @@ cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
 | (d) | `conceptors/libero_conceptors.npz` | ~2k keys: `{task}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
 | (f) | `experiments/libero/steering_results/<ts>/partial_results.jsonl` + `per_task_results.json` | Streaming per-condition SR |
 | (f) | `experiments/libero/best_configs.json` | Per-task `(layer, α, β, strategy)` + baseline and steered SR |
-| (g) | `/tmp/libero_eval_seed30/results.json` | Final baseline / steered mean SR per task |
+| (g) | `examples/libero_env/output/libero_10-eval-seed30-{baseline,steered}/results.json` | Final baseline / steered mean SR per task |
 
 ## Customizing the sweep
 
