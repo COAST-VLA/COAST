@@ -166,8 +166,31 @@ Pre-collected datasets:
 
 ## Results
 
+### pi0.5 training curve (`pi05_libero` @ 2k vs 3k vs 9k)
+
 ![Comparison of Mean Performance](figures/compare_means_2000_vs_3000_vs_9000.png)
 ![Per-task comparison](figures/compare_per_task_2000_vs_3000_vs_9000.png)
+
+Raw numbers: [`figures/results_2000_3000_9000.json`](figures/results_2000_3000_9000.json).
+
+### Diffusion Policy (`dp_libero_lang_v1` @ 30k)
+
+Eval of the step-30000 checkpoint on `libero_10`, 15 episodes per task (150 total). Training crashed at step 30k before the 100k-step target, so this is a partial-run snapshot — not a final head-to-head with the pi0.5 rows above (those are from `physical-intelligence/libero`-trained runs on the same suite). Mean success rate: **0.067 (7%)**.
+
+| task_id | task | success rate |
+|---------|------|--------------|
+| 3 | KITCHEN_SCENE4 put the black bowl in the bottom drawer of the cabinet and close it | 0.27 (4/15) |
+| 2 | KITCHEN_SCENE3 turn on the stove and put the moka pot on it | 0.13 (2/15) |
+| 9 | KITCHEN_SCENE6 put the yellow and white mug in the microwave and close it | 0.13 (2/15) |
+| 1 | LIVING_ROOM_SCENE2 put both the cream cheese box and the butter in the basket | 0.07 (1/15) |
+| 8 | KITCHEN_SCENE8 put both moka pots on the stove | 0.07 (1/15) |
+| 0 | LIVING_ROOM_SCENE2 put both the alphabet soup and the tomato sauce in the basket | 0.00 |
+| 4 | LIVING_ROOM_SCENE5 put the white mug on the left plate and put the yellow and white mug on the right plate | 0.00 |
+| 5 | STUDY_SCENE1 pick up the book and place it in the back compartment of the caddy | 0.00 |
+| 6 | LIVING_ROOM_SCENE6 put the white mug on the plate and put the chocolate pudding to the right of the plate | 0.00 |
+| 7 | LIVING_ROOM_SCENE1 put both the alphabet soup and the cream cheese box in the basket | 0.00 |
+
+Raw numbers: [`figures/results_dp_libero_30000.json`](figures/results_dp_libero_30000.json).
 
 ## Testing
 
