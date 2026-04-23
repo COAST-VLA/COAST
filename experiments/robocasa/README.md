@@ -16,11 +16,12 @@ disjoint scene distributions.
 ```bash
 bash experiments/robocasa/run_end_to_end.sh
 # or override the defaults via env vars:
-#   GPU=1 TASK_SET=atomic_seen SPLIT=pretrain NUM_EPISODES=15 \
+#   GPU=1 TASK_SET=atomic_seen SPLIT=pretrain NUM_EPISODES=15 NUM_WORKERS=10 \
 #       SEED_COLLECT=0 SEED_SWEEP=15 SEED_EVAL=30 \
 #       bash experiments/robocasa/run_end_to_end.sh
 #
-# Defaults: TASK_SET=subset, SPLIT=pretrain, NUM_EPISODES=15.
+# Defaults: TASK_SET=subset, SPLIT=pretrain, NUM_EPISODES=15, NUM_WORKERS=10,
+# SEED_COLLECT=0, SEED_SWEEP=15, SEED_EVAL=30.
 ```
 
 Logs land in `experiments/robocasa/run_logs/`. Runs the 7 stages below sequentially and prints a final baseline-vs-steered SR line. Read on for the stage-by-stage commands the script wraps.
