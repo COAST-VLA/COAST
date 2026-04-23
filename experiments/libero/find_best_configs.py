@@ -242,7 +242,9 @@ def main(args: Args) -> None:
         logger.info("TASK: %s", task)
 
         # Baseline
-        sr = _run_one_eval(task, args.task_suite_name, args.num_episodes, args.port, task_dir / "baseline", steer=False, seed=args.seed)
+        sr = _run_one_eval(
+            task, args.task_suite_name, args.num_episodes, args.port, task_dir / "baseline", steer=False, seed=args.seed
+        )
         per_task_results[task]["baseline"] = sr
         with open(partial_results_path, "a") as f:
             f.write(json.dumps({"task": task, "condition": "baseline", "success_rate": sr}) + "\n")
