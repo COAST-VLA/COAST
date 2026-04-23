@@ -75,14 +75,6 @@ python3 scripts/main.py --remote_host=<server_ip> --remote_port=8001 \
 | (g) | `results/eval_<ts>.csv` (on the DROID laptop), one per condition | `success` (0/1), `duration`, `video_filename` per rollout |
 | (h) | `results/eval_<ts>.csv` (baseline) | Same schema |
 
-## Why there's no `find_best_configs.py`
-
-Real-robot eval doesn't have enough throughput to support the LIBERO-style
-grid (10 tasks × ~20 conditions × 10 eps = 2000 rollouts is 40+ hours of
-operator time). The `select_parameters.py` diagnostic uses only the
-conceptor NPZ — no rollouts, no GPU — to cut the search space down to ~3-5
-(layer, α, β) candidates that the operator can actually test.
-
 ## Customizing `select_parameters.py`
 
 | Flag | Default | Notes |
@@ -96,14 +88,30 @@ Lower overlap → less room for steering to help; higher overlap → too much
 noise. 0.85-0.95 is the band the diagnostic ships with and matches what
 was used in published DROID work.
 
-## Seeding notes
+## Skipping activation collection
 
-DROID is interactive — there's no notion of a "canonical initial state" to
-offset into like LIBERO. Each rollout starts at whatever physical scene
-the operator has set up. Held-out separation between collection and eval
-is therefore a matter of **different real-world setups / scenes / objects
-between collection day and eval day**, not a `--seed` value. Budget for
-this explicitly when planning the operator schedule.
+No pre-built DROID conceptor NPZ is published. Collection is mandatory —
+there's no equivalent of the sim HF downloads for real-robot rollouts.
+
+## Notes
+
+- **Why no `find_best_configs.py`.** Real-robot eval doesn't have enough
+  throughput to support the LIBERO-style grid (10 tasks × ~20 conditions
+  × 10 eps = 2000 rollouts ≈ 40+ hours of operator time).
+  `select_parameters.py` uses only the conceptor NPZ — no rollouts, no
+  GPU — to cut the search space down to ~3-5 (layer, α, β) candidates
+  that the operator can actually test.
+- **Held-out separation is physical, not seed-based.** DROID is
+  interactive — there's no canonical initial-state list to offset into
+  like LIBERO. Each rollout starts from whatever physical scene the
+  operator has set up. Held-out separation between collection and eval
+  means different real-world setups / scenes / objects between
+  collection day and eval day. Budget for this explicitly when planning
+  the operator schedule.
+- **Old NPZs may be missing per-step keys 1-8.** The current
+  `DEFAULT_PER_STEP_INDICES` is all 10 denoising steps, but NPZs built
+  before that change have only `per_step_0` / `per_step_9` → `per_step`
+  strategy will NaN. Rebuild via step (d) if you hit this.
 
 ## See also
 

@@ -108,6 +108,20 @@ Then start at (e). As with LIBERO, the held-out split in (f)/(g) is only
 scientifically clean if you know the pre-built NPZ's collection seed and
 pick disjoint sweep/eval seeds.
 
+## Notes
+
+- **Kitchen asset download required.** RoboCasa needs
+  `robocasa.scripts.download_kitchen_assets` (~10 GB) run once inside
+  `examples/robocasa_env/.venv` before any collection or eval will work.
+- **Partial sweep recovery.** If a sweep crashes partway, the partial
+  JSONL at `experiments/robocasa/steering_results/<ts>/partial_results.jsonl`
+  is valid — re-aggregate by grouping on task, picking argmax steered SR
+  per task, and emitting `best_configs.json` from the survivors.
+- **Old NPZs may be missing per-step keys 1-8.** The current
+  `DEFAULT_PER_STEP_INDICES` is all 10 denoising steps, but NPZs built
+  before that change have only `per_step_0` / `per_step_9` → `per_step`
+  strategy will NaN. Rebuild via step (d) if you hit this.
+
 ## See also
 
 - `examples/robocasa_env/README.md` — end-user `--steer` flag documentation.

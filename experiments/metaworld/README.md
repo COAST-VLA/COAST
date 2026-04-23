@@ -105,13 +105,21 @@ Then start at (c). As with LIBERO / RoboCasa, the held-out split in (d)/(e)
 is only scientifically clean if you know the pre-built NPZ's collection
 seed and pick disjoint sweep/eval seeds.
 
-## Steering is WebSocket-only
+## Notes
 
-`--steer` requires a steering-capable server and is incompatible with
-in-process `--collect` (which bypasses `SteeredPolicyWrapper` entirely by
-design). If you need both, do collection first (step a), then start the
-steering server (step c), then run the WebSocket-based sweep / eval
-(steps d-e).
+- **Steering is WebSocket-only.** `--steer` requires a steering-capable
+  server and is incompatible with in-process `--collect` (which bypasses
+  `SteeredPolicyWrapper` entirely by design). The pipeline above handles
+  this by putting collection first (step a, in-process, no server),
+  before any `--steer` work — keep that order.
+- **Partial sweep recovery.** If a sweep crashes partway, the partial
+  JSONL at `experiments/metaworld/steering_results/<ts>/partial_results.jsonl`
+  is valid — re-aggregate by grouping on task, picking argmax steered SR
+  per task, and emitting `best_configs.json` from the survivors.
+- **Old NPZs may be missing per-step keys 1-8.** The current
+  `DEFAULT_PER_STEP_INDICES` is all 10 denoising steps, but NPZs built
+  before that change have only `per_step_0` / `per_step_9` → `per_step`
+  strategy will NaN. Rebuild via step (b) if you hit this.
 
 ## See also
 

@@ -109,15 +109,16 @@ meaningful if you know the seed used for the NPZ's underlying collection —
 pick a sweep/eval seed disjoint from it. When in doubt, re-collect (steps
 (a)-(d)) yourself for scientifically clean results.
 
-## Rebuilding `best_configs.json` from partial sweep output
+## Notes
 
-If a sweep crashes partway, the partial JSONL is valid — re-aggregate:
-
-```python
-import json, pathlib
-rows = [json.loads(l) for l in open("experiments/libero/steering_results/<ts>/partial_results.jsonl")]
-# ... group by task, pick argmax, emit best_configs.json
-```
+- **Partial sweep recovery.** If a sweep crashes partway, the partial
+  JSONL at `experiments/libero/steering_results/<ts>/partial_results.jsonl`
+  is valid — re-aggregate by grouping on task, picking argmax steered SR
+  per task, and emitting `best_configs.json` from the survivors.
+- **Old NPZs may be missing per-step keys 1-8.** The current
+  `DEFAULT_PER_STEP_INDICES` is all 10 denoising steps, but NPZs built
+  before that change have only `per_step_0` / `per_step_9` → `per_step`
+  strategy will NaN. Rebuild via step (d) if you hit this.
 
 ## See also
 
