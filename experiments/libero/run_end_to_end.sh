@@ -24,7 +24,7 @@
 #   SEED_COLLECT   seed for collection  (default 0)
 #   SEED_SWEEP     seed for sweep       (default 15)
 #   SEED_EVAL      seed for final eval  (default 30)
-#   NUM_WORKERS    subprocess concurrency for eval_all.py (default 5)
+#   NUM_WORKERS    subprocess concurrency for eval_all.py (default 10)
 #   COLLECT_PORT   port for the collection server (default 8100)
 #   EVAL_PORT      port for the final-eval steering server (default 8101)
 
@@ -36,7 +36,7 @@ NUM_EPISODES="${NUM_EPISODES:-15}"
 SEED_COLLECT="${SEED_COLLECT:-0}"
 SEED_SWEEP="${SEED_SWEEP:-15}"
 SEED_EVAL="${SEED_EVAL:-30}"
-NUM_WORKERS="${NUM_WORKERS:-5}"
+NUM_WORKERS="${NUM_WORKERS:-10}"
 COLLECT_PORT="${COLLECT_PORT:-8100}"
 EVAL_PORT="${EVAL_PORT:-8101}"
 
