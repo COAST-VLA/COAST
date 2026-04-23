@@ -20,12 +20,13 @@ CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --collect_activa
     policy:checkpoint --policy.config pi05_libero \
     --policy.dir checkpoints/openpi-libero-2000
 
-# (b) Collect activations on every libero_10 task: seed=0 → init-state slots 0..14
+# (b) Collect activations on every libero_10 task: seed=0 → init-state slots 0..14.
+#     The server's --output_dir is the authoritative sink; the client's per-rollout
+#     videos default under examples/libero_env/output/ (see examples/libero_env/README.md).
 cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
     --task_suite_name libero_10 \
     --num_episodes 15 --seed 0 --collect --port 8100 \
-    --num_workers 5 \
-    --output_dir examples/libero_env/output/libero_10-collect-seed0
+    --num_workers 5
 
 # (c) Kill the collection server
 pkill -f "scripts/serve_policy.py.*port 8100"
@@ -54,18 +55,17 @@ CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --steer \
 # (g) Final held-out eval with per-task tuned configs: seed=30 → slots 30..44
 #     (disjoint from both (b) and (e)). Run TWICE — once without --steer for
 #     baseline, once with the --steer / --steering_config pair.
+#     Videos land under the default examples/libero_env/output/ tree.
 cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
     --task_suite_name libero_10 \
     --num_episodes 15 --seed 30 --port 8101 \
-    --num_workers 5 \
-    --output_dir examples/libero_env/output/libero_10-eval-seed30-baseline
+    --num_workers 5
 
 cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
     --task_suite_name libero_10 \
     --num_episodes 15 --seed 30 --port 8101 \
     --num_workers 5 \
-    --steer --steering_config experiments/libero/best_configs.json \
-    --output_dir examples/libero_env/output/libero_10-eval-seed30-steered
+    --steer --steering_config experiments/libero/best_configs.json
 ```
 
 ## What each step produces
@@ -76,7 +76,7 @@ cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
 | (d) | `conceptors/libero_conceptors.npz` | ~2k keys: `{task}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
 | (f) | `experiments/libero/steering_results/<ts>/partial_results.jsonl` + `per_task_results.json` | Streaming per-condition SR |
 | (f) | `experiments/libero/best_configs.json` | Per-task `(layer, α, β, strategy)` + baseline and steered SR |
-| (g) | `examples/libero_env/output/libero_10-eval-seed30-{baseline,steered}/results.json` | Final baseline / steered mean SR per task |
+| (g) | `examples/libero_env/output/libero_10/results.json` | Final mean SR per task (rewritten by each of the two runs; copy between invocations to retain both) |
 
 ## Customizing the sweep
 

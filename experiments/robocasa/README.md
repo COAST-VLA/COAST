@@ -20,12 +20,13 @@ CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --collect_activa
     policy:checkpoint --policy.config pi05_robocasa \
     --policy.dir checkpoints/pi05_pretrain_human300/multitask_learning/75000
 
-# (b) Collect activations on every task in the task_set: seed=0
+# (b) Collect activations on every task in the task_set: seed=0.
+#     The server's --output_dir is the authoritative sink; the client's per-rollout
+#     videos default under examples/robocasa_env/output/ (see examples/robocasa_env/README.md).
 cd examples/robocasa_env && MUJOCO_GL=egl uv run python eval_all.py \
     --task_set atomic_seen \
     --num_episodes 15 --seed 0 --collect --port 8200 \
-    --num_workers 5 \
-    --output_dir examples/robocasa_env/output/atomic_seen-collect-seed0
+    --num_workers 5
 
 # (c) Kill the collection server
 pkill -f "scripts/serve_policy.py.*port 8200"
@@ -52,18 +53,17 @@ CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --steer \
 
 # (g) Final held-out eval with per-task tuned configs: seed=30 → another disjoint
 #     scene-draw population. Run TWICE — once unsteered for baseline, once steered.
+#     Videos land under the default examples/robocasa_env/output/ tree.
 cd examples/robocasa_env && MUJOCO_GL=egl uv run python eval_all.py \
     --task_set atomic_seen \
     --num_episodes 15 --seed 30 --port 8201 \
-    --num_workers 5 \
-    --output_dir examples/robocasa_env/output/atomic_seen-eval-seed30-baseline
+    --num_workers 5
 
 cd examples/robocasa_env && MUJOCO_GL=egl uv run python eval_all.py \
     --task_set atomic_seen \
     --num_episodes 15 --seed 30 --port 8201 \
     --num_workers 5 \
-    --steer --steering_config experiments/robocasa/best_configs.json \
-    --output_dir examples/robocasa_env/output/atomic_seen-eval-seed30-steered
+    --steer --steering_config experiments/robocasa/best_configs.json
 ```
 
 ## What each step produces
@@ -74,7 +74,7 @@ cd examples/robocasa_env && MUJOCO_GL=egl uv run python eval_all.py \
 | (d) | `conceptors/robocasa_conceptors.npz` | `{env_name}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
 | (f) | `experiments/robocasa/steering_results/<ts>/partial_results.jsonl` + `per_task_results.json` | Streaming SR |
 | (f) | `experiments/robocasa/best_configs.json` | Per-task winners |
-| (g) | `examples/robocasa_env/output/atomic_seen-eval-seed30-{baseline,steered}/results.json` | Final mean SR per task |
+| (g) | `examples/robocasa_env/output/atomic_seen-pretrain/results.json` | Final mean SR per task (rewritten by each of the two runs; copy between invocations to retain both) |
 
 ## Customizing the sweep
 
