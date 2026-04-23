@@ -270,3 +270,52 @@ def test_single_task_env_reset_and_step():
         assert "cameras" in info2
     finally:
         env.close()
+
+
+@pytest.mark.manual
+def test_seed_controls_initial_state():
+    """Different ``--seed`` values yield different initial env observations.
+
+    Regression test for the claim that MetaWorld's ``env.reset(seed=...)``
+    actually randomizes object positions / joint initial angles per seed.
+    ``main.py`` uses ``env.reset(seed=args.seed + episode)``; different base
+    seeds must produce different per-episode seeds and thus different starts.
+
+    Note: only the *different-seeds → different-state* direction is asserted.
+    Same-seed determinism is brittle because successive ``reset(seed=X)`` calls
+    on a single env advance internal RNG beyond the seed specification
+    (gymnasium quirk — not something pi0.5 eval relies on).
+    """
+    env_a = make_single_task_env(
+        env_name="pick-place-v3",
+        num_envs=1,
+        width=WIDTH,
+        height=HEIGHT,
+        seed=100,
+        camera_names=["corner4"],
+    )
+    env_b = make_single_task_env(
+        env_name="pick-place-v3",
+        num_envs=1,
+        width=WIDTH,
+        height=HEIGHT,
+        seed=200,
+        camera_names=["corner4"],
+    )
+    try:
+        obs_a, _ = env_a.reset(seed=100)
+        obs_b, _ = env_b.reset(seed=200)
+
+        # Different seeds → different starts (joint angles / object pos differ).
+        delta_abs = np.abs(obs_a - obs_b)
+        n_differing = int(np.sum(delta_abs > 1e-6))
+        max_delta = float(delta_abs.max())
+        assert n_differing >= 1, (
+            f"expected seed=100 vs seed=200 to differ in at least one element, got n_differing={n_differing}"
+        )
+        assert max_delta > 1e-3, (
+            f"expected seed=100 vs seed=200 to differ by >1e-3 in at least one element, got max|Δ|={max_delta:.3e}"
+        )
+    finally:
+        env_a.close()
+        env_b.close()

@@ -65,6 +65,58 @@ class TestLiberoEnv:
         finally:
             env.close()
 
+    def test_seed_selects_different_initial_state(self, tmp_path: pathlib.Path) -> None:
+        """``--seed`` offsets into ``initial_states`` so different seeds start
+        rollouts from different canonical LIBERO states.
+
+        Regression test for the bug where ``--seed`` only affected env physics
+        RNG and ``initial_states[episode]`` always hit the first ``num_episodes``
+        canonical slots regardless of seed.
+        """
+
+        class StubPolicy:
+            def infer(self, element: dict) -> dict:
+                return {"actions": np.zeros((10, 7), dtype=np.float32)}
+
+        def first_obs_for_seed(seed: int) -> np.ndarray:
+            args = main.Args(
+                num_episodes=1,
+                max_steps=1,  # collected before any env.step, so the initial frame only
+                num_steps_wait=0,
+                replan_steps=1,
+                fps=2,
+                seed=seed,
+            )
+            main.eval_task(
+                task_suite_name="libero_spatial",
+                task_id=0,
+                policy=StubPolicy(),
+                args=args,
+                output_dir=str(tmp_path / f"seed_{seed}"),
+            )
+            # Read the first frame of the rendered video.
+            import imageio.v3 as iio
+
+            video = sorted((tmp_path / f"seed_{seed}").rglob("*.mp4"))[0]
+            frames = iio.imread(video)  # (T, H, W, 3) uint8
+            return frames[0]
+
+        # Different seeds → different canonical initial state → visually distinct frame 0.
+        frame_seed_0 = first_obs_for_seed(seed=0)
+        frame_seed_5 = first_obs_for_seed(seed=5)
+        # Large pixel delta confirms the env rendered a different initial scene.
+        diff = np.abs(
+            frame_seed_0.astype(np.int32) - frame_seed_5.astype(np.int32)
+        ).mean()
+        assert diff > 1.0, (
+            f"expected seed=0 vs seed=5 to render different initial frames "
+            f"(mean |Δpixel| > 1.0), got {diff:.3f}"
+        )
+
+        # Same seed must reproduce the same initial frame exactly.
+        frame_seed_0_repeat = first_obs_for_seed(seed=0)
+        np.testing.assert_array_equal(frame_seed_0, frame_seed_0_repeat)
+
     def test_eval_task_runs_with_stub_policy_and_writes_video(
         self, tmp_path: pathlib.Path
     ) -> None:
