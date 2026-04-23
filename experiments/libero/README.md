@@ -30,31 +30,42 @@ cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
 # (c) Kill the collection server
 pkill -f "scripts/serve_policy.py.*port 8100"
 
-# (d) Build the conceptor NPZ from the collected activations (CPU-only, ~5 min)
+# (d) Build the conceptor NPZ from the collected activations (CPU-only, ~5 min).
+#     Output path MUST be `conceptors/libero_conceptors.npz` — this is the
+#     hardcoded path the sweep driver in (e) loads.
 CUDA_VISIBLE_DEVICES="" uv run python experiments/libero/compute_conceptors.py \
     --activation_root activations \
     --output_path conceptors/libero_conceptors.npz
 
-# (e) Start the steering server with the new NPZ, port 8101
+# (e) Sweep hyperparameters: seed=15 → init-state slots 15..29 (DISJOINT from
+#     collection). The sweep driver loads the policy itself and starts its own
+#     in-process steering server on `--port` (default 8003) — no separate
+#     serve_policy.py invocation needed. Produces best_configs.json.
+CUDA_VISIBLE_DEVICES=0 uv run python experiments/libero/find_best_configs.py \
+    --num_episodes 15 --seed 15
+
+# (f) Start a steering server for the final held-out eval (the sweep driver
+#     exited after (e) and took its in-process server with it).
 CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --steer \
     --conceptor_npz conceptors/libero_conceptors.npz --port 8101 \
     policy:checkpoint --policy.config pi05_libero \
     --policy.dir checkpoints/openpi-libero-2000
 
-# (f) Sweep hyperparameters: seed=15 → init-state slots 15..29 (DISJOINT from
-#     collection). This produces best_configs.json, the per-task winners.
-CUDA_VISIBLE_DEVICES=0 uv run python experiments/libero/find_best_configs.py \
-    --port 8101 --num_episodes 15 --seed 15
-
 # (g) Final held-out eval with per-task tuned configs: seed=30 → slots 30..44
-#     (disjoint from both (b) and (f)). Baseline + steered in one invocation.
+#     (disjoint from both (b) and (e)). Run TWICE — once without --steer for
+#     baseline, once with the --steer / --steering_config pair.
 cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
     --task_suite_name libero_10 \
     --num_episodes 15 --seed 30 --port 8101 \
     --num_workers 5 \
-    --output_dir /tmp/libero_eval_seed30
-#     Run this twice — once without --steer for baseline, once with:
-#     --steer --steering_config experiments/libero/best_configs.json
+    --output_dir /tmp/libero_eval_seed30_baseline
+
+cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
+    --task_suite_name libero_10 \
+    --num_episodes 15 --seed 30 --port 8101 \
+    --num_workers 5 \
+    --steer --steering_config experiments/libero/best_configs.json \
+    --output_dir /tmp/libero_eval_seed30_steered
 ```
 
 ## What each step produces

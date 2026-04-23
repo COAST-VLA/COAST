@@ -26,29 +26,39 @@ CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
     --policy.dir=checkpoints/openpi-metaworld-5000 \
     --collect_output_dir activations
 
-# (b) Build the conceptor NPZ (CPU-only, ~10 min)
+# (b) Build the conceptor NPZ (CPU-only, ~10 min). Output path MUST be
+#     `conceptors/metaworld_conceptors.npz` — this is the hardcoded path the
+#     sweep driver in (c) loads. Tasks with <2 failures (all-success at this
+#     checkpoint) are skipped with a warning — conceptor steering needs both
+#     classes. Pick harder tasks or collect more episodes if too many skip.
 CUDA_VISIBLE_DEVICES="" uv run python experiments/metaworld/compute_conceptors.py \
     --activation_root activations \
     --output_path conceptors/metaworld_conceptors.npz
 
-# (c) Start the steering server on GPU 0, port 8301
+# (c) Sweep hyperparameters: seed=15 → disjoint env seeds vs collection.
+#     The sweep driver loads the policy itself and starts its own in-process
+#     steering server on `--port` (default 8103). Spawns main.py per
+#     (task, condition) via WebSocket to that local server.
+CUDA_VISIBLE_DEVICES=0 uv run python experiments/metaworld/find_best_configs.py \
+    --num_episodes 10 --num_envs 10 --seed 15
+
+# (d) Start a steering server for the final held-out eval (the sweep driver
+#     exited after (c) and took its in-process server with it).
 CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --steer \
     --conceptor_npz conceptors/metaworld_conceptors.npz --port 8301 \
     policy:checkpoint --policy.config pi05_metaworld \
     --policy.dir checkpoints/openpi-metaworld-5000
 
-# (d) Sweep hyperparameters: seed=15 → disjoint env seeds vs collection.
-#     Spawns examples/metaworld/main.py per (task, condition) via WebSocket.
-CUDA_VISIBLE_DEVICES=0 uv run python experiments/metaworld/find_best_configs.py \
-    --port 8301 --num_episodes 10 --num_envs 10 --seed 15
-
 # (e) Final held-out eval with per-task tuned configs: seed=30 → another disjoint
-#     env-seed population. Run twice — once unsteered for baseline, once steered.
+#     env-seed population. Run TWICE — once unsteered for baseline, once steered.
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
     --split train --num_episodes 15 --seed 30 --port 8301 \
-    --output_dir /tmp/metaworld_eval_seed30
-#     Steered invocation adds:
-#     --steer --steering_config experiments/metaworld/best_configs.json
+    --output_dir /tmp/metaworld_eval_seed30_baseline
+
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+    --split train --num_episodes 15 --seed 30 --port 8301 \
+    --steer --steering_config experiments/metaworld/best_configs.json \
+    --output_dir /tmp/metaworld_eval_seed30_steered
 ```
 
 ## What each step produces

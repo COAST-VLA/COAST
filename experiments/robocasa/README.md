@@ -30,30 +30,40 @@ cd examples/robocasa_env && MUJOCO_GL=egl uv run python eval_all.py \
 # (c) Kill the collection server
 pkill -f "scripts/serve_policy.py.*port 8200"
 
-# (d) Build the conceptor NPZ (CPU-only, ~5 min)
+# (d) Build the conceptor NPZ (CPU-only, ~5 min). Output path MUST be
+#     `conceptors/robocasa_conceptors.npz` — this is the hardcoded path the
+#     sweep driver in (e) loads.
 CUDA_VISIBLE_DEVICES="" uv run python experiments/robocasa/compute_conceptors.py \
     --activation_root activations \
     --output_path conceptors/robocasa_conceptors.npz
 
-# (e) Start the steering server with the new NPZ, port 8201
+# (e) Sweep hyperparameters: seed=15 → scene draws disjoint from collection.
+#     The sweep driver loads the policy itself and starts its own in-process
+#     steering server on `--port` (default 8203). Produces best_configs.json.
+CUDA_VISIBLE_DEVICES=0 uv run python experiments/robocasa/find_best_configs.py \
+    --num_episodes 15 --seed 15
+
+# (f) Start a steering server for the final held-out eval (the sweep driver
+#     exited after (e) and took its in-process server with it).
 CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --steer \
     --conceptor_npz conceptors/robocasa_conceptors.npz --port 8201 \
     policy:checkpoint --policy.config pi05_robocasa \
     --policy.dir checkpoints/pi05_pretrain_human300/multitask_learning/75000
 
-# (f) Sweep hyperparameters: seed=15 → scene draws disjoint from collection.
-CUDA_VISIBLE_DEVICES=0 uv run python experiments/robocasa/find_best_configs.py \
-    --port 8201 --num_episodes 15 --seed 15
-
 # (g) Final held-out eval with per-task tuned configs: seed=30 → another disjoint
-#     scene-draw population. Run twice — once unsteered for baseline, once steered.
+#     scene-draw population. Run TWICE — once unsteered for baseline, once steered.
 cd examples/robocasa_env && MUJOCO_GL=egl uv run python eval_all.py \
     --task_set atomic_seen \
     --num_episodes 15 --seed 30 --port 8201 \
     --num_workers 5 \
-    --output_dir /tmp/robocasa_eval_seed30
-#     Steered invocation adds:
-#     --steer --steering_config experiments/robocasa/best_configs.json
+    --output_dir /tmp/robocasa_eval_seed30_baseline
+
+cd examples/robocasa_env && MUJOCO_GL=egl uv run python eval_all.py \
+    --task_set atomic_seen \
+    --num_episodes 15 --seed 30 --port 8201 \
+    --num_workers 5 \
+    --steer --steering_config experiments/robocasa/best_configs.json \
+    --output_dir /tmp/robocasa_eval_seed30_steered
 ```
 
 ## What each step produces
