@@ -87,9 +87,11 @@ uv run scripts/serve_policy.py --pytorch policy:checkpoint \
     --policy.dir=/path/to/checkpoint
 ```
 
-The `dp_metaworld_lang_v1` config reproduces the 4× L40 reference training run (`batch_size=256`, `keep_period=10_000`, all other hyperparameters inherited from `dp_metaworld`):
+The `dp_metaworld_lang_v1` config reproduces the 4× L40 reference training run (`batch_size=256`, `keep_period=10_000`, all other hyperparameters inherited from `dp_metaworld`). Norm stats are looked up by config name, so run `compute_norm_stats` once for `dp_metaworld_lang_v1` as well:
 
 ```bash
+uv run scripts/compute_norm_stats.py --config-name dp_metaworld_lang_v1
+
 CUDA_VISIBLE_DEVICES=0,1,2,3 uv run torchrun --standalone --nnodes=1 --nproc_per_node=4 \
     scripts/train_pytorch.py dp_metaworld_lang_v1
 ```
