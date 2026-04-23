@@ -186,11 +186,19 @@ def run_task(args: Args) -> Dict[str, Any]:
     max_steps = _get_max_steps(args.task_suite_name, args.max_steps)
     env = _make_env(task, LIBERO_ENV_RESOLUTION, args.seed)
 
+    # --seed also acts as an offset into LIBERO's canonical initial-state list so that
+    # different seeds evaluate on disjoint start conditions. Mirrors the fix in
+    # examples/libero_env/main.py from PR #48. Without this, rollout and eval runs
+    # (which pass different --seed) would silently land on the same initial states,
+    # because LIBERO's init-state selection would only depend on the loop index.
+    num_init_states = len(initial_states)
+
     episodes: List[Dict[str, Any]] = []
     try:
         for episode in range(args.num_episodes):
+            state_idx = (args.seed + episode) % num_init_states
             env.reset()
-            obs = env.set_init_state(initial_states[episode])
+            obs = env.set_init_state(initial_states[state_idx])
             action_plan: Deque[np.ndarray] = collections.deque()
             success = False
             total_reward = 0.0

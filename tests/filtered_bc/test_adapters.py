@@ -102,6 +102,32 @@ def test_get_adapter_rejects_unknown_env():
         get_adapter("xland")
 
 
+def test_libero_rollout_eval_seeds_land_on_disjoint_init_states():
+    """Guard against the regression where ``10_000 % 50 == 0`` made rollout and eval
+    collapse onto identical LIBERO initial states.
+
+    The LIBERO client picks ``initial_states[(seed + ep) % num_init_states]``, with
+    ``num_init_states = 50`` for every standard suite. With the old ``+ 10_000`` eval
+    offset, rollout and eval indexed the same 15 states (20..34) on every task — the
+    finetuned policy was silently evaluated on its training scenes.
+
+    The adapter now offsets eval by ``num_episodes`` so the two windows stay disjoint
+    mod 50 as long as ``2 * num_episodes <= 50`` (true for every run we care about)."""
+    num_init_states = 50
+    num_episodes = 15
+    base_seed = 69_420
+
+    rollout_states = {(base_seed + i) % num_init_states for i in range(num_episodes)}
+    eval_states = {(base_seed + num_episodes + i) % num_init_states for i in range(num_episodes)}
+
+    assert rollout_states.isdisjoint(eval_states), (
+        f"LIBERO rollout/eval init states overlap: rollout={sorted(rollout_states)}, "
+        f"eval={sorted(eval_states)}"
+    )
+    assert len(rollout_states) == num_episodes
+    assert len(eval_states) == num_episodes
+
+
 def test_env_adapter_protocol_contract():
     """Each concrete adapter should satisfy the EnvAdapter Protocol duck-type."""
     try:

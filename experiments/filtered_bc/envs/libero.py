@@ -236,7 +236,14 @@ class LiberoAdapter:
     ) -> list[EpisodeRollout]:
         suite, tid = _parse_task(task_name)
         # Eval offsets the seed so held-out rollouts are disjoint from training.
-        seed = cfg.seed + (10_000 if eval_only else 0)
+        # LIBERO-specific: the client picks initial states via ``(seed + ep) % num_init_states``
+        # (typically num_init_states=50), so the offset must be coprime with (or at least
+        # not a multiple of) num_init_states. 10_000 % 50 == 0 would alias rollout and
+        # eval to identical init states — use ``num_episodes`` instead, which keeps the
+        # rollout window [seed, seed+num_episodes) disjoint from the eval window
+        # [seed+num_episodes, seed+2*num_episodes) modulo num_init_states as long as
+        # 2 * num_episodes <= num_init_states (50 for all standard LIBERO suites).
+        seed = cfg.seed + (num_episodes if eval_only else 0)
         config_name = cfg.extra.get("config_name", self.base_config)
 
         port = _pick_free_port()
