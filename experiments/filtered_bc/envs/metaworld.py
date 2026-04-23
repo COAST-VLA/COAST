@@ -105,7 +105,13 @@ def _rollout_impl(
                     "prompt": [prompt] * num_envs,
                 }
                 result = policy.infer(obs_dict)
-                action_chunk = np.clip(result["actions"], -1.0, 1.0).astype(np.float32)
+                # Training targets must be the *raw* policy outputs, not the clipped ones —
+                # otherwise filtered-BC self-distillation has a corrective gradient pulling
+                # the policy away from its own saturated behaviour, independent of whether
+                # LoRA init is zero. The env clips internally at step time anyway, so we
+                # only clip the copy we dispatch to env.step.
+                raw_action_chunk = np.asarray(result["actions"], dtype=np.float32)
+                exec_action_chunk = np.clip(raw_action_chunk, -1.0, 1.0)
 
                 if record_samples:
                     for env_id in range(num_envs):
@@ -117,12 +123,12 @@ def _rollout_impl(
                                 wrist_image=np.asarray(camera_views["gripperPOV"][env_id], dtype=np.uint8).copy(),
                                 state=obs_dict["observation/state"][env_id].copy(),
                                 prompt=prompt,
-                                action_chunk=action_chunk[env_id].copy(),
+                                action_chunk=raw_action_chunk[env_id].copy(),
                             )
                         )
 
                 for t in range(cfg.replan_steps):
-                    action_plan.append(action_chunk[:, t, :])
+                    action_plan.append(exec_action_chunk[:, t, :])
 
             action = action_plan.popleft()
             obs, reward, terminated, truncated, info = env.step(action)

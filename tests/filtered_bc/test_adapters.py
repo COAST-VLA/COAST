@@ -102,7 +102,8 @@ def test_get_adapter_rejects_unknown_env():
         get_adapter("xland")
 
 
-def test_libero_rollout_eval_seeds_land_on_disjoint_init_states():
+@pytest.mark.parametrize("num_episodes", [15, 20, 25])
+def test_libero_rollout_eval_seeds_land_on_disjoint_init_states(num_episodes: int):
     """Guard against the regression where ``10_000 % 50 == 0`` made rollout and eval
     collapse onto identical LIBERO initial states.
 
@@ -112,19 +113,36 @@ def test_libero_rollout_eval_seeds_land_on_disjoint_init_states():
     finetuned policy was silently evaluated on its training scenes.
 
     The adapter now offsets eval by ``num_episodes`` so the two windows stay disjoint
-    mod 50 as long as ``2 * num_episodes <= 50`` (true for every run we care about)."""
+    mod 50 as long as ``2 * num_episodes <= 50``. That caps the per-side run size at
+    25; anything larger must either change the offset scheme or use a suite with more
+    than 50 canonical init states."""
     num_init_states = 50
-    num_episodes = 15
     base_seed = 69_420
 
     rollout_states = {(base_seed + i) % num_init_states for i in range(num_episodes)}
     eval_states = {(base_seed + num_episodes + i) % num_init_states for i in range(num_episodes)}
 
     assert rollout_states.isdisjoint(eval_states), (
-        f"LIBERO rollout/eval init states overlap: rollout={sorted(rollout_states)}, eval={sorted(eval_states)}"
+        f"LIBERO rollout/eval init states overlap at N={num_episodes}: rollout={sorted(rollout_states)}, eval={sorted(eval_states)}"
     )
     assert len(rollout_states) == num_episodes
     assert len(eval_states) == num_episodes
+
+
+def test_libero_seed_scheme_breaks_above_25():
+    """Explicit contract test: N=26 exceeds the disjoint-mod-50 capacity by 2, so
+    rollout and eval overlap on exactly 2 states. If you need N>25 per side, add a
+    new offset strategy rather than quietly letting this break."""
+    num_init_states = 50
+    num_episodes = 26
+    base_seed = 69_420
+
+    rollout_states = {(base_seed + i) % num_init_states for i in range(num_episodes)}
+    eval_states = {(base_seed + num_episodes + i) % num_init_states for i in range(num_episodes)}
+
+    assert not rollout_states.isdisjoint(eval_states), (
+        "If this ever becomes disjoint, someone changed the offset scheme — update the N<=25 cap docs accordingly."
+    )
 
 
 def test_env_adapter_protocol_contract():
