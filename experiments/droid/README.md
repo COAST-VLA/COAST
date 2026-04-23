@@ -12,6 +12,18 @@ The workflow is **1 server + 1 build + 1 diagnostic + N manual rollouts**,
 with collection, diagnostic narrowing, and steered eval all separated in
 time (collection typically happens on day 0; steered eval on day 1+).
 
+## Semi-automated driver (wraps all commands below)
+
+```bash
+bash experiments/droid/run_end_to_end.sh
+```
+
+Automates the GPU-host steps (server start/stop, NPZ build, diagnostic
+narrower) and pauses with `ENTER`-to-continue prompts at each manual
+step (operator rollouts on the DROID laptop). Logs land in
+`experiments/droid/run_logs/`. Read on for the stage-by-stage commands
+it wraps.
+
 ## Commands
 
 ```bash

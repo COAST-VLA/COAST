@@ -11,6 +11,18 @@ Different seeds → genuinely different kitchen layouts / object positions, so
 collection (seed `0`), sweep (seed `15`), and final eval (seed `30`) sample
 disjoint scene distributions.
 
+## One-liner (wraps all commands below)
+
+```bash
+bash experiments/robocasa/run_end_to_end.sh
+# or override the defaults via env vars:
+#   GPU=1 NUM_EPISODES=10 TASK_SET=atomic_seen SPLIT=pretrain \
+#       SEED_COLLECT=0 SEED_SWEEP=15 SEED_EVAL=30 \
+#       bash experiments/robocasa/run_end_to_end.sh
+```
+
+Logs land in `experiments/robocasa/run_logs/`. Runs the 7 stages below sequentially and prints a final baseline-vs-steered SR line. Read on for the stage-by-stage commands the script wraps.
+
 ## Commands
 
 ```bash

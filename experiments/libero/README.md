@@ -11,6 +11,17 @@ semantics, episode `k` pulls `initial_states[(seed + k) % N]`, so seeds
 `0 / 15 / 30` with `--num_episodes 15` give three non-overlapping 15-state
 windows on every libero_10 task (N = 50 canonical states per task).
 
+## One-liner (wraps all commands below)
+
+```bash
+bash experiments/libero/run_end_to_end.sh
+# or override the defaults via env vars:
+#   GPU=1 NUM_EPISODES=10 SEED_COLLECT=0 SEED_SWEEP=15 SEED_EVAL=30 \
+#       bash experiments/libero/run_end_to_end.sh
+```
+
+Logs land in `experiments/libero/run_logs/`. Runs the 7 stages below sequentially and prints a final baseline-vs-steered SR line. Read on for the stage-by-stage commands the script wraps.
+
 ## Commands
 
 ```bash
