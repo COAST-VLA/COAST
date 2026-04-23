@@ -310,8 +310,11 @@ def test_seed_controls_initial_state():
         delta_abs = np.abs(obs_a - obs_b)
         n_differing = int(np.sum(delta_abs > 1e-6))
         max_delta = float(delta_abs.max())
-        assert n_differing >= 1 and max_delta > 1e-3, (
-            f"expected seed=100 vs seed=200 to differ, got n_differing={n_differing}, max|Δ|={max_delta:.3e}"
+        assert n_differing >= 1, (
+            f"expected seed=100 vs seed=200 to differ in at least one element, got n_differing={n_differing}"
+        )
+        assert max_delta > 1e-3, (
+            f"expected seed=100 vs seed=200 to differ by >1e-3 in at least one element, got max|Δ|={max_delta:.3e}"
         )
     finally:
         env_a.close()
