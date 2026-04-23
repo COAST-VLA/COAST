@@ -16,7 +16,7 @@ windows on every libero_10 task (N = 50 canonical states per task).
 ```bash
 # (a) Start collection server on GPU 0, port 8100
 CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --collect_activations \
-    --output_dir activations --port 8100 \
+    --output_dir activations/libero --port 8100 \
     policy:checkpoint --policy.config pi05_libero \
     --policy.dir checkpoints/openpi-libero-2000
 
@@ -35,7 +35,7 @@ pkill -f "scripts/serve_policy.py.*port 8100"
 #     Output path MUST be `conceptors/libero_conceptors.npz` — this is the
 #     hardcoded path the sweep driver in (e) loads.
 CUDA_VISIBLE_DEVICES="" uv run python experiments/libero/compute_conceptors.py \
-    --activation_root activations \
+    --activation_root activations/libero \
     --output_path conceptors/libero_conceptors.npz
 
 # (e) Sweep hyperparameters: seed=15 → init-state slots 15..29 (DISJOINT from
@@ -72,7 +72,7 @@ cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
 
 | Step | Output | Notes |
 |------|--------|-------|
-| (b) | `activations/openpi-libero-2000/<task>/episode_NNN_env_000/step_NNNN/*.npz` | Per-step intermediates for each of 10 tasks × 15 eps |
+| (b) | `activations/libero/openpi-libero-2000/<task>/episode_NNN_env_000/step_NNNN/*.npz` | Per-step intermediates for each of 10 tasks × 15 eps |
 | (d) | `conceptors/libero_conceptors.npz` | ~2k keys: `{task}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
 | (f) | `experiments/libero/steering_results/<ts>/partial_results.jsonl` + `per_task_results.json` | Streaming per-condition SR |
 | (f) | `experiments/libero/best_configs.json` | Per-task `(layer, α, β, strategy)` + baseline and steered SR |

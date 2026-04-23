@@ -16,7 +16,7 @@ disjoint scene distributions.
 ```bash
 # (a) Start collection server on GPU 0, port 8200
 CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --collect_activations \
-    --output_dir activations --port 8200 \
+    --output_dir activations/robocasa --port 8200 \
     policy:checkpoint --policy.config pi05_robocasa \
     --policy.dir checkpoints/pi05_pretrain_human300/multitask_learning/75000
 
@@ -35,7 +35,7 @@ pkill -f "scripts/serve_policy.py.*port 8200"
 #     `conceptors/robocasa_conceptors.npz` — this is the hardcoded path the
 #     sweep driver in (e) loads.
 CUDA_VISIBLE_DEVICES="" uv run python experiments/robocasa/compute_conceptors.py \
-    --activation_root activations \
+    --activation_root activations/robocasa \
     --output_path conceptors/robocasa_conceptors.npz
 
 # (e) Sweep hyperparameters: seed=15 → scene draws disjoint from collection.
@@ -70,7 +70,7 @@ cd examples/robocasa_env && MUJOCO_GL=egl uv run python eval_all.py \
 
 | Step | Output | Notes |
 |------|--------|-------|
-| (b) | `activations/75000/<env_name>/episode_NNN_env_000/step_NNNN/*.npz` | 15 eps × N tasks in the task_set |
+| (b) | `activations/robocasa/75000/<env_name>/episode_NNN_env_000/step_NNNN/*.npz` | 15 eps × N tasks in the task_set |
 | (d) | `conceptors/robocasa_conceptors.npz` | `{env_name}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
 | (f) | `experiments/robocasa/steering_results/<ts>/partial_results.jsonl` + `per_task_results.json` | Streaming SR |
 | (f) | `experiments/robocasa/best_configs.json` | Per-task winners |

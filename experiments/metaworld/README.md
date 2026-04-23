@@ -24,7 +24,7 @@ CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
     --collect --split train --num_envs 16 --seed 0 \
     --policy.config=pi05_metaworld \
     --policy.dir=checkpoints/openpi-metaworld-5000 \
-    --collect_output_dir activations
+    --collect_output_dir activations/metaworld
 
 # (b) Build the conceptor NPZ (CPU-only, ~10 min). Output path MUST be
 #     `conceptors/metaworld_conceptors.npz` — this is the hardcoded path the
@@ -32,7 +32,7 @@ CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
 #     checkpoint) are skipped with a warning — conceptor steering needs both
 #     classes. Pick harder tasks or collect more episodes if too many skip.
 CUDA_VISIBLE_DEVICES="" uv run python experiments/metaworld/compute_conceptors.py \
-    --activation_root activations \
+    --activation_root activations/metaworld \
     --output_path conceptors/metaworld_conceptors.npz
 
 # (c) Sweep hyperparameters: seed=15 → disjoint env seeds vs collection.
@@ -64,7 +64,7 @@ MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
 
 | Step | Output | Notes |
 |------|--------|-------|
-| (a) | `activations/openpi-metaworld-5000/<env_name>/episode_NNN_env_NNN/step_NNNN/*.npz` | 16 envs × 45 ML45-train tasks |
+| (a) | `activations/metaworld/openpi-metaworld-5000/<env_name>/episode_NNN_env_NNN/step_NNNN/*.npz` | 16 envs × 45 ML45-train tasks |
 | (b) | `conceptors/metaworld_conceptors.npz` | `{env_name}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
 | (d) | `experiments/metaworld/steering_results/<ts>/partial_results.jsonl` + `per_task_results.json` | Streaming SR |
 | (d) | `experiments/metaworld/best_configs.json` | Per-task winners |

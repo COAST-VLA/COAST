@@ -17,7 +17,7 @@ time (collection typically happens on day 0; steered eval on day 1+).
 ```bash
 # (a) Start collection server on the GPU host, port 8000
 CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --collect_activations \
-    --output_dir activations --port 8000 \
+    --output_dir activations/droid --port 8000 \
     policy:checkpoint --policy.config pi05_droid \
     --policy.dir gs://openpi-assets/checkpoints/pi05_droid
 
@@ -33,7 +33,7 @@ pkill -f "scripts/serve_policy.py.*port 8000"
 
 # (d) Build the conceptor NPZ from the collected activations (CPU-only)
 CUDA_VISIBLE_DEVICES="" uv run python experiments/droid/compute_conceptors.py \
-    --activation_root activations \
+    --activation_root activations/droid \
     --output_path conceptors/droid_conceptors.npz
 
 # (e) Run the diagnostic narrower — no robot time, no eval rollouts. Picks
@@ -69,7 +69,7 @@ python3 scripts/main.py --remote_host=<server_ip> --remote_port=8001 \
 
 | Step | Output | Notes |
 |------|--------|-------|
-| (b) | `activations/<checkpoint>/<instruction-slug>/episode_NNN_env_000/step_NNNN/*.npz` | One dir per instruction; 15-30 rollouts recommended per class |
+| (b) | `activations/droid/<checkpoint>/<instruction-slug>/episode_NNN_env_000/step_NNNN/*.npz` | One dir per instruction; 15-30 rollouts recommended per class |
 | (d) | `conceptors/droid_conceptors.npz` | `{slug}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
 | (e) | `experiments/droid/selected_params.json` | `{best_layer, selected_alphas, selected_betas, overlap_band, diagnostics}` |
 | (g) | `results/eval_<ts>.csv` (on the DROID laptop), one per condition | `success` (0/1), `duration`, `video_filename` per rollout |
