@@ -901,6 +901,84 @@ _CONFIGS = [
         pytorch_weight_path="/path/to/your/pytorch_weight_path",
         num_train_steps=30_000,
     ),
+    TrainConfig(
+        # Pi0.5 MetaWorld LoRA fine-tuning config, used by the filtered-BC baseline in
+        # experiments/filtered_bc/. Mirrors pi05_metaworld but swaps both Gemma
+        # variants to their LoRA counterparts. Trainable: LoRA adapters on PaliGemma +
+        # action expert, plus SigLip vision tower and projection heads (action_in_proj,
+        # time_mlp_*). A one-off experiment that also froze the vision tower regressed
+        # basketball-v3 from 93%/15 to 33%/15, so we leave the vision tower trainable.
+        name="pi05_metaworld_low_mem_finetune",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=32,
+            discrete_state_input=False,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotMetaworldDataConfig(
+            repo_id="brandonyang/metaworld_ml45",
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+        ),
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=100,
+            peak_lr=1e-4,
+            decay_steps=2_000,
+            decay_lr=1e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,  # EMA off for LoRA.
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        pytorch_weight_path="/path/to/your/pytorch_weight_path",
+        num_train_steps=2_000,
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=32,
+            discrete_state_input=False,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+    ),
+    TrainConfig(
+        # Pi0.5 LIBERO LoRA fine-tuning config, used by the filtered-BC baseline in
+        # experiments/filtered_bc/. Mirrors pi05_libero but swaps both Gemma variants
+        # to their LoRA counterparts. Vision tower remains trainable (same rationale
+        # as pi05_metaworld_low_mem_finetune).
+        name="pi05_libero_low_mem_finetune",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=10,
+            discrete_state_input=False,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id="physical-intelligence/libero",
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+        ),
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=100,
+            peak_lr=1e-4,
+            decay_steps=2_000,
+            decay_lr=1e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        pytorch_weight_path="/path/to/your/pytorch_weight_path",
+        num_train_steps=2_000,
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=10,
+            discrete_state_input=False,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+    ),
     #
     # Robocasa configs.
     #
@@ -911,6 +989,41 @@ _CONFIGS = [
             assets=AssetsConfig(asset_id="robocasa"),
             base_config=DataConfig(prompt_from_task=True),
         ),
+    ),
+    TrainConfig(
+        # Pi0.5 RoboCasa LoRA fine-tuning config, used by the filtered-BC baseline in
+        # experiments/filtered_bc/. Mirrors pi05_robocasa but swaps both Gemma variants
+        # to their LoRA counterparts. Vision tower remains trainable (same rationale
+        # as pi05_metaworld_low_mem_finetune).
+        name="pi05_robocasa_low_mem_finetune",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            max_token_len=96,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotRobocasaDataConfig(
+            assets=AssetsConfig(asset_id="robocasa"),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=100,
+            peak_lr=1e-4,
+            decay_steps=2_000,
+            decay_lr=1e-5,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        pytorch_weight_path="/path/to/your/pytorch_weight_path",
+        num_train_steps=2_000,
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            max_token_len=96,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
     ),
     #
     # Fine-tuning Aloha configs.
