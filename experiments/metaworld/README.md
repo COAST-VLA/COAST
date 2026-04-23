@@ -20,9 +20,11 @@ object placements / joint initial angles. Collection (seed `0`), sweep
 ```bash
 bash experiments/metaworld/run_end_to_end.sh
 # or override the defaults via env vars:
-#   GPU=1 SPLIT=subset NUM_ENVS=16 NUM_EPISODES=10 \
+#   GPU=1 SPLIT=train NUM_ENVS=16 NUM_EPISODES=15 \
 #       SEED_COLLECT=0 SEED_SWEEP=15 SEED_EVAL=30 \
 #       bash experiments/metaworld/run_end_to_end.sh
+#
+# Defaults: SPLIT=subset (26-task curated), NUM_ENVS=16, NUM_EPISODES=15.
 ```
 
 Logs land in `experiments/metaworld/run_logs/`. Runs the 5 stages below sequentially and prints a final baseline-vs-steered SR line. Read on for the stage-by-stage commands the script wraps.

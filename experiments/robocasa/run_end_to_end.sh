@@ -6,14 +6,17 @@
 #
 # Usage (from repo root):
 #   bash experiments/robocasa/run_end_to_end.sh
-#   GPU=1 SEED_COLLECT=0 SEED_SWEEP=100 SEED_EVAL=200 TASK_SET=atomic_seen \
+#   GPU=1 TASK_SET=atomic_seen SEED_COLLECT=0 SEED_SWEEP=15 SEED_EVAL=30 \
 #       bash experiments/robocasa/run_end_to_end.sh
+#
+# Defaults: TASK_SET=subset (curated list, matches examples/robocasa_env
+# eval_all.py's default), NUM_EPISODES=15.
 
 set -euo pipefail
 
 GPU="${GPU:-0}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-checkpoints/pi05_pretrain_human300/multitask_learning/75000}"
-TASK_SET="${TASK_SET:-atomic_seen}"
+TASK_SET="${TASK_SET:-subset}"
 SPLIT="${SPLIT:-pretrain}"
 NUM_EPISODES="${NUM_EPISODES:-15}"
 SEED_COLLECT="${SEED_COLLECT:-0}"

@@ -16,8 +16,11 @@ windows on every libero_10 task (N = 50 canonical states per task).
 ```bash
 bash experiments/libero/run_end_to_end.sh
 # or override the defaults via env vars:
-#   GPU=1 NUM_EPISODES=10 SEED_COLLECT=0 SEED_SWEEP=15 SEED_EVAL=30 \
+#   GPU=1 NUM_EPISODES=15 SEED_COLLECT=0 SEED_SWEEP=15 SEED_EVAL=30 \
 #       bash experiments/libero/run_end_to_end.sh
+#
+# Defaults: task_suite=libero_10 (hardcoded, the 10-task long-horizon suite),
+# NUM_EPISODES=15, NUM_WORKERS=5.
 ```
 
 Logs land in `experiments/libero/run_logs/`. Runs the 7 stages below sequentially and prints a final baseline-vs-steered SR line. Read on for the stage-by-stage commands the script wraps.

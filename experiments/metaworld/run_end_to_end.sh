@@ -7,14 +7,17 @@
 #
 # Usage (from repo root):
 #   bash experiments/metaworld/run_end_to_end.sh
-#   GPU=1 SPLIT=subset NUM_ENVS=16 SEED_COLLECT=0 SEED_SWEEP=15 SEED_EVAL=30 \
+#   GPU=1 SPLIT=train SEED_COLLECT=0 SEED_SWEEP=15 SEED_EVAL=30 \
 #       bash experiments/metaworld/run_end_to_end.sh
+#
+# Defaults: SPLIT=subset (curated 26-task set, matches examples/metaworld
+# eval_all.py's default), NUM_EPISODES=15, NUM_ENVS=16.
 
 set -euo pipefail
 
 GPU="${GPU:-0}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-checkpoints/openpi-metaworld-5000}"
-SPLIT="${SPLIT:-train}"
+SPLIT="${SPLIT:-subset}"
 NUM_ENVS="${NUM_ENVS:-16}"
 NUM_EPISODES="${NUM_EPISODES:-15}"
 SEED_COLLECT="${SEED_COLLECT:-0}"
