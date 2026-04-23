@@ -84,7 +84,7 @@ class Args:
 
     # Rollout budget (must match steering).
     num_rollouts: int = 15
-    max_steps: int = 300
+    max_steps: int | None = None
     replan_steps: int = 10
     seed: int = 69_420
 
