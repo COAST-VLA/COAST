@@ -231,7 +231,10 @@ class RoboCasaAdapter:
         seed = cfg.seed + (10_000 if eval_only else 0)
         config_name = cfg.extra.get("config_name", self.base_config)
         split = cfg.extra.get("split", self.split)
-        max_steps = cfg.extra.get("max_steps")  # None → client uses 1.5 * task_horizon
+        # Honor ``RolloutConfig.max_steps`` (typed field) before falling back to the
+        # ``extra`` override, before finally leaving ``None`` so the client uses
+        # ``1.5 * task_horizon`` as the default.
+        max_steps = cfg.max_steps if cfg.max_steps is not None else cfg.extra.get("max_steps")
 
         port = _pick_free_port()
         scratch = pathlib.Path(tempfile.mkdtemp(prefix="filtered_bc_robocasa_"))

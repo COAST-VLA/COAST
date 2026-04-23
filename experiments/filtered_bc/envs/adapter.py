@@ -56,7 +56,10 @@ class EvalResult:
 class RolloutConfig:
     width: int = 224
     height: int = 224
-    max_steps: int = 300
+    # None means "use the adapter's env-specific default": 300 for MetaWorld, the
+    # suite-specific value from ``SUITE_MAX_STEPS`` for LIBERO, and
+    # ``1.5 * task_horizon`` for RoboCasa. Pass an integer to override.
+    max_steps: int | None = None
     replan_steps: int = 10
     seed: int = 69_420
     # Extra env-specific knobs the adapter may consume (e.g. task-suite name).

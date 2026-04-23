@@ -94,7 +94,8 @@ def _rollout_impl(
         steps_to_success = np.full(num_envs, -1, dtype=int)
         action_plan: collections.deque = collections.deque()
 
-        pbar = tqdm(range(cfg.max_steps), desc=f"{desc_prefix} {task_name}")
+        max_steps = cfg.max_steps if cfg.max_steps is not None else 300
+        pbar = tqdm(range(max_steps), desc=f"{desc_prefix} {task_name}")
         for step in pbar:
             if not action_plan:
                 obs_dict = {
