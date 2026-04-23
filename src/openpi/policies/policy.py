@@ -375,10 +375,17 @@ class Policy(BasePolicy):
 
         observation = _model.Observation.from_dict(inputs)
         start_time = time.monotonic()
+        # Forward the policy's sample_kwargs (e.g., custom num_steps) so steered
+        # and unsteered runs use the same sampler configuration. Without this,
+        # a policy created via `create_trained_policy(sample_kwargs={"num_steps": 20})`
+        # would silently run the default `num_steps=10` under --steer and
+        # baseline vs steered SR could diverge for sampling reasons unrelated
+        # to the steering hook.
         actions, diagnostics = self._model.sample_actions_with_steering(
             self._pytorch_device,
             observation,
             steering_hooks=steering_hooks,
+            **self._sample_kwargs,
         )
         model_time = time.monotonic() - start_time
 

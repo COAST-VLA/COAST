@@ -439,15 +439,21 @@ class SteeredPolicyWrapper:
                 v = get_linear_direction(self._npz, task=key[0], layer=key[1])
                 hook = LinearSteeringHook(v, alpha=float(payload["alpha"]), device=self._device)
             elif strategy == "random_matched":
-                # Deterministic seed from the full cache key so repeat requests
-                # produce the same random matrix — IMPORTANT: across server
-                # restarts too, so a control-baseline sweep is reproducible.
+                # Deterministic seed from a β-INDEPENDENT slice of the cache key.
+                # The random eigenbasis is a property of the reference conceptor
+                # at (task, layer, α); β is the interpolation weight at apply
+                # time and must not shape which random matrix we sample. If β
+                # entered the seed, β sweeps would confound the interpolation
+                # effect with "we happened to sample a different random basis
+                # at this β," making the control strategy unfit for purpose.
+                #
                 # Python's built-in hash(str|tuple) is salted per-process (see
-                # PYTHONHASHSEED); a stable hash over repr(key) guarantees the
-                # seed is identical on every run.
+                # PYTHONHASHSEED); a stable hash over repr(seed_key) guarantees
+                # the seed is identical on every run.
                 import hashlib
 
-                seed = int(hashlib.blake2b(repr(key).encode("utf-8"), digest_size=4).hexdigest(), 16)
+                seed_key = (key[0], key[1], key[2], key[4])  # (task, layer, α, strategy) — drop β
+                seed = int(hashlib.blake2b(repr(seed_key).encode("utf-8"), digest_size=4).hexdigest(), 16)
                 C = get_conceptor_matrix(
                     self._npz,
                     task=key[0],

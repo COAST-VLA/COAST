@@ -693,9 +693,11 @@ def test_wrapper_random_matched_seed_stable_across_processes(mini_npz: pathlib.P
     torch.testing.assert_close(M1, M2, atol=0.0, rtol=0.0)
 
     # Stronger check: confirm the seed is derived from a stable hash, not builtin
-    # hash(). Reconstruct what the wrapper should have used:
-    key = ("taskA", 11, 0.1, 0.3, "random_matched")
-    expected_seed = int(hashlib.blake2b(repr(key).encode("utf-8"), digest_size=4).hexdigest(), 16)
+    # hash(). The seed key deliberately excludes β (see
+    # _get_or_build_hook.random_matched branch) so that β sweeps don't confound
+    # the interpolation effect with the random-basis identity.
+    seed_key = ("taskA", 11, 0.1, "random_matched")  # (task, layer, α, strategy) — β intentionally dropped
+    expected_seed = int(hashlib.blake2b(repr(seed_key).encode("utf-8"), digest_size=4).hexdigest(), 16)
     # Regenerate the random_matched matrix with that seed and confirm it matches.
     from openpi.serving.conceptors import random_matched_conceptor
 
@@ -708,6 +710,35 @@ def test_wrapper_random_matched_seed_stable_across_processes(mini_npz: pathlib.P
     beta = 0.3
     C_recovered = (M_cpu - (1 - beta) * np.eye(d, dtype=np.float32)) / beta
     np.testing.assert_allclose(C_recovered, C_expected.astype(np.float32), atol=1e-5)
+
+
+def test_random_matched_seed_is_beta_independent(mini_npz: pathlib.Path):
+    """β sweeps for random_matched must hold the random eigenbasis fixed.
+
+    Regression for a confound in which the seed derivation included β, so
+    every β value got a different random control matrix — conflating the
+    interpolation-strength effect with "we happened to sample a different
+    random basis at this β."
+
+    Given fixed (task, layer, α), the recovered conceptor from the hook's
+    M matrix must be identical across β values (up to the β scaling of M).
+    """
+    w = SteeredPolicyWrapper(_StubPolicy(), conceptor_npz_path=mini_npz, device="cpu")
+    payload_b01 = _payload("taskA", "random_matched", beta=0.1)
+    payload_b03 = _payload("taskA", "random_matched", beta=0.3)
+    w.infer({"__steering__": payload_b01})
+    w.infer({"__steering__": payload_b03})
+
+    M_b01 = w._hook_cache[("taskA", 11, 0.1, 0.1, "random_matched")].M.cpu().numpy()  # noqa: SLF001
+    M_b03 = w._hook_cache[("taskA", 11, 0.1, 0.3, "random_matched")].M.cpu().numpy()  # noqa: SLF001
+
+    # Invert M_β = (1-β)I + β·C to recover C at each β; the two C matrices
+    # must match if and only if the random basis is β-independent.
+    d = M_b01.shape[0]
+    I = np.eye(d, dtype=np.float32)  # noqa: E741
+    C_recovered_b01 = (M_b01 - 0.9 * I) / 0.1
+    C_recovered_b03 = (M_b03 - 0.7 * I) / 0.3
+    np.testing.assert_allclose(C_recovered_b01, C_recovered_b03, atol=1e-5)
 
 
 def test_wrapper_dispatches_linear(mini_npz: pathlib.Path):
