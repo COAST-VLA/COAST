@@ -96,7 +96,9 @@ class Args:
 
     # --- Rollout budget (must match steering; default 15) ---
     num_rollouts: int = 15
-    max_steps: int = 300
+    # None = env-specific default: 300 for MetaWorld, suite-specific for LIBERO,
+    # ``1.5 * task_horizon`` for RoboCasa.
+    max_steps: int | None = None
     replan_steps: int = 10
     seed: int = 69_420
 

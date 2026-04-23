@@ -126,14 +126,17 @@ def _run_client(
     num_episodes: int,
     port: int,
     samples_out: pathlib.Path,
-    max_steps: int,
+    max_steps: int | None,
     replan_steps: int,
     seed: int,
     *,
     eval_only: bool,
     log_path: pathlib.Path,
 ) -> None:
-    """Invoke the LIBERO rollout client in its own venv. Blocks until done."""
+    """Invoke the LIBERO rollout client in its own venv. Blocks until done.
+
+    ``max_steps=None`` means "use the client's per-suite default from SUITE_MAX_STEPS".
+    """
     cmd = [
         "uv",
         "run",
@@ -145,11 +148,12 @@ def _run_client(
         f"--task-suite-name={task_suite_name}",
         f"--task-id={task_id}",
         f"--num-episodes={num_episodes}",
-        f"--max-steps={max_steps}",
         f"--replan-steps={replan_steps}",
         f"--seed={seed}",
         f"--samples-out={samples_out}",
     ]
+    if max_steps is not None:
+        cmd.append(f"--max-steps={max_steps}")
     cmd.append("--eval-only" if eval_only else "--no-eval-only")
     env = os.environ.copy()
     env.setdefault("MUJOCO_GL", "egl")
