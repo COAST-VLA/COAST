@@ -72,9 +72,12 @@ class Args:
         "libero_object",
         "libero_goal",
         "libero_10",
-    ] = "libero_spatial"
-    # Number of episodes / initial states per task.
-    num_episodes: int = 2
+    ] = "libero_10"
+    # Number of episodes / initial states per task. Default is 15 to match
+    # the standard "15 envs per task" convention used by the published HF
+    # pre-collected activation datasets. Override with --num_episodes for
+    # ad-hoc sweeps.
+    num_episodes: int = 15
     # Override the suite default max steps. If None, uses main.SUITE_MAX_STEPS.
     max_steps: Optional[int] = None
     # Number of settling steps before policy actions.
@@ -142,7 +145,7 @@ def _build_command(
     ``output_dir`` is the absolute path where this subprocess should write its
     per-task video directory. It is unconditionally forwarded as ``--output_dir``
     so that main.py does not fall back to its own default (which would land
-    videos in a separate ``output/single-{suite}/`` tree).
+    videos in a separate ``output/{suite}-task{id:02d}/`` tree).
 
     When ``args.steer`` is True, appends ``--steer`` plus the per-task scalar
     steering flags. If ``steering_config`` is provided, its per-task entries
@@ -188,7 +191,9 @@ def _build_command(
     if args.steer:
         if task_name is None:
             raise ValueError("_build_command: steer=True requires task_name")
-        steer_cfg = resolve_steering_for_task(_fallback_from_args(args), steering_config, task_name)
+        steer_cfg = resolve_steering_for_task(
+            _fallback_from_args(args), steering_config, task_name
+        )
         cmd.extend(
             [
                 "--steer",
@@ -276,7 +281,7 @@ def main(args: Args) -> None:
     # parallel_logs/, and each subprocess's per-task video directory. The same
     # dir is forwarded to main.py subprocesses via --output_dir so their
     # per-task video dirs land alongside results.json instead of in a
-    # sibling ``output/single-{suite}/`` tree.
+    # sibling ``output/{suite}-task{id:02d}/`` tree.
     #
     # ``os.path.abspath`` matters when the user passes a relative --output_dir:
     # main.py subprocesses run with cwd=script_dir, so a relative path would
@@ -295,6 +300,15 @@ def main(args: Args) -> None:
         task_suite.n_tasks,
         args.task_suite_name,
         args.num_workers,
+    )
+    logger.info(
+        "Per-task stdout/stderr is captured to %s. Tail a single task with:\n"
+        "    tail -f %s/task_00.log\n"
+        "or follow every task at once with:\n"
+        "    tail -f %s/task_*.log",
+        log_dir,
+        log_dir,
+        log_dir,
     )
     if args.collect:
         logger.info(

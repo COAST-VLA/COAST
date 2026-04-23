@@ -176,8 +176,9 @@ class TestBuildCommand:
     def test_output_dir_always_forwarded(self) -> None:
         """After the output_dir rework, ``_build_command`` unconditionally
         forwards ``--output_dir`` to main.py. This is the invariant that
-        prevents main.py from falling back to its own ``output/single-{suite}/``
-        default and scattering videos into a sibling directory."""
+        prevents main.py from falling back to its own
+        ``output/{suite}-task{id:02d}/`` default and scattering videos into a
+        sibling directory."""
         cmd = eval_all._build_command(
             _default_args(), task_id=0, output_dir="/tmp/eval_all_test"
         )
@@ -188,7 +189,7 @@ class TestBuildCommand:
 
     def test_output_dir_forwarded_verbatim_without_suite_name_nesting(self) -> None:
         """A user passing ``--output_dir /foo`` to eval_all wants exactly
-        ``/foo`` forwarded to main.py — not ``/foo/single-{suite}`` or
+        ``/foo`` forwarded to main.py — not ``/foo/{suite}-task{id:02d}`` or
         ``/foo/{suite}``. This locks in that main.py's own per-task video dir
         lands directly under the provided path."""
         cmd = eval_all._build_command(
@@ -414,8 +415,8 @@ class TestArgsDefaults:
         args = eval_all.Args()
         assert args.host == "0.0.0.0"
         assert args.port == 8000
-        assert args.task_suite_name == "libero_spatial"
-        assert args.num_episodes == 2
+        assert args.task_suite_name == "libero_10"
+        assert args.num_episodes == 15
         assert args.num_steps_wait == 10
         assert args.replan_steps == 5
         assert args.resize_size == 224

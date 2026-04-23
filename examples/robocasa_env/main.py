@@ -97,8 +97,9 @@ class Args:
     #     them clobbering each other's `episode_000_env_000/` files.
     collect_env_id: int = 0
 
-    # Override the top-level output directory (for videos / artifacts). If None,
-    # defaults to ``output/single-{split}``.
+    # Override the top-level output directory (for videos / artifacts). If
+    # None, defaults to ``output/`` — ``eval_task`` nests a per-env subdir, so
+    # per-episode videos land at ``output/{env_name}/episode_NNN.mp4``.
     output_dir: Optional[str] = None
 
     # ── Steering (requires server started with --steer). ──────────────────────
@@ -304,9 +305,10 @@ def main(args: Args) -> None:
     if args.output_dir is not None:
         output_dir = args.output_dir
     else:
-        output_dir = os.path.join(
-            os.path.dirname(__file__), "output", f"single-{args.split}"
-        )
+        # Bare parent — ``eval_task`` below joins ``env_name`` so the final
+        # per-task tree is ``output/{env_name}/episode_NNN.mp4`` (matches the
+        # README's documented "Default output" path).
+        output_dir = os.path.join(os.path.dirname(__file__), "output")
     os.makedirs(output_dir, exist_ok=True)
 
     collect_session = CollectionSession(policy) if args.collect else None

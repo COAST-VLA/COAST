@@ -35,6 +35,7 @@ import numpy as np
 import pytest
 
 import eval_all
+import main
 from main import CAMERA_KEYS, Args, build_state, eval_task, tile_frames
 
 # ── Args ──────────────────────────────────────────────────────────────────────
@@ -254,6 +255,56 @@ class TestEvalTaskSignature:
         assert not missing, f"main.Args missing fields needed by eval_task: {missing}"
 
 
+class TestDefaultOutputDirDoesNotDoubleEnvName:
+    """Regression guard for a bug where main.py's standalone-mode default
+    ``output_dir`` included ``args.env_name``. Since ``eval_task``
+    unconditionally appends ``env_name`` again, that doubled the path to
+    ``output/{env_name}/{env_name}/episode_NNN.mp4`` — contradicting the
+    documented layout ``output/{env_name}/...``.
+
+    The contract locked in here:
+    1. ``main()``'s ``else`` branch (no ``--output_dir``) must NOT reference
+       ``env_name`` — the bare ``output/`` parent is correct because
+       ``eval_task`` provides the per-env nesting.
+    2. ``eval_task`` MUST keep its inner ``os.path.join(output_dir, env_name)``
+       so ``eval_all.py`` (which forwards an already-per-task-free parent) gets
+       the per-env subdir.
+    """
+
+    def test_main_default_output_dir_is_bare_output(self) -> None:
+        src = inspect.getsource(main.main)
+        # Pull the line that computes the default ``output_dir`` in the
+        # ``else`` branch: ``output_dir = os.path.join(...)`` that references
+        # both ``__file__`` and the literal ``"output"``.
+        candidate = next(
+            (
+                line.strip()
+                for line in src.splitlines()
+                if "os.path.join" in line and '"output"' in line and "__file__" in line
+            ),
+            None,
+        )
+        assert candidate is not None, (
+            "main.main must assign a default ``output_dir`` via "
+            "``os.path.join(os.path.dirname(__file__), 'output', ...)``"
+        )
+        # The default must not reference ``env_name`` — eval_task adds it.
+        assert "env_name" not in candidate, (
+            "main.py standalone default output_dir includes env_name, which "
+            "eval_task's inner join will double to "
+            "``output/{env_name}/{env_name}/...``. "
+            f"Offending line: {candidate!r}"
+        )
+
+    def test_eval_task_still_nests_env_name(self) -> None:
+        src = inspect.getsource(eval_task)
+        assert "os.path.join(output_dir, env_name)" in src, (
+            "eval_task must keep ``os.path.join(output_dir, env_name)`` so the "
+            "final per-task tree is ``{output_dir}/{env_name}/...``. Removing "
+            "this nesting would break eval_all.py's batch layout."
+        )
+
+
 # ── eval_all wiring ───────────────────────────────────────────────────────────
 
 
@@ -262,9 +313,10 @@ class TestEvalAll:
         args = eval_all.Args()
         assert args.host == "0.0.0.0"
         assert args.port == 8000
-        assert args.task_set == "atomic_seen"
+        assert args.task_set == "subset"
+        assert args.tasks == []
         assert args.split == "pretrain"
-        assert args.num_episodes == 1
+        assert args.num_episodes == 15
         assert args.max_steps is None
         assert args.replan_steps == 5
         assert args.resize_size == 224
@@ -341,6 +393,44 @@ class TestRobocasaEnv:
         uv run python -m robocasa.scripts.download_kitchen_assets
         MUJOCO_GL=osmesa uv run pytest tests/test_robocasa_env.py::TestRobocasaEnv -m manual -v
     """
+
+    def test_seed_controls_initial_state(self) -> None:
+        """Different ``--seed`` values yield different initial env observations.
+
+        Regression test for the claim that RoboCasa's seed (passed into
+        ``gym.make(..., seed=args.seed)`` at env construction) actually
+        randomizes the scene per seed. The env's internal RNG is seeded
+        once at construction; each ``env.reset()`` then draws a fresh
+        configuration from that seeded RNG stream.
+        """
+        from main import make_env
+
+        env_a = make_env(env_name="CloseBlenderLid", split="pretrain", seed=100)
+        env_b = make_env(env_name="CloseBlenderLid", split="pretrain", seed=200)
+        env_a_repeat = make_env(env_name="CloseBlenderLid", split="pretrain", seed=100)
+        try:
+            obs_a, _ = env_a.reset()
+            obs_b, _ = env_b.reset()
+            obs_a_repeat, _ = env_a_repeat.reset()
+
+            # Different seeds → different scene → different first-camera image.
+            cam_key = next(iter(CAMERA_KEYS.values()))
+            diff = float(
+                np.abs(
+                    obs_a[cam_key].astype(np.int32) - obs_b[cam_key].astype(np.int32)
+                ).mean()
+            )
+            assert diff > 1.0, (
+                f"expected seed=100 vs seed=200 to render different initial scenes "
+                f"(mean |Δpixel| > 1.0), got {diff:.3f}"
+            )
+
+            # Same seed → same initial scene (deterministic construction).
+            np.testing.assert_array_equal(obs_a[cam_key], obs_a_repeat[cam_key])
+        finally:
+            env_a.close()
+            env_b.close()
+            env_a_repeat.close()
 
     def test_make_env_reset_and_step(self) -> None:
         """The env can be created, reset, and stepped once with a no-op action."""
