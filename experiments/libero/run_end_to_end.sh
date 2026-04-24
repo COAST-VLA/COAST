@@ -113,6 +113,7 @@ CUDA_VISIBLE_DEVICES="" uv run python experiments/libero/compute_conceptors.py \
 # ── (e) Sweep ─────────────────────────────────────────────────────────────────
 banner "(e) Sweep hyperparameters (seed=$SEED_SWEEP)"
 CUDA_VISIBLE_DEVICES="$GPU" uv run python experiments/libero/find_best_configs.py \
+    --checkpoint_dir "$CHECKPOINT_DIR" \
     --num_episodes "$NUM_EPISODES" --seed "$SEED_SWEEP" \
     2>&1 | tee "$LOG_DIR/04_sweep.log"
 
@@ -151,7 +152,7 @@ banner "(g2) Steered eval (seed=$SEED_EVAL, --steering_config)"
         --task_suite_name libero_10 \
         --num_episodes "$NUM_EPISODES" --seed "$SEED_EVAL" --port "$EVAL_PORT" \
         --num_workers "$NUM_WORKERS" \
-        --steer --steering_config experiments/libero/best_configs.json
+        --steer --steering_config "$REPO_ROOT/experiments/libero/best_configs.json"
 ) 2>&1 | tee "$LOG_DIR/07_eval_steered.log"
 
 if [[ -f "$BASELINE_RESULTS" ]]; then

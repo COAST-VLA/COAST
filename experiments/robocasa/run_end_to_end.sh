@@ -89,6 +89,7 @@ CUDA_VISIBLE_DEVICES="" uv run python experiments/robocasa/compute_conceptors.py
 
 banner "(e) Sweep hyperparameters (seed=$SEED_SWEEP)"
 CUDA_VISIBLE_DEVICES="$GPU" uv run python experiments/robocasa/find_best_configs.py \
+    --checkpoint_dir "$CHECKPOINT_DIR" \
     --num_episodes "$NUM_EPISODES" --seed "$SEED_SWEEP" --split "$SPLIT" \
     2>&1 | tee "$LOG_DIR/04_sweep.log"
 
@@ -121,7 +122,7 @@ banner "(g2) Steered eval (seed=$SEED_EVAL, --steering_config)"
         --task_set "$TASK_SET" \
         --num_episodes "$NUM_EPISODES" --seed "$SEED_EVAL" --port "$EVAL_PORT" \
         --num_workers "$NUM_WORKERS" \
-        --steer --steering_config experiments/robocasa/best_configs.json
+        --steer --steering_config "$REPO_ROOT/experiments/robocasa/best_configs.json"
 ) 2>&1 | tee "$LOG_DIR/07_eval_steered.log"
 
 [[ -f "$BASELINE_RESULTS" ]] && cp "$BASELINE_RESULTS" "$LOG_DIR/results_steered.json"

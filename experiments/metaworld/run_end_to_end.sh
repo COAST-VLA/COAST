@@ -71,6 +71,7 @@ CUDA_VISIBLE_DEVICES="" uv run python experiments/metaworld/compute_conceptors.p
 
 banner "(c) Sweep hyperparameters (seed=$SEED_SWEEP)"
 CUDA_VISIBLE_DEVICES="$GPU" uv run python experiments/metaworld/find_best_configs.py \
+    --checkpoint_dir "$CHECKPOINT_DIR" \
     --num_episodes "$NUM_EPISODES" --num_envs "$NUM_ENVS" --seed "$SEED_SWEEP" \
     2>&1 | tee "$LOG_DIR/03_sweep.log"
 
