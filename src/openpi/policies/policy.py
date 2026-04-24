@@ -339,6 +339,78 @@ class Policy(BasePolicy):
         outputs["policy_timing"] = {"infer_ms": model_time * 1000}
         return outputs, intermediates
 
+    def infer_with_steering(self, obs: dict, *, steering_hooks=None) -> tuple[dict, dict]:
+        """Like infer() but applies steering hooks during denoising. PyTorch only.
+
+        Handles both single-example (state ndim=1) and batched (state ndim=2)
+        inputs, mirroring the ndim dispatch in ``infer()``.
+
+        Args:
+            obs: Observation dict (single or batched).
+            steering_hooks: list of (layer_idx, hook_callable) pairs.
+
+        Returns:
+            (outputs_dict, diagnostics_dict)
+        """
+        if not self._is_pytorch_model:
+            raise NotImplementedError("infer_with_steering is only supported for PyTorch models")
+
+        is_single = obs["observation/state"].ndim == 1
+
+        if is_single:
+            inputs = jax.tree.map(lambda x: x, obs)
+            inputs = self._input_transform(inputs)
+            inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device)[None, ...], inputs)
+        else:
+            inputs = jax.tree.map(lambda x: x, obs)
+            eval_batch_size = int(inputs["observation/state"].shape[0])
+            # Unbatch: list of single-example dicts. Both `prompt` (str-list) and
+            # array leaves are already leading-batch-dim indexable the same way,
+            # so no per-key branch is needed here — matches infer() but dropped
+            # the redundant prompt/non-prompt conditional.
+            singles = [{k: v[i] for k, v in inputs.items()} for i in range(eval_batch_size)]
+            singles = [self._input_transform(ex) for ex in singles]
+            inputs = collate_transformed_singles(singles)
+            inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device), inputs)
+
+        observation = _model.Observation.from_dict(inputs)
+        start_time = time.monotonic()
+        # Forward the policy's sample_kwargs (e.g., custom num_steps) so steered
+        # and unsteered runs use the same sampler configuration. Without this,
+        # a policy created via `create_trained_policy(sample_kwargs={"num_steps": 20})`
+        # would silently run the default `num_steps=10` under --steer and
+        # baseline vs steered SR could diverge for sampling reasons unrelated
+        # to the steering hook.
+        actions, diagnostics = self._model.sample_actions_with_steering(
+            self._pytorch_device,
+            observation,
+            steering_hooks=steering_hooks,
+            **self._sample_kwargs,
+        )
+        model_time = time.monotonic() - start_time
+
+        outputs = {
+            "state": inputs["state"],
+            "actions": actions,
+        }
+
+        if is_single:
+            outputs = jax.tree.map(
+                lambda x: np.asarray(x[0, ...].detach().cpu())
+                if isinstance(x, torch.Tensor)
+                else np.asarray(x[0, ...]),
+                outputs,
+            )
+        else:
+            outputs = jax.tree.map(
+                lambda x: np.asarray(x.detach().cpu()) if isinstance(x, torch.Tensor) else np.asarray(x),
+                outputs,
+            )
+
+        outputs = self._output_transform(outputs)
+        outputs["policy_timing"] = {"infer_ms": model_time * 1000}
+        return outputs, diagnostics
+
     @property
     def metadata(self) -> dict[str, Any]:
         return self._metadata

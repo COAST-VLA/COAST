@@ -13,6 +13,7 @@ import numpy as np
 from openpi_client import image_tools
 from openpi_client import websocket_client_policy
 from openpi_client.collection_session import CollectionSession
+from openpi_client.steering import STEERING_KEY, build_steering_payload
 import pandas as pd
 from PIL import Image
 from droid.robot_env import RobotEnv
@@ -52,6 +53,18 @@ class Args:
     # If True, attach activation-collection metadata to every infer call so the
     # server (started with --collect_activations) saves intermediates to its disk.
     collect: bool = False
+
+    # ── Steering (requires server started with --steer). ──────────────────────
+    # When True, attach obs[STEERING_KEY] on every infer call so the server applies
+    # a conceptor steering hook. The task key used for the NPZ lookup is the
+    # slugified instruction (matches the slug written by `collect_session.start_episode`
+    # on the server side); override with `--steering_task`.
+    steer: bool = False
+    steering_layer: int = 11
+    steering_alpha: float = 0.1
+    steering_beta: float = 0.3
+    steering_strategy: str = "global"
+    steering_task: str | None = None
 
 
 # We are using Ctrl+C to optionally terminate rollouts early -- however, if we press Ctrl+C while the policy server is
@@ -97,10 +110,13 @@ def main(args: Args):
     while True:
         instruction = input("Enter instruction: ")
 
+        # Sanitize instruction to a filesystem-safe slug. Used by both the
+        # activation-collection task_name directory AND the steering NPZ task key
+        # (they MUST match — server-side collection writes under this slug, and
+        # conceptors are keyed by the same slug).
+        task_name = re.sub(r"[^a-zA-Z0-9]+", "-", instruction.strip().lower()).strip("-") or "droid-eval"
+
         if collect_session is not None:
-            # Sanitize instruction to a filesystem-safe slug for use as the
-            # server-side task_name directory.
-            task_name = re.sub(r"[^a-zA-Z0-9]+", "-", instruction.strip().lower()).strip("-") or "droid-eval"
             collect_session.start_episode(
                 task_name=task_name,
                 task_id=0,
@@ -156,6 +172,15 @@ def main(args: Args):
 
                     if collect_session is not None:
                         request_data["__collect__"] = collect_session.make_collect_metadata(t_step)
+
+                    if args.steer:
+                        request_data[STEERING_KEY] = build_steering_payload(
+                            task=args.steering_task or task_name,
+                            layer=args.steering_layer,
+                            alpha=args.steering_alpha,
+                            beta=args.steering_beta,
+                            strategy=args.steering_strategy,
+                        )
 
                     # Wrap the server call in a context manager to prevent Ctrl+C from interrupting it
                     # Ctrl+C will be handled after the server call is complete
