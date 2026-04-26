@@ -1,0 +1,182 @@
+{
+  "epoch=0300-test_mean_score=-1.000": {
+    "CloseFridge": {
+      "layer": 5,
+      "alpha": 2.0,
+      "beta": 0.1
+    },
+    "OpenDrawer": {
+      "layer": 5,
+      "alpha": 0.1,
+      "beta": 0.1
+    },
+    "OpenStandMixerHead": {
+      "layer": 5,
+      "alpha": 1.0,
+      "beta": 0.1
+    },
+    "PickPlaceCounterToCabinet": {
+      "layer": 5,
+      "alpha": 1.0,
+      "beta": 0.1
+    },
+    "PickPlaceCounterToStove": {
+      "layer": 5,
+      "alpha": 0.5,
+      "beta": 0.1
+    },
+    "TurnOnElectricKettle": {
+      "layer": 5,
+      "alpha": 2.0,
+      "beta": 0.1
+    }
+  },
+  "epoch=0600-test_mean_score=-1.000": {
+    "CloseFridge": {
+      "layer": 5,
+      "alpha": 2.0,
+      "beta": 0.1
+    },
+    "CoffeeSetupMug": {
+      "layer": 5,
+      "alpha": 0.1,
+      "beta": 0.1
+    },
+    "OpenDrawer": {
+      "layer": 5,
+      "alpha": 0.1,
+      "beta": 0.1
+    },
+    "OpenStandMixerHead": {
+      "layer": 5,
+      "alpha": 1.0,
+      "beta": 0.1
+    },
+    "PickPlaceCounterToCabinet": {
+      "layer": 5,
+      "alpha": 1.0,
+      "beta": 0.1
+    },
+    "PickPlaceCounterToStove": {
+      "layer": 5,
+      "alpha": 0.5,
+      "beta": 0.1
+    },
+    "TurnOnElectricKettle": {
+      "layer": 5,
+      "alpha": 2.0,
+      "beta": 0.1
+    }
+  },
+  "epoch=0900-test_mean_score=-1.000": {
+    "CloseFridge": {
+      "layer": 5,
+      "alpha": 2.0,
+      "beta": 0.1
+    },
+    "CoffeeSetupMug": {
+      "layer": 5,
+      "alpha": 0.1,
+      "beta": 0.1
+    },
+    "OpenDrawer": {
+      "layer": 5,
+      "alpha": 0.1,
+      "beta": 0.1
+    },
+    "OpenStandMixerHead": {
+      "layer": 5,
+      "alpha": 1.0,
+      "beta": 0.1
+    },
+    "PickPlaceCounterToCabinet": {
+      "layer": 5,
+      "alpha": 1.0,
+      "beta": 0.1
+    },
+    "PickPlaceCounterToStove": {
+      "layer": 5,
+      "alpha": 0.5,
+      "beta": 0.1
+    },
+    "TurnOnElectricKettle": {
+      "layer": 5,
+      "alpha": 2.0,
+      "beta": 0.1
+    }
+  },
+  "epoch=1200-test_mean_score=-1.000": {
+    "CloseFridge": {
+      "layer": 5,
+      "alpha": 2.0,
+      "beta": 0.1
+    },
+    "CoffeeSetupMug": {
+      "layer": 5,
+      "alpha": 1.0,
+      "beta": 0.1
+    },
+    "OpenDrawer": {
+      "layer": 5,
+      "alpha": 0.1,
+      "beta": 0.1
+    },
+    "OpenStandMixerHead": {
+      "layer": 5,
+      "alpha": 1.0,
+      "beta": 0.1
+    },
+    "PickPlaceCounterToCabinet": {
+      "layer": 5,
+      "alpha": 1.0,
+      "beta": 0.1
+    },
+    "PickPlaceCounterToStove": {
+      "layer": 5,
+      "alpha": 0.5,
+      "beta": 0.1
+    },
+    "TurnOnElectricKettle": {
+      "layer": 5,
+      "alpha": 2.0,
+      "beta": 0.1
+    }
+  },
+  "latest": {
+    "CloseFridge": {
+      "layer": 5,
+      "alpha": 2.0,
+      "beta": 0.1
+    },
+    "CoffeeSetupMug": {
+      "layer": 5,
+      "alpha": 1.0,
+      "beta": 0.1
+    },
+    "OpenDrawer": {
+      "layer": 5,
+      "alpha": 0.1,
+      "beta": 0.1
+    },
+    "OpenStandMixerHead": {
+      "layer": 5,
+      "alpha": 1.0,
+      "beta": 0.1
+    },
+    "PickPlaceCounterToCabinet": {
+      "layer": 5,
+      "alpha": 1.0,
+      "beta": 0.1
+    },
+    "PickPlaceCounterToStove": {
+      "layer": 5,
+      "alpha": 0.5,
+      "beta": 0.1
+    },
+    "TurnOnElectricKettle": {
+      "layer": 5,
+      "alpha": 2.0,
+      "beta": 0.1
+    }
+  }
+}

@@ -1,0 +1,378 @@
+{
+  "epoch=0300-test_mean_score=-1.000": {
+    "CloseFridge": {
+      "layer": 5,
+      "alphas": [
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "OpenDrawer": {
+      "layer": 5,
+      "alphas": [
+        0.1
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "OpenStandMixerHead": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "PickPlaceCounterToCabinet": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "PickPlaceCounterToStove": {
+      "layer": 5,
+      "alphas": [
+        0.5,
+        1.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "TurnOnElectricKettle": {
+      "layer": 5,
+      "alphas": [
+        2.0,
+        10.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    }
+  },
+  "epoch=0600-test_mean_score=-1.000": {
+    "CloseFridge": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "CoffeeSetupMug": {
+      "layer": 5,
+      "alphas": [
+        0.1
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "OpenDrawer": {
+      "layer": 11,
+      "alphas": [
+        0.1
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "OpenStandMixerHead": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "PickPlaceCounterToCabinet": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "PickPlaceCounterToStove": {
+      "layer": 5,
+      "alphas": [
+        0.5
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "TurnOnElectricKettle": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    }
+  },
+  "epoch=0900-test_mean_score=-1.000": {
+    "CloseFridge": {
+      "layer": 5,
+      "alphas": [
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "CoffeeSetupMug": {
+      "layer": 5,
+      "alphas": [
+        0.1
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "OpenDrawer": {
+      "layer": 8,
+      "alphas": [
+        0.1
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "OpenStandMixerHead": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "PickPlaceCounterToCabinet": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0,
+        10.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "PickPlaceCounterToStove": {
+      "layer": 5,
+      "alphas": [
+        0.5
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "TurnOnElectricKettle": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    }
+  },
+  "epoch=1200-test_mean_score=-1.000": {
+    "CloseFridge": {
+      "layer": 5,
+      "alphas": [
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "CoffeeSetupMug": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "OpenDrawer": {
+      "layer": 5,
+      "alphas": [
+        0.1
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "OpenStandMixerHead": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "PickPlaceCounterToCabinet": {
+      "layer": 5,
+      "alphas": [
+        0.5,
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "PickPlaceCounterToStove": {
+      "layer": 5,
+      "alphas": [
+        0.5,
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "TurnOnElectricKettle": {
+      "layer": 5,
+      "alphas": [
+        2.0,
+        10.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    }
+  },
+  "latest": {
+    "CloseFridge": {
+      "layer": 5,
+      "alphas": [
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "CoffeeSetupMug": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "OpenDrawer": {
+      "layer": 5,
+      "alphas": [
+        0.1,
+        0.5
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "OpenStandMixerHead": {
+      "layer": 5,
+      "alphas": [
+        1.0,
+        2.0,
+        10.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "PickPlaceCounterToCabinet": {
+      "layer": 5,
+      "alphas": [
+        0.5,
+        1.0,
+        2.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "PickPlaceCounterToStove": {
+      "layer": 5,
+      "alphas": [
+        0.5
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    },
+    "TurnOnElectricKettle": {
+      "layer": 5,
+      "alphas": [
+        2.0,
+        10.0
+      ],
+      "betas": [
+        0.1,
+        0.3
+      ]
+    }
+  }
+}
