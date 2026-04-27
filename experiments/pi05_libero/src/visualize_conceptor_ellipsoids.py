@@ -2360,7 +2360,7 @@ def fig20_combined_pca_and_temporal(conceptors_npz, ds=0, task_filter=None,
         return
 
     n = len(available)
-    fig, axes = plt.subplots(2, n, figsize=(3.3 * n, 7.0), squeeze=False)
+    fig, axes = plt.subplots(2, n, figsize=(3.3 * n, 7.5), squeeze=False)
     t_axis = np.linspace(0, 1, n_bins)
 
     for idx, task in enumerate(available):
@@ -2411,13 +2411,13 @@ def fig20_combined_pca_and_temporal(conceptors_npz, ds=0, task_filter=None,
                 ax_pca.plot(*c, marker, color=color, markersize=9,
                             markeredgecolor="white", markeredgewidth=1.5, zorder=11)
 
-        ax_pca.set_title(f"{short}", fontsize=10, fontweight="bold")
+        ax_pca.set_title(f"{short}", fontsize=15, fontweight="bold")
         ax_pca.set_xticks([]); ax_pca.set_yticks([])
         for spine in ax_pca.spines.values():
             spine.set_linewidth(0.6)
         if idx == 0:
-            ax_pca.set_ylabel("Disc. PC 2", fontsize=9)
-        ax_pca.set_xlabel("Disc. PC 1", fontsize=9)
+            ax_pca.set_ylabel("Disc. PC 2", fontsize=16)
+        ax_pca.set_xlabel("Disc. PC 1", fontsize=16)
 
         # ── (B) Temporal projection onto top eigenvector of C_contrastive ──
         eigvals, eigvecs = np.linalg.eigh(C)
@@ -2448,17 +2448,17 @@ def fig20_combined_pca_and_temporal(conceptors_npz, ds=0, task_filter=None,
             ax_t.plot(t_axis, m, color=color, ls=ls, lw=2.0, zorder=5)
             ax_t.fill_between(t_axis, m - s, m + s, color=color, alpha=0.12, zorder=3)
 
-        ax_t.set_xlabel("Normalized trajectory time", fontsize=9)
+        ax_t.set_xlabel("Norm. trajectory time", fontsize=16)
         if idx == 0:
-            ax_t.set_ylabel(r"Projection onto $\mathbf{v}_1(C)$", fontsize=9)
-        ax_t.tick_params(labelsize=7)
+            ax_t.set_ylabel(r"Projection onto $\mathbf{v}_1(C)$", fontsize=16)
+        ax_t.tick_params(labelsize=11)
         ax_t.grid(alpha=0.2, lw=0.4)
         for spine in ["top", "right"]:
             ax_t.spines[spine].set_visible(False)
 
     # Panel labels (A) and (B)
-    fig.text(0.005, 0.95, "(A)", fontsize=16, fontweight="bold", va="top")
-    fig.text(0.005, 0.46, "(B)", fontsize=16, fontweight="bold", va="top")
+    fig.text(0.005, 0.95, "(A)", fontsize=18, fontweight="bold", va="top")
+    fig.text(0.005, 0.46, "(B)", fontsize=18, fontweight="bold", va="top")
 
     import matplotlib.lines as mlines
     import matplotlib.patches as mpatches
@@ -2472,7 +2472,7 @@ def fig20_combined_pca_and_temporal(conceptors_npz, ds=0, task_filter=None,
                       marker="^", markersize=8, markerfacecolor=C_STEERED_FAIL,
                       markeredgecolor="white", label="Steered failure"),
     ]
-    fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=10,
+    fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=17,
                bbox_to_anchor=(0.5, -0.02), framealpha=0.9, frameon=False)
 
     fig.tight_layout(rect=(0.015, 0.02, 1.0, 1.0))
