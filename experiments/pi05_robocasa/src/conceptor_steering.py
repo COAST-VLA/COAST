@@ -85,21 +85,58 @@ def get_per_step_contrastive(npz, task, layer, step):
     return npz[key]
 
 
+def get_per_step_contrastive_all(npz, task, layer):
+    """Return all per-denoising-step contrastive conceptors at (task, layer).
+
+    Walks ``per_step_{0..N-1}`` until a key is missing. Order matches the
+    denoising-step index, so the list can be indexed directly by
+    ``current_denoise_step`` inside the hook.
+    """
+    out = []
+    step = 0
+    while True:
+        key = f"{task}__L{layer}__per_step_{step}__C_contrastive"
+        if key not in npz:
+            break
+        out.append(npz[key])
+        step += 1
+    return out
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Steering Hook
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 class ConceptorSteeringHook:
-    """PyTorch forward hook: h' = (1-beta)*h + beta*(C @ h)."""
+    """PyTorch forward hook: h' = (1-beta)*h + beta*(h @ C^T).
+
+    Two modes:
+      - Static: ``conceptor_matrix`` is a single (d, d) ndarray; the same C is
+        applied at every denoising step.
+      - Per-step (true time-varying): ``conceptor_matrix`` is a list/tuple of
+        (d, d) ndarrays, one per denoising step. ``infer_with_steering`` calls
+        ``set_denoise_step(t)`` each step, and the hook selects the matching
+        matrix at runtime. If the index exceeds the list length it clamps.
+    """
 
     def __init__(self, conceptor_matrix, beta=0.3, device="cuda"):
         self.beta = beta
         self.current_denoise_step = 0
-        d = conceptor_matrix.shape[0]
-        I = torch.eye(d, dtype=torch.float32).to(device)
-        C = torch.tensor(conceptor_matrix, dtype=torch.float32).to(device)
-        self.M = (1 - beta) * I + beta * C
+        if isinstance(conceptor_matrix, (list, tuple)):
+            d = conceptor_matrix[0].shape[0]
+            I = torch.eye(d, dtype=torch.float32, device=device)
+            self._M_per_step = [
+                (1 - beta) * I + beta * torch.tensor(C, dtype=torch.float32, device=device)
+                for C in conceptor_matrix
+            ]
+            self.M = None
+        else:
+            d = conceptor_matrix.shape[0]
+            I = torch.eye(d, dtype=torch.float32, device=device)
+            C_t = torch.tensor(conceptor_matrix, dtype=torch.float32, device=device)
+            self.M = (1 - beta) * I + beta * C_t
+            self._M_per_step = None
         self.intervention_norms = []
 
     def __call__(self, module, input, output):
@@ -107,7 +144,11 @@ class ConceptorSteeringHook:
             h, rest = output[0], output[1:]
         else:
             h, rest = output, None
-        M = self.M.to(dtype=h.dtype)
+        if self._M_per_step is not None:
+            idx = min(self.current_denoise_step, len(self._M_per_step) - 1)
+            M = self._M_per_step[idx].to(dtype=h.dtype)
+        else:
+            M = self.M.to(dtype=h.dtype)
         h_steered = torch.matmul(h, M.T)
         self.intervention_norms.append(torch.norm(h_steered - h).item())
         return (h_steered,) + rest if rest is not None else h_steered
@@ -235,7 +276,15 @@ class Args:
     layers: List[int] = dataclasses.field(default_factory=lambda: [5, 11, 17])
     alphas: List[float] = dataclasses.field(default_factory=lambda: [0.1, 0.5, 1.0, 2.0, 10.0])
     betas: List[float] = dataclasses.field(default_factory=lambda: [0.1, 0.3, 0.5])
-    strategies: List[str] = dataclasses.field(default_factory=lambda: ["global", "per_step_0", "per_step_9"])
+    strategies: List[str] = dataclasses.field(default_factory=lambda: ["global", "per_step"])
+    """Strategies. Valid values:
+      - ``global``     : one C per (alpha, layer), applied at every denoising step.
+      - ``per_step``   : true time-varying — different C at every denoising step.
+                         Alpha-independent (per-step keys in the npz are
+                         alpha-free), so it's iterated over (layer, beta) only.
+      - ``per_step_N`` : legacy — static C built at denoising step N, applied
+                         uniformly across all steps. Kept for ablation runs.
+    """
 
     # Eval
     num_episodes: int = 15
@@ -333,7 +382,14 @@ def main(args: Args):
         save_progress()
 
     # ── 2. Steered conditions ──
-    total = len(args.layers) * len(args.alphas) * len(args.betas) * len(args.strategies)
+    # ``per_step`` is alpha-free (per-step keys in the npz have no alpha slot),
+    # so it doesn't enter the alpha loop — we'd just re-run the same condition
+    # |alphas| times with no new information. Run it once per (layer, beta) below.
+    n_alpha_strats = len([s for s in args.strategies if s != "per_step"])
+    total = (
+        len(args.layers) * len(args.alphas) * len(args.betas) * n_alpha_strats
+        + (len(args.layers) * len(args.betas) if "per_step" in args.strategies else 0)
+    )
     logger.info(f"\n[2/4] Steered conditions ({total} total)...")
     idx = 0
     for layer in args.layers:
@@ -341,6 +397,8 @@ def main(args: Args):
             C_global = None  # lazy-load per layer/alpha only if needed
             for beta in args.betas:
                 for strategy in args.strategies:
+                    if strategy == "per_step":
+                        continue  # handled in the dedicated block below
                     idx += 1
                     cond_name = f"{strategy}_L{layer}_a{alpha}_b{beta}"
 
@@ -355,6 +413,7 @@ def main(args: Args):
                             C_global = get_global_contrastive(npz, task, layer, alpha)
                         C = C_global
                     elif strategy.startswith("per_step_"):
+                        # legacy: static C built at denoising step N, applied uniformly.
                         step = int(strategy.split("_")[-1])
                         C = get_per_step_contrastive(npz, task, layer, step)
                     else:
@@ -368,6 +427,33 @@ def main(args: Args):
                     all_results.append(r)
                     existing_conds.add(cond_name)
                     save_progress()
+
+    # ── 2b. True time-varying per_step (alpha-independent) ──
+    # Loads the full list of per-denoising-step conceptors once per layer and
+    # passes them all to the hook. infer_with_steering calls
+    # hook.set_denoise_step(t) on every step (see pi0_pytorch.py:944), and the
+    # hook indexes its M cache to apply a different conceptor each step.
+    if "per_step" in args.strategies:
+        logger.info(f"\n[2b/4] per_step (true time-varying: one C per denoising step)")
+        for layer in args.layers:
+            Cs = get_per_step_contrastive_all(npz, task, layer)
+            if not Cs:
+                logger.warning(f"  no per_step conceptors at L{layer}, skipping")
+                continue
+            for beta in args.betas:
+                idx += 1
+                cond_name = f"per_step_L{layer}_b{beta}"
+                if cond_name in existing_conds:
+                    logger.info(f"  [{idx}/{total}] {cond_name} — already exists, skipping")
+                    continue
+                logger.info(f"  [{idx}/{total}] {cond_name}  ({len(Cs)} ds-specific Cs)")
+                hook = ConceptorSteeringHook(Cs, beta=beta, device=device)
+                wrapper.update_hooks([(layer, hook)])
+                r = run_condition(task, args.port, args.num_episodes,
+                                  cond_name, task_output_dir)
+                all_results.append(r)
+                existing_conds.add(cond_name)
+                save_progress()
 
     # ── 3. Random controls ──
     random_pairs = [(layer, beta) for layer in args.layers for beta in args.betas]
