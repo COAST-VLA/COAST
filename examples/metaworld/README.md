@@ -1,6 +1,6 @@
 # MetaWorld
 
-[MetaWorld](https://meta-world.github.io/) is a benchmark of 50 simulated robotic manipulation tasks built on MuJoCo. This directory contains every metaworld-specific entry point: the dataset generator (`generate_dataset.py`) and the eval clients (`main.py`, `eval_all.py` — both support `--collect` for in-process activation collection).
+[MetaWorld](https://meta-world.github.io/) is a benchmark of 50 simulated robotic manipulation tasks built on MuJoCo. This directory contains every metaworld-specific entry point: the dataset generator (`generate_dataset.py`) and the eval clients (`main.py`, `eval_all.py` — both support `--collect` to forward activation-collection metadata to a `--collect_activations` server).
 
 ## Installation
 
@@ -95,25 +95,31 @@ Default output: `examples/metaworld/output/ML45-<split>/`. `results.json` is wri
 
 ## Activation collection
 
-MetaWorld collects **in-process** (no server needed): `--collect` makes the script load the policy directly from `--policy.dir` and write intermediates to `--collect_output_dir`. Schema, output layout, and verification are covered in the canonical reference — see **[`docs/activation_collection.md`](../../docs/activation_collection.md)**.
+MetaWorld uses the same server-side collection pattern as LIBERO / RoboCasa — start a `--collect_activations` policy server, then run the client with `--collect`. The metaworld client batches `num_envs` parallel rollouts into one inference call and sends a list-shaped `__collect__` payload (one entry per env), so the server saves N step dirs from a single forward pass. Schema, output layout, and verification are covered in the canonical reference — see **[`docs/activation_collection.md`](../../docs/activation_collection.md)**.
 
 ```bash
-# Single task — pi0.5 (PyTorch auto-detected):
-CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/main.py \
-    --collect --env_name reach-v3 --num_envs 16 \
-    --policy.config=pi05_metaworld \
-    --policy.dir=/path/to/checkpoint \
-    --collect_output_dir ./activations
+# Terminal 1 — pi0.5 (PyTorch required for diffusion intermediates):
+CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --collect_activations \
+    --output-dir ./activations \
+    policy:checkpoint --policy.config=pi05_metaworld \
+    --policy.dir=/path/to/checkpoint
 
-# Full sweep — pi0-FAST (JAX):
-CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
-    --collect --split subset --num_envs 16 \
-    --policy.config=pi0_fast_metaworld \
-    --policy.dir=/path/to/checkpoint \
-    --collect_output_dir ./activations
+# Terminal 1 (alternative) — pi0-FAST (JAX only):
+CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --collect_activations \
+    --output-dir ./activations \
+    policy:checkpoint --policy.config=pi0_fast_metaworld \
+    --policy.dir=/path/to/checkpoint
+
+# Terminal 2 — single task (16 envs in one forward pass):
+MUJOCO_GL=egl uv run examples/metaworld/main.py \
+    --collect --env_name reach-v3 --num_envs 16
+
+# Terminal 2 — full sweep:
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+    --collect --split subset --num_envs 16
 ```
 
-Start `--num_envs` at 16 and halve it if you OOM — memory scales linearly.
+Start `--num_envs` at 16 and halve it if the server OOMs — server-side memory scales linearly with batch size.
 
 Pre-collected datasets:
 
