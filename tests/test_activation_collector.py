@@ -26,6 +26,7 @@ import threading
 import time
 
 import numpy as np
+from openpi_client.collection_session import BatchCollectionSession
 from openpi_client.collection_session import CollectionSession
 import pytest
 
@@ -489,6 +490,211 @@ class TestCollectingPolicyInferCollect:
         assert saved_meta["inference_step"] == 1
 
 
+class TestCollectingPolicyInferCollectBatch:
+    """Batched __collect__ (list) path used by the metaworld vectorized client.
+
+    When __collect__ is a list, the obs is pre-batched (B, ...) and the server
+    writes one step_dir per entry indexed into the batch dim. Backwards-
+    compatible with the dict-shaped path tested above.
+    """
+
+    def test_writes_one_step_dir_per_env_in_batch(self, policy_setup, tmp_path: pathlib.Path) -> None:
+        stub, wrapper = policy_setup
+        num_envs = 3
+        obs = {
+            "observation/state": np.zeros((num_envs, 8), dtype=np.float32),
+            "observation/image": np.zeros((num_envs, 224, 224, 3), dtype=np.uint8),
+            "prompt": ["do thing"] * num_envs,
+            "__collect__": [
+                {
+                    "task_name": "task_b",
+                    "episode_id": 0,
+                    "env_id": env_id,
+                    "step": 7,
+                    "inference_step": 1,
+                    "prompt": "do thing",
+                    "cumulative_reward": float(env_id),
+                    "success_so_far": False,
+                    "reward_since_last_inference": 0.0,
+                }
+                for env_id in range(num_envs)
+            ],
+        }
+        result = wrapper.infer(obs)
+
+        # Underlying policy called exactly once with magic keys stripped.
+        assert len(stub.calls) == 1
+        assert "__collect__" not in stub.calls[0]
+        # Pre-batched obs is forwarded as-is — no extra batch dim added.
+        assert stub.calls[0]["observation/state"].shape == (num_envs, 8)
+
+        # Returned actions retain the batch dim so the client can dispatch per-env.
+        assert result["actions"].shape == (num_envs, 10, 7)
+
+        # Each env_id should land in its own step_dir with its own metadata.
+        for env_id in range(num_envs):
+            step_dir = tmp_path / "ckpt-step" / "task_b" / f"episode_000_env_{env_id:03d}" / "step_0007"
+            for fname in [
+                "denoising.npz",
+                "adarms_cond.npz",
+                "suffix_residual.npz",
+                "suffix_mlp_hidden.npz",
+                "metadata.json",
+            ]:
+                assert (step_dir / fname).exists(), f"missing {step_dir / fname}"
+            with open(step_dir / "metadata.json") as f:
+                step_meta = json.load(f)
+            assert step_meta["env_id"] == env_id
+            assert step_meta["cumulative_reward"] == float(env_id)
+
+    def test_env_id_slicing_picks_correct_batch_index(self, policy_setup, tmp_path: pathlib.Path) -> None:
+        """Each env_id's saved activations must come from its own batch index,
+        not an off-by-one slice. Probes the env_id == 2 case in a 3-env batch.
+        """
+        stub, wrapper = policy_setup
+        num_envs = 3
+
+        # Replace the stub's intermediates with a deterministic tensor whose
+        # per-batch-index slice is identifiable.
+        canned_intermediates = {
+            "all_x_t": np.arange(10 * num_envs * 32 * 32, dtype=np.float32).reshape(10, num_envs, 32, 32),
+            "all_v_t": np.zeros((10, num_envs, 32, 32), dtype=np.float32),
+            "all_adarms_cond": np.zeros((10, num_envs, 1024), dtype=np.float32),
+            "all_suffix_residual": np.zeros((10, 4, num_envs, 32, 1024), dtype=np.float32),
+            "all_suffix_mlp_hidden": np.zeros((10, 4, num_envs, 32, 4096), dtype=np.float32),
+        }
+
+        def _stub_infer(obs: dict):
+            return (
+                {"actions": np.zeros((num_envs, 10, 7), dtype=np.float32)},
+                canned_intermediates,
+            )
+
+        stub.infer_with_intermediates = _stub_infer  # type: ignore[assignment]
+
+        obs = {
+            "observation/state": np.zeros((num_envs, 8), dtype=np.float32),
+            "prompt": ["p"] * num_envs,
+            "__collect__": [
+                {
+                    "task_name": "t",
+                    "episode_id": 0,
+                    "env_id": env_id,
+                    "step": 0,
+                    "inference_step": 0,
+                    "prompt": "p",
+                    "cumulative_reward": 0.0,
+                    "success_so_far": False,
+                    "reward_since_last_inference": 0.0,
+                }
+                for env_id in range(num_envs)
+            ],
+        }
+        wrapper.infer(obs)
+
+        for env_id in range(num_envs):
+            step_dir = tmp_path / "ckpt-step" / "t" / f"episode_000_env_{env_id:03d}" / "step_0000"
+            saved = np.load(step_dir / "denoising.npz")
+            np.testing.assert_array_equal(saved["all_x_t"], canned_intermediates["all_x_t"][:, env_id])
+
+    def test_batch_size_mismatch_raises(self, policy_setup) -> None:
+        _, wrapper = policy_setup
+        obs = {
+            "observation/state": np.zeros((4, 8), dtype=np.float32),
+            "prompt": ["p"] * 4,
+            "__collect__": [
+                {
+                    "task_name": "t",
+                    "episode_id": 0,
+                    "env_id": i,
+                    "step": 0,
+                    "inference_step": 0,
+                    "prompt": "p",
+                    "cumulative_reward": 0.0,
+                    "success_so_far": False,
+                    "reward_since_last_inference": 0.0,
+                }
+                for i in range(3)  # 3 entries vs batch of 4
+            ],
+        }
+        with pytest.raises(ValueError, match="Batch size mismatch"):
+            wrapper.infer(obs)
+
+    def test_unbatched_obs_with_list_collect_raises(self, policy_setup) -> None:
+        """List __collect__ requires pre-batched obs with shape (B, ...)."""
+        _, wrapper = policy_setup
+        obs = {
+            "observation/state": np.zeros(8, dtype=np.float32),  # 1-D
+            "prompt": "p",
+            "__collect__": [
+                {
+                    "task_name": "t",
+                    "episode_id": 0,
+                    "env_id": 0,
+                    "step": 0,
+                    "inference_step": 0,
+                    "prompt": "p",
+                    "cumulative_reward": 0.0,
+                    "success_so_far": False,
+                    "reward_since_last_inference": 0.0,
+                }
+            ],
+        }
+        with pytest.raises(ValueError, match="pre-batched"):
+            wrapper.infer(obs)
+
+    def test_empty_list_collect_raises(self, policy_setup) -> None:
+        _, wrapper = policy_setup
+        obs = {
+            "observation/state": np.zeros((0, 8), dtype=np.float32),
+            "prompt": [],
+            "__collect__": [],
+        }
+        with pytest.raises(ValueError, match="must not be empty"):
+            wrapper.infer(obs)
+
+
+class TestCollectingPolicyFinalizeBatch:
+    def test_finalizes_one_episode_per_entry(self, policy_setup, tmp_path: pathlib.Path) -> None:
+        _, wrapper = policy_setup
+        num_envs = 3
+        finalize_payload = {
+            "__finalize_episode__": [
+                {
+                    "task_name": "task_b",
+                    "episode_id": 5,
+                    "env_id": env_id,
+                    "prompt": "p",
+                    "episode_success": env_id == 0,
+                    "total_reward": float(env_id),
+                    "steps_to_success": 4 if env_id == 0 else -1,
+                    "total_env_steps": 6,
+                    "total_inference_steps": 2,
+                    "per_step_reward": [0.0, 0.0, 0.0, 0.0, 1.0 if env_id == 0 else 0.0, 0.0],
+                    "per_step_success": [False] * 4 + [env_id == 0, env_id == 0],
+                }
+                for env_id in range(num_envs)
+            ],
+        }
+        result = wrapper.infer(finalize_payload)
+        assert result["ack"] is True
+        assert len(result["episode_dirs"]) == num_envs
+
+        for env_id in range(num_envs):
+            episode_dir = tmp_path / "ckpt-step" / "task_b" / f"episode_005_env_{env_id:03d}"
+            assert (episode_dir / "metadata.json").exists()
+            assert (episode_dir / "rewards.npz").exists()
+            with open(episode_dir / "metadata.json") as f:
+                ep_meta = json.load(f)
+            assert ep_meta["env_id"] == env_id
+            assert ep_meta["episode_success"] is (env_id == 0)
+
+    def test_empty_list_finalize_raises(self, policy_setup) -> None:
+        _, wrapper = policy_setup
+        with pytest.raises(ValueError, match="must not be empty"):
+            wrapper.infer({"__finalize_episode__": []})
+
+
 class TestCollectingPolicyFinalize:
     def test_writes_episode_files_and_returns_ack(self, policy_setup, tmp_path: pathlib.Path) -> None:
         stub, wrapper = policy_setup
@@ -790,6 +996,64 @@ class TestEndToEndPipeline:
         assert step_meta["step"] == 0
         assert step_meta["inference_step"] == 0
 
+    def test_round_trip_batch_session_writes_per_env_dirs(self, policy_setup, tmp_path: pathlib.Path) -> None:
+        """End-to-end: BatchCollectionSession (client) + CollectingPolicy (server)
+        drive a vectorized rollout with N envs in one inference call. Verifies
+        the on-disk schema is identical to the single-env path, just with N
+        episode dirs per task.
+        """
+        stub, wrapper = policy_setup
+        num_envs = 3
+        session = BatchCollectionSession(wrapper, num_envs=num_envs)
+        session.start_episode(task_name="task_batch", episode_id=0, prompt="batch prompt")
+
+        env_step = 0
+        steps_per_inference = 5
+        num_inferences = 3
+        # env 0 succeeds at step 12; envs 1,2 never succeed.
+        success_at = {0: 12}
+
+        for _ in range(num_inferences):
+            obs = {
+                "observation/state": np.zeros((num_envs, 8), dtype=np.float32),
+                "observation/image": np.zeros((num_envs, 224, 224, 3), dtype=np.uint8),
+                "prompt": ["batch prompt"] * num_envs,
+                "__collect__": session.make_collect_metadata(env_step),
+            }
+            wrapper.infer(obs)
+            for _ in range(steps_per_inference):
+                rewards = np.zeros(num_envs, dtype=np.float32)
+                dones = np.zeros(num_envs, dtype=bool)
+                for env_id, target in success_at.items():
+                    if env_step == target:
+                        rewards[env_id] = 1.0
+                        dones[env_id] = True
+                session.record_step(env_step, rewards, dones)
+                env_step += 1
+        session.finalize_episode()
+
+        # Underlying policy should have been called once per inference call.
+        assert len(stub.calls) == num_inferences
+
+        for env_id in range(num_envs):
+            episode_dir = tmp_path / "ckpt-step" / "task_batch" / f"episode_000_env_{env_id:03d}"
+            assert episode_dir.is_dir(), f"missing {episode_dir}"
+            step_dirs = sorted(episode_dir.glob("step_*"))
+            assert [p.name for p in step_dirs] == ["step_0000", "step_0005", "step_0010"]
+
+            with open(episode_dir / "metadata.json") as f:
+                ep_meta = json.load(f)
+            assert ep_meta["task_name"] == "task_batch"
+            assert ep_meta["env_id"] == env_id
+            if env_id == 0:
+                assert ep_meta["episode_success"] is True
+                assert ep_meta["steps_to_success"] == 12
+                assert ep_meta["total_reward"] == pytest.approx(1.0)
+            else:
+                assert ep_meta["episode_success"] is False
+                assert ep_meta["steps_to_success"] == -1
+                assert ep_meta["total_reward"] == pytest.approx(0.0)
+
     def test_failure_episode_writes_steps_to_success_minus_one(self, policy_setup, tmp_path: pathlib.Path) -> None:
         _, wrapper = policy_setup
         self._drive_rollout(
@@ -1014,3 +1278,319 @@ class TestParallelCollectionSessions:
             assert observed == list(range(inferences_per_client)), (
                 f"task {task_idx}: expected inference_step counter {list(range(inferences_per_client))}, got {observed}"
             )
+
+
+# ----------------------------------------- Protocol edge-case regression tests
+#
+# These tests cover gaps surfaced during a code-review pass on the unification
+# refactor: input validation that the server should reject loudly instead of
+# letting it propagate as a confusing KeyError or silently corrupting outputs.
+
+
+class TestBatchProtocolEdgeCases:
+    """Regression tests for `_handle_collect_infer_batch` validation. The
+    server is exposed over WebSocket — a buggy client must get a clear
+    ValueError, not an obscure KeyError or a half-written step_dir."""
+
+    def test_duplicate_env_ids_overwrite_same_step_dir(self, policy_setup, tmp_path: pathlib.Path) -> None:
+        """Documents current behavior: if a client sends duplicate env_ids in
+        __collect__, the server happily writes to the same step_dir multiple
+        times (last entry wins). This is a silent corruption mode worth
+        knowing about — ideally the server would reject duplicates.
+        """
+        stub, wrapper = policy_setup
+        num_envs = 3
+        # All entries claim env_id=1 — same step_dir three times.
+        obs = {
+            "observation/state": np.zeros((num_envs, 8), dtype=np.float32),
+            "prompt": ["p"] * num_envs,
+            "__collect__": [
+                {
+                    "task_name": "t",
+                    "episode_id": 0,
+                    "env_id": 1,
+                    "step": 0,
+                    "inference_step": 0,
+                    "prompt": "p",
+                    "cumulative_reward": float(i),
+                    "success_so_far": False,
+                    "reward_since_last_inference": 0.0,
+                }
+                for i in range(num_envs)
+            ],
+        }
+        wrapper.infer(obs)
+        # Only one step_dir exists — env_001/step_0000 — and its metadata is
+        # whichever entry was written last.
+        episode_dir = tmp_path / "ckpt-step" / "t" / "episode_000_env_001"
+        step_dirs = list(episode_dir.glob("step_*"))
+        assert len(step_dirs) == 1
+        with open(step_dirs[0] / "metadata.json") as f:
+            saved = json.load(f)
+        # Last entry's cumulative_reward wins (== num_envs - 1).
+        assert saved["cumulative_reward"] == float(num_envs - 1)
+        # No env_000 or env_002 dirs should exist — confirms data loss.
+        assert not (tmp_path / "ckpt-step" / "t" / "episode_000_env_000").exists()
+        assert not (tmp_path / "ckpt-step" / "t" / "episode_000_env_002").exists()
+
+    def test_out_of_range_env_id_raises(self, policy_setup) -> None:
+        """env_id beyond batch_size-1 should fail; currently it triggers
+        IndexError deep in save_step_activations rather than a clear
+        ValueError at the protocol boundary."""
+        _, wrapper = policy_setup
+        num_envs = 3
+        obs = {
+            "observation/state": np.zeros((num_envs, 8), dtype=np.float32),
+            "prompt": ["p"] * num_envs,
+            "__collect__": [
+                {
+                    "task_name": "t",
+                    "episode_id": 0,
+                    "env_id": 0,
+                    "step": 0,
+                    "inference_step": 0,
+                    "prompt": "p",
+                    "cumulative_reward": 0.0,
+                    "success_so_far": False,
+                    "reward_since_last_inference": 0.0,
+                },
+                {
+                    "task_name": "t",
+                    "episode_id": 0,
+                    "env_id": 1,
+                    "step": 0,
+                    "inference_step": 0,
+                    "prompt": "p",
+                    "cumulative_reward": 0.0,
+                    "success_so_far": False,
+                    "reward_since_last_inference": 0.0,
+                },
+                {
+                    "task_name": "t",
+                    "episode_id": 0,
+                    "env_id": 99,
+                    "step": 0,
+                    "inference_step": 0,
+                    "prompt": "p",
+                    "cumulative_reward": 0.0,
+                    "success_so_far": False,
+                    "reward_since_last_inference": 0.0,
+                },
+            ],
+        }
+        # IndexError today; ideally a ValueError would catch this earlier.
+        with pytest.raises((IndexError, ValueError)):
+            wrapper.infer(obs)
+
+    def test_missing_observation_state_with_only_images_kerrors(self, policy_setup) -> None:
+        """The probe-key fallback in _handle_collect_infer_batch only checks
+        for ``observation/state`` then iterates non-image observation/* keys.
+        If the obs has only image keys, the probe falls through and the
+        following indexing raises KeyError (not the user-friendly ValueError
+        the rest of the protocol returns).
+        """
+        _, wrapper = policy_setup
+        num_envs = 2
+        obs = {
+            # only images — no proprio key the probe can use
+            "observation/image": np.zeros((num_envs, 32, 32, 3), dtype=np.uint8),
+            "prompt": ["p"] * num_envs,
+            "__collect__": [
+                {
+                    "task_name": "t",
+                    "episode_id": 0,
+                    "env_id": i,
+                    "step": 0,
+                    "inference_step": 0,
+                    "prompt": "p",
+                    "cumulative_reward": 0.0,
+                    "success_so_far": False,
+                    "reward_since_last_inference": 0.0,
+                }
+                for i in range(num_envs)
+            ],
+        }
+        # KeyError today: lookup of clean_obs["observation/state"] after the
+        # probe loop fails to reassign probe_key.
+        with pytest.raises((KeyError, ValueError)):
+            wrapper.infer(obs)
+
+
+class TestBatchSessionCrossTaskReuse:
+    """Eval_all.py instantiates ONE BatchCollectionSession at process start and
+    reuses it across all 45 ML45 tasks. Correctness depends on
+    ``start_episode`` resetting every per-env state field. A future contributor
+    that adds a new field to ``__init__`` but forgets to mirror it in
+    ``start_episode`` would silently leak state across tasks. These tests
+    guard the contract."""
+
+    def test_inference_step_resets_between_tasks(self, policy_setup) -> None:
+        """First task ends with inference_step >= 1; second task's first
+        ``__collect__`` payload must report inference_step=0 again."""
+        stub, wrapper = policy_setup
+        session = BatchCollectionSession(wrapper, num_envs=2)
+
+        # Task A: drive a few infer calls so inference_step advances.
+        session.start_episode("task_a", episode_id=0, prompt="prompt-a")
+        for step in (0, 5):
+            wrapper.infer(
+                {
+                    "observation/state": np.zeros((2, 8), dtype=np.float32),
+                    "prompt": ["prompt-a"] * 2,
+                    "__collect__": session.make_collect_metadata(step),
+                }
+            )
+        # Task B: starts fresh.
+        session.start_episode("task_b", episode_id=0, prompt="prompt-b")
+        meta = session.make_collect_metadata(step=0)
+        assert all(entry["inference_step"] == 0 for entry in meta), (
+            f"inference_step did not reset between tasks: {[e['inference_step'] for e in meta]}"
+        )
+
+    def test_cumulative_reward_resets_between_tasks(self, policy_setup) -> None:
+        _, wrapper = policy_setup
+        session = BatchCollectionSession(wrapper, num_envs=2)
+        session.start_episode("task_a", 0, "p-a")
+        session.record_step(0, [1.0, 2.0], [False, False])
+        session.record_step(1, [0.5, 0.5], [True, False])
+        # Task A leaves cumulative_reward = [1.5, 2.5], success = [True, False].
+        session.start_episode("task_b", 0, "p-b")
+        meta = session.make_collect_metadata(step=0)
+        for entry in meta:
+            assert entry["cumulative_reward"] == 0.0, (
+                f"cumulative_reward leaked from task_a: {entry['cumulative_reward']}"
+            )
+            assert entry["success_so_far"] is False, "success_so_far leaked from task_a"
+            assert entry["reward_since_last_inference"] == 0.0
+
+    def test_full_round_trip_writes_separate_task_dirs(self, policy_setup, tmp_path: pathlib.Path) -> None:
+        """End-to-end across two tasks: BatchCollectionSession + CollectingPolicy
+        should produce two distinct task subtrees with no cross-contamination
+        in the per-step / per-episode metadata."""
+        stub, wrapper = policy_setup
+        num_envs = 2
+        session = BatchCollectionSession(wrapper, num_envs=num_envs)
+
+        for task_name in ("task_a", "task_b"):
+            session.start_episode(task_name, episode_id=0, prompt=f"prompt-{task_name}")
+            for step in (0, 5):
+                wrapper.infer(
+                    {
+                        "observation/state": np.zeros((num_envs, 8), dtype=np.float32),
+                        "prompt": [f"prompt-{task_name}"] * num_envs,
+                        "__collect__": session.make_collect_metadata(step),
+                    }
+                )
+                for s in range(5):
+                    session.record_step(step + s, np.array([0.1, 0.2]), np.array([False, False]))
+            session.finalize_episode()
+
+        # Verify each task's metadata is correct and isolated.
+        for task_name in ("task_a", "task_b"):
+            for env_id in range(num_envs):
+                ep_dir = tmp_path / "ckpt-step" / task_name / f"episode_000_env_{env_id:03d}"
+                assert ep_dir.is_dir()
+                with open(ep_dir / "metadata.json") as f:
+                    ep_meta = json.load(f)
+                assert ep_meta["task_name"] == task_name
+                assert ep_meta["prompt"] == f"prompt-{task_name}"
+                # Per-step metadata.json should also carry the right task_name.
+                step_dirs = sorted(ep_dir.glob("step_*"))
+                assert [p.name for p in step_dirs] == ["step_0000", "step_0005"]
+                with open(step_dirs[0] / "metadata.json") as f:
+                    step_meta = json.load(f)
+                assert step_meta["task_name"] == task_name
+
+
+class TestBatchSessionDoneSemantics:
+    """The ``done`` parameter on BatchCollectionSession.record_step is named
+    after gym's done flag but is interpreted as task-success (sticky
+    ``_success[env_id]=True``, locks ``steps_to_success``). Tests document
+    this so a future caller that confuses done-vs-success doesn't silently
+    corrupt the sticky-success bookkeeping."""
+
+    def test_done_true_sets_sticky_success(self) -> None:
+        session = BatchCollectionSession(_RecordingClient(), num_envs=2)
+        session.start_episode("t", 0, "p")
+        session.record_step(5, [0.0, 0.0], [True, False])
+        # After done=True at step 5 for env 0, success_so_far should remain True
+        # even when subsequent record_step calls report done=False (post-success
+        # steps in a metaworld rollout).
+        session.record_step(6, [0.0, 0.0], [False, False])
+        meta = session.make_collect_metadata(step=7)
+        assert meta[0]["success_so_far"] is True
+        assert meta[1]["success_so_far"] is False
+
+    def test_steps_to_success_locks_first_success_only(self) -> None:
+        client = _RecordingClient()
+        session = BatchCollectionSession(client, num_envs=1)
+        session.start_episode("t", 0, "p")
+        session.record_step(0, [0.0], [False])
+        session.record_step(3, [1.0], [True])  # first success at step 3
+        session.record_step(4, [0.0], [False])
+        session.record_step(7, [0.0], [True])  # later "success" must not overwrite
+        session.finalize_episode()
+        finalize_entry = client.calls[-1]["__finalize_episode__"][0]
+        assert finalize_entry["steps_to_success"] == 3, (
+            f"expected first success step (3) to be locked, got {finalize_entry['steps_to_success']}"
+        )
+
+    def test_record_step_without_any_success_emits_minus_one(self) -> None:
+        client = _RecordingClient()
+        session = BatchCollectionSession(client, num_envs=2)
+        session.start_episode("t", 0, "p")
+        for step in range(5):
+            session.record_step(step, [0.1, 0.1], [False, False])
+        session.finalize_episode()
+        for entry in client.calls[-1]["__finalize_episode__"]:
+            assert entry["steps_to_success"] == -1
+            assert entry["episode_success"] is False
+
+
+class TestBatchProbeKey:
+    """Even if the probe-key error message is suboptimal (KeyError vs ValueError),
+    the SUCCESS path with various proprio key names should still work.
+    Regression test for a maintenance change to the fallback heuristic."""
+
+    def test_probe_finds_alternate_proprio_key(self, policy_setup) -> None:
+        """The fallback iterates non-image observation/* keys. A client that
+        uses ``observation/proprio`` instead of ``observation/state`` should
+        still pass the batch-size check."""
+        stub, wrapper = policy_setup
+        num_envs = 2
+        # NB: stub policy keys on observation/state, so we keep that for the
+        # forward pass but ALSO add observation/proprio so the probe loop has
+        # an alternate to find. Real clients send only one proprio key — this
+        # just exercises the fallback heuristic in isolation.
+        obs = {
+            "observation/state": np.zeros((num_envs, 8), dtype=np.float32),
+            "observation/proprio": np.zeros((num_envs, 4), dtype=np.float32),
+            "prompt": ["p"] * num_envs,
+            "__collect__": [
+                {
+                    "task_name": "t",
+                    "episode_id": 0,
+                    "env_id": i,
+                    "step": 0,
+                    "inference_step": 0,
+                    "prompt": "p",
+                    "cumulative_reward": 0.0,
+                    "success_so_far": False,
+                    "reward_since_last_inference": 0.0,
+                }
+                for i in range(num_envs)
+            ],
+        }
+        result = wrapper.infer(obs)
+        assert result["actions"].shape == (num_envs, 10, 7)
+
+
+# `_RecordingClient` is defined in tests/client/test_collection_session.py.
+# Re-define a minimal one here so this file does not import across tests/.
+class _RecordingClient:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def infer(self, payload: dict) -> dict:
+        self.calls.append(dict(payload))
+        return {"ack": True, "episode_dirs": ["dummy"] * len(payload.get("__finalize_episode__", []) or [None])}

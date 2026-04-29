@@ -8,10 +8,10 @@ This is a fork of Physical Intelligence's openpi repository for **activation col
 
 | Client | Architecture | Venv | Activation Collection |
 |--------|-------------|------|----------------------|
-| **MetaWorld** | In-process (loads policy directly) | Root venv | In-process (`main.py --collect`, `eval_all.py --collect`) |
-| **LIBERO** | Server-client over WebSocket | **Separate venv (Python 3.8)** in `examples/libero_env/` | Server-side (`--collect_activations` on server, `--collect` on client) |
-| **RoboCasa** | Server-client over WebSocket | **Separate venv (Python 3.11)** in `examples/robocasa_env/` | Server-side (same protocol as LIBERO) |
-| **DROID** | Server-client over WebSocket; real-robot control laptop | Root venv (server), DROID conda env + `openpi-client` (laptop) | Server-side (same protocol as LIBERO) |
+| **MetaWorld** | Server-client over WebSocket; client runs vectorized envs | Root venv | Server-side, batched (list-shaped `__collect__`, one server-side forward pass per `num_envs`) |
+| **LIBERO** | Server-client over WebSocket | **Separate venv (Python 3.8)** in `examples/libero_env/` | Server-side, single-env (dict-shaped `__collect__`) |
+| **RoboCasa** | Server-client over WebSocket | **Separate venv (Python 3.11)** in `examples/robocasa_env/` | Server-side, single-env (same protocol as LIBERO) |
+| **DROID** | Server-client over WebSocket; real-robot control laptop | Root venv (server), DROID conda env + `openpi-client` (laptop) | Server-side, single-env (same protocol as LIBERO) |
 
 Canonical activation-collection reference: [`docs/activation_collection.md`](docs/activation_collection.md). For per-client workflow details (dataset generation, training configs, eval commands), read the respective `examples/{client}/README.md`.
 

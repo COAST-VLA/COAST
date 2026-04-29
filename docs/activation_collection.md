@@ -6,17 +6,34 @@ link here instead of duplicating the protocol.
 
 ## Overview
 
-Two deployment patterns cover every supported client:
+All clients use a **server-side** collection pattern: a "collection-mode"
+policy server wraps the policy in a `CollectingPolicy` and writes files on
+the **server's** filesystem; the client only sends `__collect__` /
+`__finalize_episode__` metadata over WebSocket.
 
-| Pattern | Used by | How activations reach disk | Entry point |
+| Client | Per-inference batch | `__collect__` shape | Entry point |
 |---|---|---|---|
-| **In-process** | MetaWorld | Script loads the policy directly, runs rollouts, writes `.npz` locally. | `examples/metaworld/main.py --collect`, `examples/metaworld/eval_all.py --collect` |
-| **Server-side** | LIBERO, RoboCasa, DROID | A "collection-mode" policy server wraps the policy in a `CollectingPolicy` and writes files on the **server's** filesystem; the client only sends `__collect__` / `__finalize_episode__` metadata over WebSocket. | `scripts/serve_policy.py --collect_activations` (pi0/pi0.5/pi0-FAST), `groot_env/serve.py --collect_activations` (GR00T N1.5) |
+| MetaWorld   | `num_envs` parallel envs share one inference call | **list** of N per-env entries | `examples/metaworld/main.py --collect`, `examples/metaworld/eval_all.py --collect` |
+| LIBERO      | 1 env per inference                                | **dict** (single env)          | `examples/libero_env/main.py --collect`, `examples/libero_env/eval_all.py --collect` |
+| RoboCasa    | 1 env per inference                                | **dict** (single env)          | `examples/robocasa_env/main.py --collect`, `examples/robocasa_env/eval_all.py --collect` |
+| DROID       | 1 env per inference                                | **dict** (single env)          | DROID client                         |
+| GR00T N1.5  | 1 env per inference                                | **dict** (single env)          | `groot_env/serve.py --collect_activations` |
 
-The **on-disk schema is the same** regardless of which pattern produced it, so
-downstream analysis tooling is pattern-agnostic. Only the per-step `.npz`
-file set differs — those are schema-versioned (`v1` / `fast_v1` / `groot_v1`)
-and picked automatically from the model type.
+The server (`scripts/serve_policy.py --collect_activations`,
+`groot_env/serve.py --collect_activations`) auto-dispatches on the
+`__collect__` shape: a `dict` is treated as a single-env call, a `list` as a
+batched call where each entry maps to a slice of the batch dim of the
+captured intermediates. The on-disk tree is identical either way.
+
+Client-side helpers in `openpi_client.collection_session`:
+- `CollectionSession` — single-env bookkeeping (LIBERO / RoboCasa / DROID).
+- `BatchCollectionSession` — `num_envs`-env bookkeeping (MetaWorld). Owns N
+  per-env states and emits `__collect__` / `__finalize_episode__` as a list.
+
+The **on-disk schema is the same** regardless of client, so downstream
+analysis tooling is client-agnostic. Only the per-step `.npz` file set
+differs — those are schema-versioned (`v1` / `fast_v1` / `groot_v1`) and
+picked automatically from the model type.
 
 ### Collection-mode identifiers
 
@@ -31,9 +48,8 @@ per-step `metadata.json` for `fast_v1`):
 
 ## Output directory layout
 
-Both patterns write the same tree. In-process collection uses
-`--collect_output_dir` (MetaWorld); server-side uses `--output-dir` on the
-server CLI.
+The server writes the same tree for every client. Configure the root with
+`--output-dir` on the server CLI.
 
 ```
 <output_root>/<checkpoint_step>/<task_name>/
@@ -61,11 +77,10 @@ Where:
 
 ### `v1` — pi0 / pi0.5 (diffusion)
 
-Written by `save_step_activations` in both
-`src/openpi/serving/activation_collector.py` and
-`examples/metaworld/main.py` (in-process). `D = num_denoising_steps`,
-`L = num_suffix_layers`, `H = action_horizon`, `A = action_dim`,
-`C = hidden_dim`, `F = ff_inner_dim`.
+Written by `save_step_activations` in
+`src/openpi/serving/activation_collector.py`.
+`D = num_denoising_steps`, `L = num_suffix_layers`, `H = action_horizon`,
+`A = action_dim`, `C = hidden_dim`, `F = ff_inner_dim`.
 
 | File | Array keys | Shape | Dtype |
 |---|---|---|---|
@@ -109,7 +124,7 @@ its shape is `(S, C)`. Pi0's `adarms_cond` is a per-step pooled conditioning
 vector of shape `(D, C)`. Everything else is semantically aligned — per-layer
 residual streams and MLP expansions across denoising steps.
 
-## Wire protocol (server-side only)
+## Wire protocol
 
 The collection-mode server (`scripts/serve_policy.py --collect_activations` or
 `groot_env/serve.py --collect_activations`) is **collection-only**: every
@@ -121,9 +136,15 @@ The transport is standard openpi WebSocket (`msgpack_numpy` serialization,
 same `policy.infer(obs_dict)` shape). The magic keys are pulled off before
 dispatch.
 
-The reference client-side helper is
-`openpi_client.collection_session.CollectionSession` — LIBERO, RoboCasa, and
-DROID all use it. Writing a custom client just means speaking the spec below.
+Two client-side helpers in `openpi_client.collection_session` cover both
+batching modes:
+- `CollectionSession` — one env per inference call. Used by LIBERO,
+  RoboCasa, DROID. `__collect__` is a single dict.
+- `BatchCollectionSession` — `num_envs` envs per inference call (vectorized
+  rollouts). Used by MetaWorld. `__collect__` is a list of `num_envs` dicts;
+  obs arrays are pre-batched with shape `(num_envs, ...)`.
+
+Writing a custom client means speaking one of the two specs below.
 
 ### Server metadata (on connect)
 
@@ -147,17 +168,21 @@ and `denoising_steps` (all pre-startup config).
 
 ### Per-step inference call: `__collect__`
 
-Send a normal inference obs dict plus a `__collect__` field containing
-per-step bookkeeping. The server runs `policy.infer_with_intermediates(obs)`,
-slices `env_id` from the batch dim of each intermediate, writes the
-activations + per-step `metadata.json`, and returns the actions exactly
-like a normal infer call.
+Send a normal inference obs dict plus a `__collect__` field. The server runs
+`policy.infer_with_intermediates(obs)` once, writes per-env activations +
+`metadata.json`, and returns the actions like a normal infer call. Two
+shapes are accepted:
+
+#### Single-env (LIBERO / RoboCasa / DROID)
+
+`__collect__` is a single dict; obs arrays are 1-D / unbatched (the server
+adds the leading batch dim).
 
 ```python
 {
     # --- normal inference fields (single example; server adds the batch dim) ---
-    "observation/image":       <H, W, 3 uint8>,   # base camera
-    "observation/wrist_image": <H, W, 3 uint8>,   # wrist camera
+    "observation/image":       <H, W, 3 uint8>,
+    "observation/wrist_image": <H, W, 3 uint8>,
     "observation/state":       <state_dim float32>,
     "prompt":                  "<task description>",
 
@@ -176,11 +201,51 @@ like a normal infer call.
 }
 ```
 
-Server response is the standard infer dict:
+Server response:
 
 ```python
 {"actions": <action_horizon, action_dim float32>, "policy_timing": {...}}
 ```
+
+#### Batched (MetaWorld)
+
+`__collect__` is a list of `num_envs` dicts; obs arrays are pre-batched with
+shape `(num_envs, ...)`. The server runs **one** forward pass and slices
+`env_id` from the batch dim of each intermediate per entry — preserving the
+throughput of vectorized rollouts.
+
+```python
+{
+    "observation/image":       <num_envs, H, W, 3 uint8>,
+    "observation/wrist_image": <num_envs, H, W, 3 uint8>,
+    "observation/state":       <num_envs, state_dim float32>,
+    "prompt":                  ["<prompt>"] * num_envs,
+
+    "__collect__": [
+        {  # entry per env_id, same fields as the single-env case
+            "task_name":                   "reach-v3",
+            "episode_id":                  0,
+            "env_id":                      env_id,
+            "step":                        47,
+            "inference_step":              8,
+            "prompt":                      "<task description>",
+            "cumulative_reward":           0.0,
+            "success_so_far":              false,
+            "reward_since_last_inference": 0.0,
+        }
+        for env_id in range(num_envs)
+    ],
+}
+```
+
+Server response keeps the batch dim on `actions`:
+
+```python
+{"actions": <num_envs, action_horizon, action_dim float32>, "policy_timing": {...}}
+```
+
+The list length must equal the obs batch dim, otherwise the server raises
+`ValueError("Batch size mismatch: ...")`.
 
 ### Per-episode finalization call: `__finalize_episode__`
 
@@ -188,6 +253,11 @@ After the rollout loop ends (success, max-steps, or exception), send a
 **separate** call with only the `__finalize_episode__` field. The server
 skips the model entirely, writes `episode_NNN_env_NNN/metadata.json` +
 `rewards.npz`, and returns an ack (no `actions` key).
+
+Like `__collect__`, the field accepts a single dict (single-env) or a list
+of dicts (batched).
+
+#### Single-env finalize
 
 ```python
 {
@@ -213,16 +283,48 @@ Server response:
 {"ack": True, "episode_dir": "<absolute path>"}
 ```
 
+#### Batched finalize
+
+```python
+{
+    "__finalize_episode__": [
+        {  # entry per env_id, same fields as the single-env case
+            "task_name":             "reach-v3",
+            "episode_id":            0,
+            "env_id":                env_id,
+            "prompt":                "...",
+            "episode_success":       ...,
+            "total_reward":          ...,
+            "steps_to_success":      ...,
+            "total_env_steps":       ...,
+            "total_inference_steps": ...,
+            "per_step_reward":       [...],
+            "per_step_success":      [...],
+        }
+        for env_id in range(num_envs)
+    ],
+}
+```
+
+Server response:
+
+```python
+{"ack": True, "episode_dirs": ["<env 0 path>", "<env 1 path>", ...]}
+```
+
 ### State ownership
 
 The collection server is **stateless between requests**. It only knows
 `output_root`, `checkpoint_step`, `policy_dir`, and `config_name` (from
 its startup args). Everything else — current task, inference_step counter,
-per-step rewards — lives on the **client**. `CollectionSession` is the
-reference implementation of that bookkeeping.
+per-step rewards — lives on the **client**. `CollectionSession` /
+`BatchCollectionSession` are the reference implementations of that
+bookkeeping.
 
-Two clients can talk to one collection server simultaneously as long as
-their `(task_name, episode_id, env_id, step)` tuples don't collide.
+Multiple clients can talk to one collection server simultaneously as long
+as their `(task_name, episode_id, env_id, step)` tuples don't collide.
+Vectorized clients (MetaWorld) avoid intra-batch collisions because every
+list entry has a distinct `env_id`.
 
 ### Task-name validation
 
@@ -236,6 +338,10 @@ prevents writes outside `<output_root>`. See `_sanitize_task_name` in
 - Neither magic key present → `ValueError("Collection-only server requires either __collect__ or __finalize_episode__ ...")`
 - Both present → `ValueError("Request contains both __collect__ and __finalize_episode__; only one is allowed per call.")`
 - Invalid `task_name` → `ValueError("Invalid task_name {!r}: ...")`
+- Single-env path on a multi-example obs → `ValueError("Collection mode only supports single-example inputs ... Send one inference call per env.")`
+- Batched path with a 1-D obs → `ValueError("Batched collection requires pre-batched obs ...")`
+- Batched path with batch dim != list length → `ValueError("Batch size mismatch: ...")`
+- Empty `__collect__` / `__finalize_episode__` list → `ValueError("... must not be empty.")`
 
 In all cases the WebSocket layer sends the traceback back as a string frame
 and closes the connection with `INTERNAL_ERROR`.
@@ -244,35 +350,10 @@ server traceback inlined.
 
 ## Running collection
 
-### MetaWorld (in-process)
-
-No server involved. The entry-point script loads the policy from
-`--policy.dir` directly.
-
-```bash
-# Single task — pi0.5 (PyTorch auto-detected):
-CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/main.py \
-    --collect --env_name reach-v3 --num_envs 16 \
-    --policy.config=pi05_metaworld \
-    --policy.dir=/path/to/checkpoint \
-    --collect_output_dir ./activations
-
-# Full sweep — pi0-FAST (JAX):
-CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
-    --collect --split subset --num_envs 16 \
-    --policy.config=pi0_fast_metaworld \
-    --policy.dir=/path/to/checkpoint \
-    --collect_output_dir ./activations
-```
-
-Videos and `results.json` continue to go to `--output_dir`, unaffected by
-`--collect`.
-
-### LIBERO / RoboCasa / DROID (server-side)
-
 Start a collection-mode policy server in one terminal, run the client with
-`--collect` in another. The client speaks the wire protocol above via the
-shared `CollectionSession` helper.
+`--collect` in another. Every client uses the same launch pattern; the only
+difference is which `--policy.config` you point the server at and which
+client venv you run from.
 
 ```bash
 # Terminal 1 — pi0.5 diffusion (PyTorch required for activation collection):
@@ -298,10 +379,17 @@ uv run python serve.py --port 8000 --collect_activations \
 ```
 
 ```bash
-# Terminal 2 — client, any of (defaults shown; override with --task_suite_name / --task_set / --tasks):
+# Terminal 2 — client, any of (defaults shown; override with --env_name / --task_suite_name / --task_set / --tasks):
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --collect --split subset --num_envs 15
 (cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py --collect --num_workers 5)
 (cd examples/robocasa_env && MUJOCO_GL=egl uv run python eval_all.py --collect --num_workers 5)
 ```
+
+The metaworld client sends list-shaped `__collect__` payloads (one entry per
+env in the vectorized batch), so a single `--collect_activations` server
+serves all `num_envs` rollouts from one forward pass. LIBERO / RoboCasa
+clients send dict-shaped payloads; their `eval_all.py` parallelizes by
+spawning subprocess workers, all hitting the same shared server.
 
 Notes:
 

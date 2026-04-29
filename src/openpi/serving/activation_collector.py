@@ -192,6 +192,8 @@ class CollectingPolicy(_base_policy.BasePolicy):
             raise ValueError(f"Request contains both {_COLLECT_KEY} and {_FINALIZE_KEY}; only one is allowed per call.")
 
         if finalize_meta is not None:
+            if isinstance(finalize_meta, list):
+                return self._handle_finalize_batch(finalize_meta)
             return self._handle_finalize(finalize_meta)
 
         if collect_meta is None:
@@ -199,6 +201,8 @@ class CollectingPolicy(_base_policy.BasePolicy):
                 f"Collection-only server requires either {_COLLECT_KEY} or {_FINALIZE_KEY} to be set on every request."
             )
 
+        if isinstance(collect_meta, list):
+            return self._handle_collect_infer_batch(obs, collect_meta)
         return self._handle_collect_infer(obs, collect_meta)
 
     def reset(self) -> None:
@@ -288,6 +292,72 @@ class CollectingPolicy(_base_policy.BasePolicy):
         if "policy_timing" in result:
             response["policy_timing"] = result["policy_timing"]
         return response
+
+    def _handle_collect_infer_batch(self, obs: dict, collect_metas: list) -> dict:
+        """Batched per-step inference + activation save.
+
+        Used by the metaworld client (and any other client running vectorized
+        envs in one forward pass). One forward pass writes one step_dir per
+        entry in collect_metas, indexed into the batch dim of the captured
+        intermediates by each entry's env_id.
+
+        The single-env path (_handle_collect_infer) wraps a 1-D obs in a
+        leading batch dim before calling the underlying policy; here we
+        require the caller to send a pre-batched obs (shape (B, ...)). The
+        batch size must equal len(collect_metas) so we can map each
+        intermediate slice to its metadata.
+        """
+        if not collect_metas:
+            raise ValueError(f"{_COLLECT_KEY} list must not be empty.")
+
+        clean_obs = {k: v for k, v in obs.items() if k not in (_COLLECT_KEY, _FINALIZE_KEY)}
+
+        probe_key = "observation/state"
+        if probe_key not in clean_obs:
+            for key in clean_obs:
+                if key.startswith("observation/") and "image" not in key:
+                    probe_key = key
+                    break
+        probe_arr = np.asarray(clean_obs[probe_key])
+        if probe_arr.ndim < 2:
+            raise ValueError(
+                f"Batched collection requires pre-batched obs ({probe_key} shape (B, ...)), "
+                f"got shape {tuple(probe_arr.shape)}."
+            )
+        batch_size = int(probe_arr.shape[0])
+        if batch_size != len(collect_metas):
+            raise ValueError(
+                f"Batch size mismatch: {probe_key} has batch dim {batch_size} "
+                f"but {_COLLECT_KEY} list has {len(collect_metas)} entries."
+            )
+
+        with self._intermediates_lock:
+            result, intermediates = self._policy.infer_with_intermediates(clean_obs)
+
+        for entry in collect_metas:
+            self._save_step_fn(
+                step_dir=self._step_dir(entry),
+                intermediates=intermediates,
+                env_id=int(entry["env_id"]),
+                step_metadata=dict(entry),
+            )
+
+        # Return actions with the batch dim intact (B, action_horizon, action_dim)
+        # so the client can dispatch per-env.
+        response: dict = {"actions": np.asarray(result["actions"])}
+        if "policy_timing" in result:
+            response["policy_timing"] = result["policy_timing"]
+        return response
+
+    def _handle_finalize_batch(self, finalize_metas: list) -> dict:
+        """Batched per-episode finalization. One ack list, one entry per env."""
+        if not finalize_metas:
+            raise ValueError(f"{_FINALIZE_KEY} list must not be empty.")
+        episode_dirs = []
+        for entry in finalize_metas:
+            ack = self._handle_finalize(entry)
+            episode_dirs.append(ack["episode_dir"])
+        return {"ack": True, "episode_dirs": episode_dirs}
 
     def _handle_finalize(self, finalize_meta: dict) -> dict:
         episode_dir = self._episode_dir(finalize_meta)

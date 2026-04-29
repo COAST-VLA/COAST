@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 
 import numpy as np
+from openpi_client.collection_session import BatchCollectionSession
 from openpi_client.collection_session import CollectionSession
 import pytest
 
@@ -174,3 +175,154 @@ class TestFinalizeEpisode:
         assert finalize["total_env_steps"] == 3
         assert finalize["per_step_success"] == [False, False, True]
         assert finalize["per_step_reward"] == [0.0, 0.0, 1.0]
+
+
+# ----------------------------------------------- BatchCollectionSession tests
+
+
+class TestBatchCollectionSession:
+    """Vectorized rollouts (one inference call per N envs) use list-shaped
+    __collect__ / __finalize_episode__ payloads. The bookkeeping mirrors the
+    single-env CollectionSession but tracks per-env state."""
+
+    def test_make_collect_metadata_returns_list_per_env(self) -> None:
+        session = BatchCollectionSession(_RecordingClient(), num_envs=3)
+        session.start_episode("t", episode_id=0, prompt="p")
+        meta = session.make_collect_metadata(step=5)
+        assert isinstance(meta, list)
+        assert len(meta) == 3
+        for env_id, entry in enumerate(meta):
+            assert entry["task_name"] == "t"
+            assert entry["episode_id"] == 0
+            assert entry["env_id"] == env_id
+            assert entry["step"] == 5
+            assert entry["inference_step"] == 0
+            assert entry["prompt"] == "p"
+            assert entry["cumulative_reward"] == 0.0
+            assert entry["success_so_far"] is False
+            assert entry["reward_since_last_inference"] == 0.0
+
+    def test_inference_step_advances_per_call_not_per_env(self) -> None:
+        session = BatchCollectionSession(_RecordingClient(), num_envs=2)
+        session.start_episode("t", 0, "p")
+        m0 = session.make_collect_metadata(step=0)
+        m1 = session.make_collect_metadata(step=5)
+        assert {entry["inference_step"] for entry in m0} == {0}
+        assert {entry["inference_step"] for entry in m1} == {1}
+
+    def test_record_step_tracks_per_env_reward_and_success(self) -> None:
+        client = _RecordingClient()
+        session = BatchCollectionSession(client, num_envs=3)
+        session.start_episode("t", 0, "p")
+        session.record_step(0, [1.0, 0.0, 0.5], [False, False, False])
+        session.record_step(1, [0.0, 2.0, 0.5], [True, False, False])
+        session.record_step(2, [0.0, 0.0, 0.0], [True, True, False])
+
+        # cumulative_reward should be visible in the next make_collect_metadata.
+        meta = session.make_collect_metadata(step=3)
+        assert meta[0]["cumulative_reward"] == pytest.approx(1.0)
+        assert meta[1]["cumulative_reward"] == pytest.approx(2.0)
+        assert meta[2]["cumulative_reward"] == pytest.approx(1.0)
+        # env 0 saw success at step 1, env 1 at step 2, env 2 never.
+        assert meta[0]["success_so_far"] is True
+        assert meta[1]["success_so_far"] is True
+        assert meta[2]["success_so_far"] is False
+
+    def test_finalize_episode_emits_list_payload_per_env(self) -> None:
+        client = _RecordingClient()
+        session = BatchCollectionSession(client, num_envs=3)
+        session.start_episode("task_x", episode_id=4, prompt="prompt-x")
+
+        session.make_collect_metadata(step=0)
+        session.record_step(0, [0.0, 0.0, 0.0], [False, False, False])
+        session.record_step(1, [1.0, 0.0, 0.0], [True, False, False])
+        session.make_collect_metadata(step=2)
+        session.record_step(2, [0.0, 0.5, 0.5], [True, False, False])
+
+        session.finalize_episode()
+        finalize = client.calls[-1]["__finalize_episode__"]
+        assert isinstance(finalize, list)
+        assert len(finalize) == 3
+
+        # env 0: succeeded at step 1, total reward 1.0
+        assert finalize[0]["env_id"] == 0
+        assert finalize[0]["episode_success"] is True
+        assert finalize[0]["steps_to_success"] == 1
+        assert finalize[0]["total_reward"] == pytest.approx(1.0)
+        assert finalize[0]["per_step_reward"] == [0.0, 1.0, 0.0]
+        assert finalize[0]["per_step_success"] == [False, True, True]
+
+        # env 1: never succeeded, total reward 0.5
+        assert finalize[1]["env_id"] == 1
+        assert finalize[1]["episode_success"] is False
+        assert finalize[1]["steps_to_success"] == -1
+        assert finalize[1]["total_reward"] == pytest.approx(0.5)
+
+        # env 2: never succeeded, total reward 0.5
+        assert finalize[2]["episode_success"] is False
+        assert finalize[2]["total_reward"] == pytest.approx(0.5)
+
+        # All three envs share the same task_name / episode_id / prompt.
+        for entry in finalize:
+            assert entry["task_name"] == "task_x"
+            assert entry["episode_id"] == 4
+            assert entry["prompt"] == "prompt-x"
+            assert entry["total_inference_steps"] == 2
+            assert entry["total_env_steps"] == 3
+
+    def test_zero_num_envs_rejected(self) -> None:
+        with pytest.raises(ValueError, match="num_envs"):
+            BatchCollectionSession(_RecordingClient(), num_envs=0)
+
+    def test_record_step_wrong_length_rejected(self) -> None:
+        session = BatchCollectionSession(_RecordingClient(), num_envs=3)
+        session.start_episode("t", 0, "p")
+        with pytest.raises(ValueError, match="reward must have shape"):
+            session.record_step(0, [0.0, 0.0], [False, False, False])
+        with pytest.raises(ValueError, match="done must have shape"):
+            session.record_step(0, [0.0, 0.0, 0.0], [False, False])
+
+    def test_start_episode_resets_state(self) -> None:
+        session = BatchCollectionSession(_RecordingClient(), num_envs=2)
+        session.start_episode("a", 0, "p-a")
+        session.make_collect_metadata(step=0)
+        session.record_step(0, [1.0, 1.0], [True, False])
+
+        session.start_episode("b", 5, "p-b")
+        meta = session.make_collect_metadata(step=0)
+        for entry in meta:
+            assert entry["task_name"] == "b"
+            assert entry["episode_id"] == 5
+            assert entry["prompt"] == "p-b"
+            assert entry["inference_step"] == 0
+            assert entry["cumulative_reward"] == 0.0
+            assert entry["success_so_far"] is False
+
+    def test_reward_since_last_inference_resets_per_env(self) -> None:
+        session = BatchCollectionSession(_RecordingClient(), num_envs=2)
+        session.start_episode("t", 0, "p")
+        session.make_collect_metadata(step=0)  # snapshot 0
+        session.record_step(0, [0.3, 0.1], [False, False])
+        session.record_step(1, [0.2, 0.4], [False, False])
+        m1 = session.make_collect_metadata(step=2)
+        assert m1[0]["reward_since_last_inference"] == pytest.approx(0.5)
+        assert m1[1]["reward_since_last_inference"] == pytest.approx(0.5)
+        # No new env steps -> next snapshot's delta is 0.
+        m2 = session.make_collect_metadata(step=3)
+        assert m2[0]["reward_since_last_inference"] == pytest.approx(0.0)
+        assert m2[1]["reward_since_last_inference"] == pytest.approx(0.0)
+
+    def test_record_step_accepts_numpy_arrays(self) -> None:
+        """Vectorized envs return reward / done as numpy arrays. The session
+        must handle them without manual list conversion."""
+        session = BatchCollectionSession(_RecordingClient(), num_envs=3)
+        session.start_episode("t", 0, "p")
+        session.record_step(
+            0,
+            np.array([0.5, 1.0, 0.0], dtype=np.float32),
+            np.array([False, True, False]),
+        )
+        meta = session.make_collect_metadata(step=1)
+        assert meta[0]["cumulative_reward"] == pytest.approx(0.5)
+        assert meta[1]["cumulative_reward"] == pytest.approx(1.0)
+        assert meta[1]["success_so_far"] is True
