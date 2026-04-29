@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full libero_spatial sweep for the filtered-BC baseline on LIBERO.
+# Full libero_10 sweep for the filtered-BC baseline on LIBERO.
 #
 # Each task spawns a pi0.5 policy server subprocess (root venv) + a rollout
 # client in examples/libero_env/'s Python 3.8 venv. After LoRA merge, a new
@@ -21,7 +21,7 @@ export PYTHONUNBUFFERED=1
 
 BASE_CKPT=${BASE_CKPT:-/home/kim34/projects_brandon/openpi-metaworld/checkpoints/openpi-libero-2000}
 RESULTS_JSON=${RESULTS_JSON:-experiments/filtered_bc/results_libero.json}
-LIBERO_SUITE=${LIBERO_SUITE:-libero_spatial}
+LIBERO_SUITE=${LIBERO_SUITE:-libero_10}
 
 mkdir -p experiments/filtered_bc/logs
 
@@ -30,10 +30,9 @@ uv run python -u -m experiments.filtered_bc.run_filtered_bc \
     --args.base-ckpt "$BASE_CKPT" \
     --args.libero-suite "$LIBERO_SUITE" \
     --args.split train \
-    --args.num-rollouts 15 \
-    --args.num-train-steps 500 \
+    --args.num-rollouts 30 \
+    --args.num-train-steps 200 \
     --args.batch-size 8 \
-    --args.eval-num-episodes 15 \
-    --args.max-steps 220 \
+    --args.eval-num-episodes 30 \
     --args.replan-steps 5 \
     --args.results-json "$RESULTS_JSON"

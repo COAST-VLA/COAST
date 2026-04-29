@@ -1,6 +1,6 @@
 # Preference-BC baseline (Flow-DPO)
 
-Second parametric baseline for the activation-steering paper. Uses the **same 15-rollout-per-task data budget** but spends it on a preference-optimization LoRA fine-tune that uses BOTH successful AND failed rollouts — directly mirroring how the paper's method uses `mean(success) − mean(failure)` in activation space.
+Second parametric baseline for the activation-steering paper. Uses a **30-rollout-per-task data budget** spent on a preference-optimization LoRA fine-tune that uses BOTH successful AND failed rollouts — directly mirroring how the paper's method uses `mean(success) − mean(failure)` in activation space.
 
 Drops into the same envs as the filtered-BC baseline (MetaWorld, LIBERO, RoboCasa) via the shared `EnvAdapter` Protocol.
 
@@ -23,7 +23,7 @@ L = −E[ log σ( β · (Δ_neg − Δ_pos) ) ]
 Per task:
 
 ```
-rollout (N=15) → partition into (positives, negatives) [no filter] →
+rollout (N=30) → partition into (positives, negatives) [no filter] →
   skip if all-success or all-failure →
 Flow-DPO train 500 steps on cartesian pair pool (|pos| × |neg|) →
 merge LoRA into base weights →
@@ -39,8 +39,8 @@ experiments/preference_bc/
 ├── dpo_loss.py               # flow_dpo_loss_from_mses + logging helpers
 ├── train.py                  # train_dpo (forks filtered_bc/train.py, swaps loss)
 ├── run_preference_bc.py      # orchestrator, dispatches on --args.env
-├── run_metaworld.sh          # full ML45-train sweep
-├── run_libero.sh             # libero_spatial sweep
+├── run_metaworld.sh          # 10-task MetaWorld curated subset sweep (matches filtered-BC)
+├── run_libero.sh             # libero_10 sweep
 ├── run_robocasa.sh           # RoboCasa 7-task subset sweep
 └── README.md
 ```
@@ -80,13 +80,13 @@ bash experiments/preference_bc/run_robocasa.sh  > experiments/preference_bc/logs
 ## Key hyperparameters
 
 - `--args.beta` (DPO sharpness, default 2000.0). Start sweep at {200, 2000, 20000}.
-- `--args.num-rollouts` (default 15, matches steering budget).
+- `--args.num-rollouts` (CLI default 15; sweep scripts run 30).
 - `--args.num-train-steps` (default 500).
 - `--args.batch-size` (default 8; pair-pool size is `|pos| × |neg|`).
 
 ## Fallback
 
-If Flow-DPO proves unstable at the 15-rollout scale (training diverges / reward-accuracy never exceeds chance), swap `flow_dpo_loss_from_mses` for a hinge-style Margin-Repulsion-BC loss — single-line change in `train.py`.
+If Flow-DPO proves unstable at the 30-rollout scale (training diverges / reward-accuracy never exceeds chance), swap `flow_dpo_loss_from_mses` for a hinge-style Margin-Repulsion-BC loss — single-line change in `train.py`.
 
 ## Tests
 

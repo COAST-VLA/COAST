@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full ML45-train sweep for the filtered-BC baseline on MetaWorld.
+# 10-task MetaWorld sweep for the filtered-BC baseline.
 #
 # Launch with nohup so it survives terminal detach:
 #     nohup bash experiments/filtered_bc/run_metaworld.sh \
@@ -24,9 +24,19 @@ mkdir -p experiments/filtered_bc/logs
 uv run python -u -m experiments.filtered_bc.run_filtered_bc \
     --args.env metaworld \
     --args.base-ckpt "$BASE_CKPT" \
-    --args.split train \
-    --args.num-rollouts 15 \
-    --args.num-train-steps 500 \
+    --args.tasks \
+        coffee-push-v3 \
+        push-v3 \
+        pick-place-v3 \
+        plate-slide-back-v3 \
+        faucet-close-v3 \
+        pick-place-wall-v3 \
+        reach-v3 \
+        coffee-pull-v3 \
+        disassemble-v3 \
+        stick-push-v3 \
+    --args.num-rollouts 30 \
+    --args.num-train-steps 200 \
     --args.batch-size 8 \
-    --args.eval-num-episodes 15 \
+    --args.eval-num-episodes 30 \
     --args.results-json "$RESULTS_JSON"

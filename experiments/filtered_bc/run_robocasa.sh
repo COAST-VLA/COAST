@@ -29,9 +29,9 @@ uv run python -u -m experiments.filtered_bc.run_filtered_bc \
     --args.base-ckpt "$BASE_CKPT" \
     --args.robocasa-task-set "$ROBOCASA_TASK_SET" \
     --args.split train \
-    --args.num-rollouts 15 \
-    --args.num-train-steps 500 \
+    --args.num-rollouts 30 \
+    --args.num-train-steps 200 \
     --args.batch-size 8 \
-    --args.eval-num-episodes 15 \
+    --args.eval-num-episodes 30 \
     --args.replan-steps 5 \
     --args.results-json "$RESULTS_JSON"

@@ -1,6 +1,6 @@
 # Filtered-BC baseline (pi0.5)
 
-Parametric baseline for the activation-steering paper. Uses the **same 15-rollout-per-task data budget** as steering but spends it on LoRA fine-tuning instead of an inference-time activation hook. Supports three simulators behind a common adapter interface: **MetaWorld**, **LIBERO**, **RoboCasa**.
+Parametric baseline for the activation-steering paper. Uses a **30-rollout-per-task data budget** spent on LoRA fine-tuning instead of an inference-time activation hook. Supports three simulators behind a common adapter interface: **MetaWorld**, **LIBERO**, **RoboCasa**.
 
 Per task, the pipeline:
 
@@ -47,8 +47,8 @@ experiments/filtered_bc/
 ├── merge_save.py       # merge_lora_params, build_pytorch_model_from_merged, save_merged_jax_checkpoint
 ├── run_filtered_bc.py  # Orchestrator; dispatches on --args.env
 ├── make_report.py      # Renders results.json → markdown
-├── run_metaworld.sh    # Full MetaWorld ML45 sweep
-├── run_libero.sh       # Full LIBERO suite sweep (libero_spatial by default)
+├── run_metaworld.sh    # 10-task MetaWorld curated subset sweep
+├── run_libero.sh       # Full LIBERO suite sweep (libero_10 by default)
 └── run_robocasa.sh     # RoboCasa subset sweep (7 curated tasks by default)
 ```
 
@@ -99,7 +99,7 @@ bash experiments/filtered_bc/run_libero.sh    > experiments/filtered_bc/logs/lib
 bash experiments/filtered_bc/run_robocasa.sh  > experiments/filtered_bc/logs/robocasa.log  2>&1 &
 ```
 
-Each script runs 15 rollouts × 500 LoRA steps × batch 8 × 15 eval episodes per task on the default task list (ML45 for MetaWorld, libero_spatial for LIBERO, 7-task subset for RoboCasa). Override via env vars (`BASE_CKPT`, `RESULTS_JSON`, `LIBERO_SUITE`, `ROBOCASA_TASK_SET`).
+Each script runs 30 rollouts × 500 LoRA steps × batch 8 × 30 eval episodes per task on the default task list (10-task curated subset for MetaWorld, `libero_10` for LIBERO, 7-task subset for RoboCasa). Override via env vars (`BASE_CKPT`, `RESULTS_JSON`, `LIBERO_SUITE`, `ROBOCASA_TASK_SET`).
 
 ### Report
 

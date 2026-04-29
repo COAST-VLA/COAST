@@ -35,7 +35,7 @@ import optax
 
 from experiments.filtered_bc.envs.adapter import InferenceSample
 from experiments.preference_bc.dataset import build_preference_dataset
-from experiments.preference_bc.dpo_loss import flow_dpo_loss_from_mses
+from experiments.preference_bc.dpo_loss import flow_dpo_loss_components
 import openpi.models as _models_pkg  # noqa: F401 — ensures openpi.models namespace is registered
 from openpi.models import model as _model
 import openpi.training.config as _config
@@ -121,6 +121,28 @@ def _make_pair_loader(
 # ---- DPO train step --------------------------------------------------------------
 
 
+def compute_dpo_components(
+    model: Any,
+    rng: jax.Array,
+    obs_pos: Any,
+    act_pos: Any,
+    obs_neg: Any,
+    act_neg: Any,
+    mse_ref_pos: jax.Array,
+    mse_ref_neg: jax.Array,
+    *,
+    beta: float,
+) -> dict:
+    """Run the trainable model on both halves and return the DPO components dict.
+
+    Exposed at module scope so tests can call it with a fake model. The train step
+    wraps this in a value_and_grad closure that closes over ``beta``.
+    """
+    mse_theta_pos = model.compute_loss(rng, obs_pos, act_pos, train=True)
+    mse_theta_neg = model.compute_loss(rng, obs_neg, act_neg, train=True)
+    return flow_dpo_loss_components(mse_theta_pos, mse_ref_pos, mse_theta_neg, mse_ref_neg, beta=beta)
+
+
 def _split_pair_batch(batch_dict: dict) -> tuple[tuple, tuple]:
     """Split a pos/neg pair-dict into ``((obs_pos, act_pos), (obs_neg, act_neg))``."""
     pos_items = {k[4:]: v for k, v in batch_dict.items() if k.startswith("pos/")}
@@ -154,12 +176,11 @@ def make_dpo_train_step(train_config: _config.TrainConfig, beta: float):
         model.train()
 
         def loss_fn(model, rng, obs_p, act_p, obs_n, act_n, ref_pos, ref_neg):
-            mse_theta_pos = model.compute_loss(rng, obs_p, act_p, train=True)
-            mse_theta_neg = model.compute_loss(rng, obs_n, act_n, train=True)
-            return flow_dpo_loss_from_mses(mse_theta_pos, ref_pos, mse_theta_neg, ref_neg, beta=beta)
+            components = compute_dpo_components(model, rng, obs_p, act_p, obs_n, act_n, ref_pos, ref_neg, beta=beta)
+            return components["loss"], components
 
         diff_state = nnx.DiffState(0, train_config.trainable_filter)
-        loss, grads = nnx.value_and_grad(loss_fn, argnums=diff_state)(
+        (_loss, components), grads = nnx.value_and_grad(loss_fn, argnums=diff_state, has_aux=True)(
             model, train_rng, obs_pos, act_pos, obs_neg, act_neg, mse_ref_pos, mse_ref_neg
         )
 
@@ -186,8 +207,7 @@ def make_dpo_train_step(train_config: _config.TrainConfig, beta: float):
                 ),
             )
 
-        info = {"loss": loss}
-        return new_state, info
+        return new_state, components
 
     return dpo_train_step
 
@@ -282,7 +302,8 @@ def train_dpo(
         if step % log_interval == 0 or step == num_steps - 1:
             stacked_infos = common_utils.stack_forest(infos)
             reduced_info = jax.device_get(jax.tree.map(jnp.mean, stacked_infos))
-            logger.info(f"step {step:>6}: loss={float(reduced_info['loss']):.4f}")
+            info_str = ", ".join(f"{k}={float(v):.4f}" for k, v in reduced_info.items())
+            logger.info(f"step {step:>6d}: {info_str}")
             infos = []
         batch = next(data_iter)
 

@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Flow-DPO sweep on MetaWorld ML45-train.
+# 10-task MetaWorld sweep for the preference-BC (Flow-DPO) baseline.
+# Task list mirrors experiments/filtered_bc/run_metaworld.sh so the two
+# parametric baselines are evaluated on the same task set.
+#
+# Launch with nohup so it survives terminal detach:
 #     nohup bash experiments/preference_bc/run_metaworld.sh \
 #         > experiments/preference_bc/logs/metaworld.log 2>&1 &
 set -euo pipefail
@@ -21,10 +25,20 @@ mkdir -p experiments/preference_bc/logs
 uv run python -u -m experiments.preference_bc.run_preference_bc \
     --args.env metaworld \
     --args.base-ckpt "$BASE_CKPT" \
-    --args.split train \
-    --args.num-rollouts 15 \
-    --args.num-train-steps 500 \
+    --args.tasks \
+        coffee-push-v3 \
+        push-v3 \
+        pick-place-v3 \
+        plate-slide-back-v3 \
+        faucet-close-v3 \
+        pick-place-wall-v3 \
+        reach-v3 \
+        coffee-pull-v3 \
+        disassemble-v3 \
+        stick-push-v3 \
+    --args.num-rollouts 30 \
+    --args.num-train-steps 200 \
     --args.batch-size 8 \
-    --args.eval-num-episodes 15 \
+    --args.eval-num-episodes 30 \
     --args.beta "$BETA" \
     --args.results-json "$RESULTS_JSON"

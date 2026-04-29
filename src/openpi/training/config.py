@@ -23,6 +23,7 @@ import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
 import openpi.policies.robocasa_policy as robocasa_policy
 import openpi.shared.download as _download
+import openpi.shared.nnx_utils as nnx_utils
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
 import openpi.training.misc.polaris_config as polaris_config
@@ -905,9 +906,11 @@ _CONFIGS = [
         # Pi0.5 MetaWorld LoRA fine-tuning config, used by the filtered-BC baseline in
         # experiments/filtered_bc/. Mirrors pi05_metaworld but swaps both Gemma
         # variants to their LoRA counterparts. Trainable: LoRA adapters on PaliGemma +
-        # action expert, plus SigLip vision tower and projection heads (action_in_proj,
-        # time_mlp_*). A one-off experiment that also froze the vision tower regressed
-        # basketball-v3 from 93%/15 to 33%/15, so we leave the vision tower trainable.
+        # action expert, plus the action / time projection heads. The SigLip vision
+        # tower is FROZEN — at the 30-rollout / 500-step / batch-8 budget, leaving it
+        # trainable was the dominant source of catastrophic eval regression
+        # (e.g. coffee-push-v3: 83% rollout → 0% post-merge eval). The earlier
+        # basketball-v3 ablation suggesting the opposite was on a different scale.
         name="pi05_metaworld_low_mem_finetune",
         model=pi0_config.Pi0Config(
             pi05=True,
@@ -921,31 +924,43 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
         ),
+        # LR schedule + step count tuned for filtered-BC self-distillation on small
+        # in-distribution data (~150 samples / task). Peak LR halved from 1e-4 to 5e-5
+        # and decay_steps matched to num_train_steps so cosine actually decays during
+        # the run. See diagnostics: 500 steps caused catastrophic regression
+        # (coffee-push-v3 83% rollout → 0% eval); step sweep showed eval=100% at 200
+        # steps on the same task.
         batch_size=32,
         lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=100,
-            peak_lr=1e-4,
-            decay_steps=2_000,
-            decay_lr=1e-5,
+            warmup_steps=20,
+            peak_lr=5e-5,
+            decay_steps=200,
+            decay_lr=5e-6,
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         ema_decay=None,  # EMA off for LoRA.
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         pytorch_weight_path="/path/to/your/pytorch_weight_path",
-        num_train_steps=2_000,
-        freeze_filter=pi0_config.Pi0Config(
-            pi05=True,
-            action_horizon=32,
-            discrete_state_input=False,
-            paligemma_variant="gemma_2b_lora",
-            action_expert_variant="gemma_300m_lora",
-        ).get_freeze_filter(),
+        num_train_steps=200,
+        # Freeze base LM dense weights (everything llm-prefixed except LoRA adapters)
+        # AND the SigLip vision tower (img-prefixed). Leaves trainable: LoRA adapters
+        # on PaliGemma + action expert, action/time projection heads.
+        freeze_filter=nnx.Any(
+            pi0_config.Pi0Config(
+                pi05=True,
+                action_horizon=32,
+                discrete_state_input=False,
+                paligemma_variant="gemma_2b_lora",
+                action_expert_variant="gemma_300m_lora",
+            ).get_freeze_filter(),
+            nnx_utils.PathRegex(".*img.*"),
+        ),
     ),
     TrainConfig(
         # Pi0.5 LIBERO LoRA fine-tuning config, used by the filtered-BC baseline in
         # experiments/filtered_bc/. Mirrors pi05_libero but swaps both Gemma variants
-        # to their LoRA counterparts. Vision tower remains trainable (same rationale
-        # as pi05_metaworld_low_mem_finetune).
+        # to their LoRA counterparts. Vision tower frozen (same rationale as
+        # pi05_metaworld_low_mem_finetune).
         name="pi05_libero_low_mem_finetune",
         model=pi0_config.Pi0Config(
             pi05=True,
@@ -959,25 +974,34 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
         ),
+        # LR schedule + step count match pi05_metaworld_low_mem_finetune for
+        # filtered-BC. LIBERO has ~5x more samples per task than MetaWorld so 200
+        # steps is fewer per-sample visits (~2 vs ~10), erring conservative — the
+        # cliff is step-driven (Adam momentum / grad-norm growth), not epoch-driven.
         batch_size=32,
         lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=100,
-            peak_lr=1e-4,
-            decay_steps=2_000,
-            decay_lr=1e-5,
+            warmup_steps=20,
+            peak_lr=5e-5,
+            decay_steps=200,
+            decay_lr=5e-6,
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         ema_decay=None,
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         pytorch_weight_path="/path/to/your/pytorch_weight_path",
-        num_train_steps=2_000,
-        freeze_filter=pi0_config.Pi0Config(
-            pi05=True,
-            action_horizon=10,
-            discrete_state_input=False,
-            paligemma_variant="gemma_2b_lora",
-            action_expert_variant="gemma_300m_lora",
-        ).get_freeze_filter(),
+        num_train_steps=200,
+        # Same freeze pattern as pi05_metaworld_low_mem_finetune: freeze LM bone +
+        # vision tower; train LoRA adapters + action/time projections.
+        freeze_filter=nnx.Any(
+            pi0_config.Pi0Config(
+                pi05=True,
+                action_horizon=10,
+                discrete_state_input=False,
+                paligemma_variant="gemma_2b_lora",
+                action_expert_variant="gemma_300m_lora",
+            ).get_freeze_filter(),
+            nnx_utils.PathRegex(".*img.*"),
+        ),
     ),
     #
     # Robocasa configs.
@@ -993,8 +1017,8 @@ _CONFIGS = [
     TrainConfig(
         # Pi0.5 RoboCasa LoRA fine-tuning config, used by the filtered-BC baseline in
         # experiments/filtered_bc/. Mirrors pi05_robocasa but swaps both Gemma variants
-        # to their LoRA counterparts. Vision tower remains trainable (same rationale
-        # as pi05_metaworld_low_mem_finetune).
+        # to their LoRA counterparts. Vision tower frozen (same rationale as
+        # pi05_metaworld_low_mem_finetune).
         name="pi05_robocasa_low_mem_finetune",
         model=pi0_config.Pi0Config(
             pi05=True,
@@ -1006,24 +1030,33 @@ _CONFIGS = [
             assets=AssetsConfig(asset_id="robocasa"),
             base_config=DataConfig(prompt_from_task=True),
         ),
+        # LR schedule + step count match pi05_metaworld_low_mem_finetune for
+        # filtered-BC. RoboCasa has ~4x more samples per task than MetaWorld; 200
+        # steps is intentionally conservative — the cliff is step-driven, not
+        # epoch-driven, so fewer per-sample visits is safer.
         batch_size=32,
         lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=100,
-            peak_lr=1e-4,
-            decay_steps=2_000,
-            decay_lr=1e-5,
+            warmup_steps=20,
+            peak_lr=5e-5,
+            decay_steps=200,
+            decay_lr=5e-6,
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         ema_decay=None,
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         pytorch_weight_path="/path/to/your/pytorch_weight_path",
-        num_train_steps=2_000,
-        freeze_filter=pi0_config.Pi0Config(
-            pi05=True,
-            max_token_len=96,
-            paligemma_variant="gemma_2b_lora",
-            action_expert_variant="gemma_300m_lora",
-        ).get_freeze_filter(),
+        num_train_steps=200,
+        # Same freeze pattern as pi05_metaworld_low_mem_finetune: freeze LM bone +
+        # vision tower; train LoRA adapters + action/time projections.
+        freeze_filter=nnx.Any(
+            pi0_config.Pi0Config(
+                pi05=True,
+                max_token_len=96,
+                paligemma_variant="gemma_2b_lora",
+                action_expert_variant="gemma_300m_lora",
+            ).get_freeze_filter(),
+            nnx_utils.PathRegex(".*img.*"),
+        ),
     ),
     #
     # Fine-tuning Aloha configs.
