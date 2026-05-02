@@ -12,18 +12,14 @@ LOG_DIR="${REPO_ROOT}/${OUTPUT_ROOT}/logs"
 SCRIPT_DIR="${REPO_ROOT}/${OUTPUT_ROOT}/scripts"
 mkdir -p "$LOG_DIR" "$SCRIPT_DIR"
 
-# Same balanced-task list as run_linear_final_sweep.sh.
+# Paper-table task subset (10 tasks).
 TASKS=(
-    "basketball-v3" "coffee-pull-v3" "coffee-push-v3" "disassemble-v3"
-    "door-close-v3" "faucet-close-v3" "faucet-open-v3" "hammer-v3"
-    "handle-press-side-v3" "handle-pull-side-v3" "lever-pull-v3"
-    "peg-insert-side-v3" "peg-unplug-side-v3" "pick-place-v3"
-    "pick-place-wall-v3" "plate-slide-back-v3" "push-back-v3" "push-v3"
-    "push-wall-v3" "reach-v3" "reach-wall-v3" "shelf-place-v3" "soccer-v3"
-    "stick-pull-v3" "stick-push-v3" "sweep-into-v3" "sweep-v3"
+    "coffee-push-v3" "push-v3" "pick-place-v3" "plate-slide-back-v3"
+    "faucet-close-v3" "pick-place-wall-v3" "reach-v3" "coffee-pull-v3"
+    "disassemble-v3" "stick-push-v3"
 )
 BASE_PORT=8800
-SAE_ALPHAS="0.5 1.0"
+SAE_ALPHAS="0.25 0.5 1.0 2.0"
 
 for i in "${!TASKS[@]}"; do
     TASK="${TASKS[$i]}"

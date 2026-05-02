@@ -131,7 +131,7 @@ ActAdd vector per task).
 | Filter A `rare_thresh`        | 0.005 | Drops bottom of fire-rate distribution |
 | Filter B `bilateral_thresh`   | 0.5   | Drops features that fire similarly in both classes |
 | Var-explained floor (gate)    | 0.80  | Skip the task if SAE recon is too poor to trust |
-| Sweep α                | **{0.5, 1.0}** | Matches existing `linear_final` grid |
+| Sweep α                | **{0.25, 0.5, 1.0, 2.0}** | Wider than `linear_final` to capture per-task α sensitivity |
 
 We deliberately do not sweep over k, d_sae, expansion factor, etc. — this is a
 baseline, not a method paper. If the result is competitive, we can revisit.
@@ -151,8 +151,18 @@ single intervention point.
 
 ## End-to-end recipe (per experiment)
 
-Three steps. All commands run from the openpi-new repo root with the **root
-venv** active (`uv run ...`).
+Three steps. Each step has both a direct CLI invocation and a SLURM submitter
+script under `experiments/{exp}/src/`:
+
+| Step | Script | What it does |
+|---|---|---|
+| 1 | `run_sae_train.sh` | Train per-task TopK SAEs (1 GPU, ~1–6h depending on data size). |
+| 2 | `run_sae_fit.sh` | Encode activations through trained SAEs, apply Khan filters, write per-task v_sae to NPZ. |
+| 3 | `run_sae_steering.sh` | Per-task SLURM jobs: load policy, sweep `α ∈ {0.25, 0.5, 1.0, 2.0}` against v_sae, write `summary.json` per task. |
+
+Everything below shows the direct CLI form. The SLURM scripts wrap the same
+commands and bake in the appropriate resource asks. All commands run from the
+openpi-new repo root with the **root venv** active (`uv run ...`).
 
 ### Step 1 — train per-task SAEs
 
@@ -171,19 +181,19 @@ uv run python experiments/sae/src/train_sae.py \
   --output-dir $OPENPI_DATA_HOME/sae_checkpoints/pi0fast_metaworld \
   --d-sae-mult 4 --k 64
 
-# pi0.5 LIBERO  (~10 tasks × 4 layers)  — requires fixed activations dataset
+# pi0.5 LIBERO  (10 tasks × 1 layer at L=11)
 uv run python experiments/sae/src/train_sae.py \
   --schema pi05 \
   --activations-dir $OPENPI_DATA_HOME/activations/pi05_libero_2000_15env/openpi-libero-2000 \
   --output-dir $OPENPI_DATA_HOME/sae_checkpoints/pi05_libero \
-  --layers 5 11 17 --d-sae-mult 4 --k 64
+  --layers 11 --d-sae-mult 4 --k 64
 
-# pi0.5 RoboCasa  (~7 tasks × 4 layers)
+# pi0.5 RoboCasa  (7 tasks × 1 layer at L=11)
 uv run python experiments/sae/src/train_sae.py \
   --schema pi05 \
   --activations-dir $OPENPI_DATA_HOME/huggingface/lerobot/ksb21st/robocasa-activations-75000 \
   --output-dir $OPENPI_DATA_HOME/sae_checkpoints/pi05_robocasa \
-  --layers 5 11 17 --d-sae-mult 4 --k 64
+  --layers 11 --d-sae-mult 4 --k 64
 ```
 
 The trainer writes:
@@ -203,7 +213,7 @@ uv run python experiments/sae/src/fit_sae_vectors.py \
   --schema pi05 \
   --activations-dir $OPENPI_DATA_HOME/activations/pi05_libero_2000_15env/openpi-libero-2000 \
   --sae-dir $OPENPI_DATA_HOME/sae_checkpoints/pi05_libero \
-  --layers 5 11 17 \
+  --layers 11 \
   --output-npz $OPENPI_DATA_HOME/libero_sae_vectors.npz
 ```
 
@@ -225,11 +235,21 @@ loads `v_sae`, starts the same WebSocket policy server used by
 `experiments/{exp}/sae_steering_results/{task}/summary.json`.
 
 The matching SLURM submitter is `experiments/{exp}/src/run_sae_steering.sh` —
-one job per task, two α conditions plus baseline.
+one job per task, sweeps `α ∈ {0.25, 0.5, 1.0, 2.0}` plus a no-steering
+baseline (5 conditions per task). Already-completed conditions in an existing
+`summary.json` are skipped on re-submit.
 
 ```bash
 DRY_RUN=true bash experiments/pi0_fast_libero/src/run_sae_steering.sh    # preview
               bash experiments/pi0_fast_libero/src/run_sae_steering.sh    # submit
+```
+
+For pi05 experiments you'll likely need to override the policy checkpoint path
+(see Troubleshooting below):
+
+```bash
+CHECKPOINT_DIR=/full/path/to/pi05_libero/.../2000 \
+  bash experiments/pi05_libero/src/run_sae_steering.sh
 ```
 
 ## Diagnostics to check before trusting the result
@@ -280,7 +300,7 @@ uv run python experiments/sae/src/fit_sae_vectors.py \
   --schema pi05 \
   --activations-dir $OPENPI_DATA_HOME/activations/pi05_libero_2000_15env/openpi-libero-2000 \
   --sae-dir $OPENPI_DATA_HOME/sae_checkpoints/pi05_libero \
-  --layers 5 11 17 \
+  --layers 11 \
   --output-npz $OPENPI_DATA_HOME/libero_sae_vectors.npz
 
 # pi0.5 RoboCasa
@@ -288,7 +308,7 @@ uv run python experiments/sae/src/fit_sae_vectors.py \
   --schema pi05 \
   --activations-dir $OPENPI_DATA_HOME/huggingface/lerobot/ksb21st/robocasa-activations-75000 \
   --sae-dir $OPENPI_DATA_HOME/sae_checkpoints/pi05_robocasa \
-  --layers 5 11 17 \
+  --layers 11 \
   --output-npz $OPENPI_DATA_HOME/robocasa_pi05_sae_vectors.npz
 ```
 
@@ -297,12 +317,30 @@ uv run python experiments/sae/src/fit_sae_vectors.py \
 ```bash
 bash experiments/pi0_fast_libero/src/run_sae_steering.sh
 bash experiments/pi0_fast_metaworld/src/run_sae_steering.sh
-bash experiments/pi05_libero/src/run_sae_steering.sh
-bash experiments/pi05_robocasa/src/run_sae_steering.sh
+
+# pi0.5 experiments need CHECKPOINT_DIR pointing to the real checkpoint —
+# the committed default is a relative path (anonymity), the real checkpoints
+# may live elsewhere on your machine.
+CHECKPOINT_DIR=/path/to/pi05_libero/libero_b200_bs512/2000 \
+  bash experiments/pi05_libero/src/run_sae_steering.sh
+CHECKPOINT_DIR=/path/to/pi05_pretrain_human300/multitask_learning/75000 \
+  bash experiments/pi05_robocasa/src/run_sae_steering.sh
 ```
+
+(Same applies to `run_sae_train.sh` and `run_sae_fit.sh` for pi05 — the SAE
+training itself only needs `OPENPI_DATA_HOME` because it just reads activations,
+but the steering eval has to load the policy checkpoint.)
 
 ## Troubleshooting
 
+* **`FileNotFoundError: Metadata file (named _METADATA) does not exist at .../checkpoints/pi05_*/...`**:
+  the pi05 driver's default `--checkpoint-dir` is a relative path that may
+  not exist in your environment (we keep it generic for anonymity). Either
+  (a) symlink your real pi05 checkpoint into `openpi-new/checkpoints/<config>/...`,
+  or (b) export `CHECKPOINT_DIR=/full/path` before running `run_sae_steering.sh` —
+  the bash submitter bakes `${CHECKPOINT_DIR}` into the generated SLURM scripts.
+  The pi0-fast scripts don't have this problem because their checkpoints live
+  under `openpi-new/checkpoints/` already.
 * **`key not in NPZ`** in `sae_steering.py`: the fitter skipped this task —
   check `training_summary.json` for var-explained or `diagnostics.json` for
   n_pos / n_neg.

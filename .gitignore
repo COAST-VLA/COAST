@@ -24,6 +24,13 @@ experiments/*/steering_results/*/
 !experiments/*/steering_results/logs/
 experiments/*/steering_results/logs/*.out
 experiments/*/steering_results/logs/*.err
+experiments/*/sae_steering_results/*/
+!experiments/*/sae_steering_results/scripts/
+!experiments/*/sae_steering_results/logs/
+experiments/*/sae_steering_results/logs/*.out
+experiments/*/sae_steering_results/logs/*.err
+experiments/sae/logs/
+experiments/sae/scripts/
 experiments/*/diagnostic_results/*/
 *.mp4
 

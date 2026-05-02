@@ -28,7 +28,7 @@ TASKS=(
 )
 BASE_PORT=8900
 SWEEP_LAYER=11
-SAE_ALPHAS="0.5 1.0"
+SAE_ALPHAS="0.25 0.5 1.0 2.0"
 
 for i in "${!TASKS[@]}"; do
     TASK="${TASKS[$i]}"

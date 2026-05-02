@@ -25,7 +25,7 @@ TASKS=(
     "KITCHEN_SCENE6_put_the_yellow_and_white_mug_in_the_microwave_and_close_it"
 )
 BASE_PORT=8700
-SAE_ALPHAS="0.5 1.0"
+SAE_ALPHAS="0.25 0.5 1.0 2.0"
 
 for i in "${!TASKS[@]}"; do
     TASK="${TASKS[$i]}"
