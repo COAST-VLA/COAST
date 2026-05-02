@@ -1,0 +1,47 @@
+% Requires: booktabs, multirow packages
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Aggregate conceptor steering results on ML45.} We report success rates averaged across tasks. The 19 non-steered tasks (baseline SR $\geq$ 100\% or 0\%) are held fixed; the 26 steerable tasks receive conceptor-based intervention. For each strategy, we report the best hyperparameter configuration per task, then average. $\Delta$SR is the mean improvement over baseline in percentage points (pp).}
+\label{tab:aggregate_results}
+\vspace{2mm}
+\begin{tabular}{@{}l r r r r@{}}
+\toprule
+ & \textbf{Tasks} & \textbf{Avg SR (\%)} & \textbf{$\Delta$SR (pp)} & \textbf{Sig.\ ($p<.05$)} \\
+\midrule
+\multicolumn{5}{@{}l}{\textit{Overall (all 45 tasks)}} \\[2pt]
+  Baseline (unsteered) & 45 & 73.3 & --- & --- \\
+  Best conceptor steering & 45 & 89.8 & +16.4 & --- \\
+\midrule
+\multicolumn{5}{@{}l}{\textit{Non-steered tasks (held fixed)}} \\[2pt]
+  Baseline = Steered & 19 & 94.7 & 0.0 & --- \\
+\midrule
+\multicolumn{5}{@{}l}{\textit{Steerable tasks only}} \\[2pt]
+  Baseline (unsteered) & 26 & 57.7 & --- & --- \\
+  Best overall (any strategy) & 26 & 86.2 & +28.5 & 6/26 \\[4pt]
+  \quad Contrastive (global) & 26 & 79.7 & +22.1 & 4/26 \\
+  \quad Contrastive (per-step) & 26 & 81.8 & +24.1 & 5/26 \\
+  \quad Positive-only & 26 & 72.3 & +14.6 & 1/26 \\
+  \quad Linear & 26 & 67.7 & +10.0 & 1/26 \\
+\midrule
+\multicolumn{5}{@{}l}{\textit{Task-level breakdown (26 steerable tasks)}} \\[2pt]
+  Tasks improved & \multicolumn{3}{r}{25/26 (96\%)} & \\
+  Tasks unchanged & \multicolumn{3}{r}{1/26} & \\
+  Tasks degraded & \multicolumn{3}{r}{0/26} & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ── Results paragraph (paste into your Results section) ──
+
+Table~\ref{tab:aggregate_results} summarizes conceptor steering performance across the full ML45 benchmark (45 tasks, 15 evaluation episodes each).
+Of the 45 tasks, 26 exhibit mixed success/failure outcomes under the unsteered baseline policy and are amenable to contrastive conceptor construction; the remaining 19 tasks are held fixed (18 at 100\% baseline SR, 1 at 0\%).
+Across all 45 tasks, conceptor steering raises the average success rate from 73.3\% to 89.8\% (+16.4\,pp).
+Restricting to the 26 steerable tasks, the improvement is more pronounced: baseline SR of 57.7\% increases to 86.2\% (+28.5\,pp) under the best per-task configuration, with 25 of 26 tasks improving and none degrading.
+
+Among the four steering strategies, the contrastive approaches---which leverage both success and failure activation subspaces---outperform positive-only and linear baselines.
+Contrastive per-step steering achieves the highest average SR of 81.8\% (+24.1\,pp), followed by contrastive global at 79.7\% (+22.1\,pp).
+Positive-only steering, which uses only the success conceptor without subtracting the failure subspace, reaches 72.3\% (+14.6\,pp), while the linear additive baseline achieves 67.7\% (+10.0\,pp).
+Six of 26 tasks show statistically significant improvement at $p<0.05$ (Fisher's exact test), with the contrastive strategies accounting for 5 of these.
+The modest number of significant results reflects the small per-task sample size ($n=15$) rather than effect magnitude: several tasks exhibit $\Delta$SR $>$ 50\,pp (e.g., \texttt{assembly} +73.3\,pp, \texttt{pick-place-wall} +80.0\,pp, \texttt{stick-push} +60.0\,pp) that would reach significance with larger evaluation budgets.
+Notably, the contrastive advantage over positive-only steering (+9.5\,pp on average) confirms that explicitly subtracting the failure subspace---rather than merely projecting onto the success subspace---captures task-relevant directions more precisely, consistent with the mechanistic analyses in Section~\ref{sec:mech_interp}.

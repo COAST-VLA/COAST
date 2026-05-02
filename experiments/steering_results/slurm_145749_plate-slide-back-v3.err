@@ -1,0 +1,2 @@
+cpu-bind=MASK - nlpgpu04, task  0  0 [2723444]: mask 0xf0000000f00000 set
+slurmstepd: error: *** JOB 145749 ON nlpgpu04 CANCELLED AT 2026-04-04T23:30:31 ***

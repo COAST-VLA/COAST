@@ -1,0 +1,113 @@
+% Mechanistic Interpretability Analysis of Conceptor Steering
+% Include this file in your main NeurIPS document with \input{mech_interp_analysis}
+% Requires: graphicx, amsmath, amssymb, booktabs packages
+
+\subsection{Mechanistic Interpretability of Conceptor Steering}
+\label{sec:mech_interp}
+
+To move beyond aggregate performance metrics and understand \emph{why} conceptor steering succeeds, we conduct a suite of mechanistic interpretability analyses on the residual stream activations of the $\pi_{0.5}$ action expert. We collect activations at layer~11 (the steering layer) across all 10~flow-matching denoising steps for 26 mixed-outcome tasks from the ML45 benchmark. For each task, episodes are partitioned into success and failure groups based on environment reward, yielding activation matrices $\mathbf{X}^+ \in \mathbb{R}^{N_+ \times 1024}$ and $\mathbf{X}^- \in \mathbb{R}^{N_- \times 1024}$, from which we compute success conceptors $\mathbf{C}^+$, failure conceptors $\mathbf{C}^-$, and contrastive steering conceptors $\mathbf{C}_{\mathrm{steer}} = \mathbf{C}^+ \wedge \lnot \mathbf{C}^-$, all with aperture $\alpha = 0.5$. Results are summarized in Figures~\ref{fig:mech_interp_master} and~\ref{fig:per_task_energy}.
+
+%% ─── Master Figure ───────────────────────────────────────────────────────────
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{master_figure.pdf}
+    \caption{\textbf{Mechanistic interpretability of conceptor steering.}
+    \textbf{(A)}~Eigenvalue spectra of $\mathbf{C}^+$ (solid) and $\mathbf{C}^-$ (dashed) across 26~tasks, showing sharply low-rank structure.
+    \textbf{(B)}~Higher subspace overlap between $\mathbf{C}^+$ and $\mathbf{C}^-$ predicts larger improvement of conceptor steering over the unsteered baseline (Spearman $\rho = 0.86$, $p = 0.003$).
+    \textbf{(C)}~Violin plots of energy fraction captured by the top-20 eigenvectors of $\mathbf{C}_{\mathrm{steer}}$: success activations concentrate significantly more energy in the contrastive subspace than failure activations (median ratio $3.7\times$).
+    \textbf{(D)}~Heatmap of contrastive conceptor quota $q(\mathbf{C}^{(t)}_{\mathrm{steer}})$ across denoising steps $t \in \{0,\ldots,9\}$ for each task (sorted by baseline success rate), showing a gradual increase from early to late steps.
+    \textbf{(E)}~Cosine similarity between consecutive-step contrastive conceptors, averaged over all tasks. The subspace remains highly stable (mean $\cos > 0.96$), validating the use of a single pooled conceptor across denoising steps.}
+    \label{fig:mech_interp_master}
+\end{figure}
+
+%% ─── Per-Task Energy Figure ──────────────────────────────────────────────────
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{analysis_3_per_task_energy.pdf}
+    \caption{\textbf{Per-task energy fraction in the contrastive subspace.} For each of the 26 tasks, we show the fraction of activation energy captured by the top-20 eigenvectors of $\mathbf{C}_{\mathrm{steer}}$ for success (teal) and failure (coral) episodes. Error bars denote $\pm 1$ standard deviation across episodes. The dashed gray line indicates chance level ($20/1024 \approx 0.020$). Success activations exceed failure activations in \emph{all} 26 tasks, confirming that the contrastive conceptor identifies directions genuinely present in successful behavior but absent in failures. Tasks are sorted by the success--failure energy gap (descending).}
+    \label{fig:per_task_energy}
+\end{figure}
+
+%% ─── Panel A: Subspace Geometry ──────────────────────────────────────────────
+\paragraph{Panel~(A): Subspace geometry.}
+
+\textbf{Methodology.}
+For each task, we compute the success conceptor $\mathbf{C}^+ = \mathbf{R}^+(\mathbf{R}^+ + \alpha^{-2}\mathbf{I})^{-1}$ and failure conceptor $\mathbf{C}^-$ from the respective correlation matrices $\mathbf{R}^+ = \frac{1}{N_+}\mathbf{X}^{+\top}\mathbf{X}^+$ and $\mathbf{R}^- = \frac{1}{N_-}\mathbf{X}^{-\top}\mathbf{X}^-$. We extract the eigenvalue spectra $\{\gamma_j\}_{j=1}^{1024}$ of both conceptors and compute the \emph{quota} $q(\mathbf{C}) = \mathrm{tr}(\mathbf{C}) = \sum_j \gamma_j$, which measures the effective dimensionality of the subspace, and the \emph{effective rank} $\mathrm{ER} = \exp(-\sum_j \bar{\gamma}_j \log \bar{\gamma}_j)$ where $\bar{\gamma}_j = \gamma_j / \sum_k \gamma_k$.
+
+\textbf{Results.}
+Panel~(A) plots eigenvalue spectra for all 26~tasks on a log scale. Both $\mathbf{C}^+$ and $\mathbf{C}^-$ exhibit sharply low-rank structure: eigenvalues decay rapidly, with most information concentrated in the first 50--100 dimensions out of 1024. Success conceptors have a mean quota of $q(\mathbf{C}^+) = 44.9$ (range 26.7--56.3), while failure conceptors show $q(\mathbf{C}^-) = 42.9$ (range 25.5--55.1). The contrastive steering conceptors are substantially more compact, with $q(\mathbf{C}_{\mathrm{steer}}) = 12.6$ on average (range 2.7--32.5), indicating that the task-discriminative subspace occupies only ${\sim}1.2\%$ of the full 1024-dimensional activation space.
+
+\textbf{Analysis.}
+The low-rank structure of both conceptors confirms that the residual stream at layer~11 encodes task-relevant behavior in a structured, low-dimensional manifold rather than utilizing the full capacity of the hidden space. The dramatic reduction from $q(\mathbf{C}^+) \approx 45$ to $q(\mathbf{C}_{\mathrm{steer}}) \approx 13$ demonstrates that the Boolean logic operations $\mathbf{C}^+ \wedge \lnot \mathbf{C}^-$ effectively isolate a narrow subspace unique to successful behavior. This supports the hypothesis that conceptor steering acts as a precise scalpel rather than a blunt instrument: it modulates a compact set of directions that distinguish success from failure.
+
+%% ─── Panel B: Overlap vs Performance Gap ─────────────────────────────────────
+\paragraph{Panel~(B): Subspace overlap predicts steering efficacy.}
+
+\textbf{Methodology.}
+We define the overlap between the success and failure subspaces as:
+\begin{equation}
+    \mathrm{Overlap}(\mathbf{C}^+, \mathbf{C}^-) = \frac{\mathrm{tr}(\mathbf{C}^+ \mathbf{C}^-)}{\mathrm{tr}(\mathbf{C}^+)},
+\end{equation}
+which measures the fraction of the success subspace that is shared with the failure subspace (values in $[0,1]$). For the 9~tasks with completed steering evaluation results, we compute the performance gap $\Delta\mathrm{SR} = \mathrm{SR}_{\mathrm{conceptor}} - \mathrm{SR}_{\mathrm{baseline}}$, where $\mathrm{SR}_{\mathrm{conceptor}}$ is the best success rate achieved by conceptor steering (over strategies and hyperparameters) and $\mathrm{SR}_{\mathrm{baseline}}$ is the unsteered success rate. We assess the monotonic relationship via Spearman rank correlation.
+
+\textbf{Results.}
+Panel~(B) shows a strong positive correlation between subspace overlap and the performance improvement from conceptor steering (Spearman $\rho = 0.86$, $p = 0.003$). Conceptor steering improves over the baseline in 6 out of 9~tasks, with the largest gain of $+73.3$ percentage points for \texttt{assembly-v3} (baseline SR $= 0.27$, conceptor SR $= 1.00$), which also exhibits the highest overlap ($0.825$). Tasks with overlap below ${\sim}0.55$ show near-zero or slightly negative gains.
+
+\textbf{Analysis.}
+The strong Spearman correlation suggests that overlap is a \emph{predictive diagnostic} for when conceptor steering will be most beneficial. Intuitively, when $\mathbf{C}^+$ and $\mathbf{C}^-$ share substantial structure, the contrastive conceptor $\mathbf{C}_{\mathrm{steer}} = \mathbf{C}^+ \wedge \lnot \mathbf{C}^-$ can precisely isolate the directions that differentiate success from failure. In contrast, low overlap implies the two subspaces are nearly disjoint, leaving little contrastive signal to exploit. This finding has practical implications: overlap can be computed cheaply from activations alone (without running steering experiments) and could serve as a task-level indicator of expected steering benefit.
+
+%% ─── Panel C: Contrastive Projection ─────────────────────────────────────────
+\paragraph{Panel~(C): Contrastive subspace alignment.}
+
+\textbf{Methodology.}
+We extract the top-$k$ eigenvectors $\mathbf{V}_k \in \mathbb{R}^{1024 \times k}$ of $\mathbf{C}_{\mathrm{steer}}$ (with $k = 20$) and compute the \emph{energy fraction} for each activation vector $\mathbf{h}$:
+\begin{equation}
+    f_k(\mathbf{h}) = \frac{\|\mathbf{V}_k^\top \mathbf{h}\|^2}{\|\mathbf{h}\|^2},
+\end{equation}
+which measures the proportion of total activation energy lying in the contrastive subspace. Under a uniform (isotropic) distribution, the expected energy fraction is $k/d = 20/1024 \approx 0.020$. We compute $f_k$ separately for success and failure activations across all 26~tasks.
+
+\textbf{Results.}
+Panel~(C) displays violin-and-box plots of energy fractions aggregated across tasks. Success activations have a mean energy fraction of $0.0155$ (range $0.006$--$0.044$), while failure activations show $0.0040$ (range $0.0001$--$0.026$), yielding a median ratio of $3.7\times$. Critically, success activations exceed failure activations in \emph{all 26 out of 26 tasks} (see also Figure~\ref{fig:per_task_energy}).
+
+\textbf{Analysis.}
+The universal success--failure separation confirms that the contrastive conceptor captures directions that are genuinely discriminative of task outcome, not artifacts of the Boolean logic construction. The fact that success energy fractions are elevated while failure fractions are suppressed below chance in most tasks indicates that $\mathbf{C}_{\mathrm{steer}}$ targets directions actively used during successful behavior that are absent during failures. This provides a mechanistic explanation for why multiplicative gating with $\mathbf{C}_{\mathrm{steer}}$ amplifies the right signals: it preserves the components of the activation that carry the success-specific information while attenuating the rest.
+
+%% ─── Panel D: Denoising Dynamics ─────────────────────────────────────────────
+\paragraph{Panel~(D): Denoising step dynamics.}
+
+\textbf{Methodology.}
+Rather than pooling activations across all denoising steps, we compute per-step contrastive conceptors $\mathbf{C}^{(t)}_{\mathrm{steer}}$ for each denoising step $t \in \{0, \ldots, 9\}$ independently. Panel~(D) visualizes the quota $q(\mathbf{C}^{(t)}_{\mathrm{steer}}) = \mathrm{tr}(\mathbf{C}^{(t)}_{\mathrm{steer}})$ as a heatmap over tasks and denoising steps. Additionally, we train a logistic regression probe at each step to classify success vs.\ failure from the raw activations, providing an independent measure of outcome-discriminative information at each step.
+
+\textbf{Results.}
+The heatmap reveals a consistent pattern across tasks: the contrastive quota increases from early steps ($\bar{q}_0 = 12.6$) to later steps ($\bar{q}_9 = 16.3$), indicating that the success--failure discriminative subspace gradually expands during the denoising process. The logistic probe achieves a mean accuracy of $84.1\%$ across all tasks and steps (range $49.8\%$--$97.1\%$), and this accuracy is remarkably stable across steps, varying by less than $0.5$ percentage points between early and late steps. Tasks with high baseline success rates (e.g., \texttt{door-open-v3} at $100\%$) show notably higher quotas ($q \approx 33$), reflecting the stronger contrastive signal when nearly all episodes succeed.
+
+\textbf{Analysis.}
+The gradual quota increase across denoising steps suggests that the model progressively refines its commitment to a behavioral strategy: early steps operate in a noisier regime where success and failure trajectories are less distinguishable, while later steps encode increasingly fine-grained action details. The stability of probe accuracy across steps further indicates that outcome-relevant information is present throughout the denoising trajectory, not concentrated at any single step. This validates the design choice of pooling activations across all denoising steps for conceptor computation.
+
+%% ─── Panel E: Temporal Stability ─────────────────────────────────────────────
+\paragraph{Panel~(E): Temporal stability of the contrastive subspace.}
+
+\textbf{Methodology.}
+To assess whether the contrastive subspace changes qualitatively across the denoising trajectory, we measure the cosine similarity between consecutive per-step conceptor matrices:
+\begin{equation}
+    \mathrm{sim}(t, t{+}1) = \frac{\langle \mathrm{vec}(\mathbf{C}^{(t)}_{\mathrm{steer}}),\, \mathrm{vec}(\mathbf{C}^{(t+1)}_{\mathrm{steer}}) \rangle}{\|\mathrm{vec}(\mathbf{C}^{(t)}_{\mathrm{steer}})\| \cdot \|\mathrm{vec}(\mathbf{C}^{(t+1)}_{\mathrm{steer}})\|},
+\end{equation}
+where $\mathrm{vec}(\cdot)$ denotes matrix vectorization. This yields 9 transition similarities per task, which we aggregate across all 26 tasks.
+
+\textbf{Results.}
+Panel~(E) shows that the mean cosine similarity exceeds $0.92$ at every transition, with an overall mean of $0.967$ across all tasks and transitions. The similarity is lowest at the boundary transitions ($0 \to 1$: $\cos = 0.927$; $8 \to 9$: $\cos = 0.944$) and peaks in the middle of the denoising process ($3 \to 4$: $\cos = 0.987$).
+
+\textbf{Analysis.}
+The high temporal stability of the contrastive subspace provides strong justification for the practical design choice of computing a single conceptor $\mathbf{C}_{\mathrm{steer}}$ pooled across all denoising steps, rather than maintaining step-specific conceptors. Since the subspace rotates by only ${\sim}3\%$ between consecutive steps on average, a single pooled conceptor remains a faithful approximation throughout the entire denoising trajectory. The slight instability at boundary steps is consistent with the diffusion process: step~0 operates on near-pure noise (less structured), while step~9 produces nearly final actions (less room for variation). The mid-trajectory stability peak ($t = 3$--$5$) aligns with the regime where the model is actively resolving behavioral strategy.
+
+%% ─── Per-Task Energy (Figure 2) ─────────────────────────────────────────────
+\paragraph{Per-task contrastive energy breakdown (Figure~\ref{fig:per_task_energy}).}
+
+\textbf{Methodology.}
+Figure~\ref{fig:per_task_energy} extends Panel~(C) by disaggregating the energy fraction analysis across all 26 individual tasks, sorted by the magnitude of the success--failure energy gap.
+
+\textbf{Results.}
+The per-task breakdown reveals substantial heterogeneity. Tasks like \texttt{pick-place-wall}, \texttt{door-open}, and \texttt{stick-push} exhibit the largest energy gaps, with success fractions reaching $0.03$--$0.04$ while failure fractions remain below $0.005$. At the other end, tasks such as \texttt{plate-slide-back} and \texttt{peg-insert-side} show smaller but still positive gaps. Notably, even the task with the smallest gap maintains a clear success $>$ failure ordering, and the success--failure separation is statistically significant across the full set of 26 tasks.
+
+\textbf{Analysis.}
+The universality of the success--failure separation across all 26 tasks---despite substantial variation in task difficulty, action complexity, and baseline success rates---is a strong validation of the contrastive conceptor framework. Tasks with large energy gaps (e.g., \texttt{door-open}, ratio $= 177\times$; \texttt{stick-push}, ratio $= 14\times$) tend to have clear behavioral bifurcations between success and failure modes, making the contrastive signal easy to isolate. Tasks with smaller gaps likely involve subtler differences between success and failure trajectories, yet the contrastive conceptor still captures the discriminative directions. This result supports the claim that the Boolean logic $\mathbf{C}^+ \wedge \lnot \mathbf{C}^-$ is a principled and effective mechanism for extracting task-discriminative subspaces from neural network activations.

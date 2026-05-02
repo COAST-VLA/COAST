@@ -1,0 +1,372 @@
+cpu-bind=MASK - nlpgpu08, task  0  0 [33835]: mask 0xf0000000f00 set
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:35: UserWarning: [33mWARN: A Box observation space maximum and minimum values are equal.[0m
+  logger.warn("A Box observation space maximum and minimum values are equal.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `reset()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/gymnasium/utils/passive_env_checker.py:158: UserWarning: [33mWARN: The obs returned by the `step()` method is not within the observation space.[0m
+  logger.warn(f"{pre} is not within the observation space.")
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+function is no-op
+Loading success envs:   0%|          | 0/9 [00:00<?, ?it/s]Loading success envs:  11%|█         | 1/9 [01:58<15:48, 118.55s/it]                                                                    Traceback (most recent call last):
+  File "/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 409, in hf_raise_for_status
+    response.raise_for_status()
+  File "/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/requests/models.py", line 1024, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 429 Client Error: Too Many Requests for url: https://huggingface.co/api/datasets/brandonyang/ml45-activations-15/xet-read-token/a1905c99268d78cee6ac8febda648d82b6408e34
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/mnt/nlpgpu-io1/data/miaom/openpi-metaworld/experiments/conceptor_steering.py", line 1209, in <module>
+    main(args)
+  File "/mnt/nlpgpu-io1/data/miaom/openpi-metaworld/experiments/conceptor_steering.py", line 1198, in main
+    run_full_experiment(task, env_splits, policy, args, output_dir, device=device)
+  File "/mnt/nlpgpu-io1/data/miaom/openpi-metaworld/experiments/conceptor_steering.py", line 954, in run_full_experiment
+    build_steering_conceptors(task, env_splits, alpha=alpha, layer_idx=layer_idx_in_data)
+  File "/mnt/nlpgpu-io1/data/miaom/openpi-metaworld/experiments/conceptor_steering.py", line 293, in build_steering_conceptors
+    success_acts, failure_acts = collect_outcome_activations(task, env_splits, layer_idx)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/nlpgpu-io1/data/miaom/openpi-metaworld/experiments/conceptor_steering.py", line 232, in collect_outcome_activations
+    acts, meta = load_activations_for_episode(task, env_name, layer_idx)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/nlpgpu-io1/data/miaom/openpi-metaworld/experiments/conceptor_steering.py", line 198, in load_activations_for_episode
+    res_path = hf_hub_download(
+               ^^^^^^^^^^^^^^^^
+  File "/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1008, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1161, in _hf_hub_download_to_cache_dir
+    _download_to_tmp_and_move(
+  File "/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1710, in _download_to_tmp_and_move
+    xet_get(
+  File "/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 592, in xet_get
+    connection_info = refresh_xet_connection_info(file_data=xet_file_data, headers=headers)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_xet.py", line 112, in refresh_xet_connection_info
+    return _fetch_xet_connection_info_with_url(file_data.refresh_route, headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_xet.py", line 183, in _fetch_xet_connection_info_with_url
+    hf_raise_for_status(resp)
+  File "/nlpgpu/data/miaom/openpi-metaworld/.venv/lib/python3.11/site-packages/huggingface_hub/utils/_http.py", line 482, in hf_raise_for_status
+    raise _format(HfHubHTTPError, str(e), response) from e
+huggingface_hub.errors.HfHubHTTPError: 429 Client Error: Too Many Requests for url: https://huggingface.co/api/datasets/brandonyang/ml45-activations-15/xet-read-token/a1905c99268d78cee6ac8febda648d82b6408e34 (Request ID: Root=1-69d1e6b3-017843f124f41ab47b569d6d;6bef11e9-c472-4b41-ba33-9a37cb6037bb)
+
+We had to rate limit you, you hit the quota of 1000 api requests per 5 minutes period. Upgrade to a PRO user or Team/Enterprise organization account (https://hf.co/pricing) to get higher limits. See https://huggingface.co/docs/hub/rate-limits

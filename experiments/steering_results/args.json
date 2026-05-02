@@ -1,0 +1,37 @@
+{
+  "policy": {
+    "config": "pi05_metaworld",
+    "dir": "checkpoints/pi05_metaworld/pi05_metaworld_test/5000/"
+  },
+  "tasks": [
+    "sweep-into-v3"
+  ],
+  "alphas": [
+    0.1,
+    0.5,
+    1.0
+  ],
+  "betas": [
+    0.1,
+    0.3,
+    0.5
+  ],
+  "steering_layer": 11,
+  "linear_alphas": [
+    0.5,
+    1.0,
+    2.0,
+    5.0
+  ],
+  "num_envs": 15,
+  "max_steps": 300,
+  "replan_steps": 10,
+  "width": 224,
+  "height": 224,
+  "policy_cameras": [
+    "corner4",
+    "gripperPOV"
+  ],
+  "seed": 69420,
+  "output_dir": "experiments/steering_results"
+}

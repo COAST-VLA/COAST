@@ -1,0 +1,171 @@
+% Requires: booktabs, multirow, array packages
+% \usepackage{booktabs, multirow, array}
+
+\begin{table}[p]
+\centering
+\caption{\textbf{Conceptor steering results across 26 MetaWorld tasks.} For each task, we report the unsteered baseline and the best-performing configuration from each steering strategy: contrastive global (Strategy~3), contrastive per-step (Strategy~5), positive-only, and linear additive. SR: success rate (\%); $\Delta$SR: change from baseline (pp); 95\% CI: bootstrap confidence interval for the absolute steered success rate; Fisher $p$: Fisher's exact test; Int.\ Norm: mean intervention norm; KL: mean KL divergence from baseline actions. \textbf{Bold} indicates the best steered SR per task.}
+\label{tab:steering_results}
+\vspace{2mm}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}ll r r l r r r@{}}
+\toprule
+\textbf{Task} & \textbf{Strategy} & \textbf{SR (\%)} & \textbf{$\Delta$SR} & \textbf{95\% CI} & \textbf{Fisher $p$} & \textbf{Int.\ Norm} & \textbf{KL} \\
+\midrule
+  \multirow{5}{*}{\texttt{assembly}} & Baseline & 26.7 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & \textbf{100.0} & +73.3 & [80.0, 100.0] & $<$0.001 & 623 & 0.30 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & 80.0 & +53.3 & [53.3, 100.0] & 0.009 & 609 & 0.24 \\
+   & Positive-only \scriptsize{($\alpha$=0.1, $\beta$=0.5)} & 26.7 & 0.0 & [0.0, 60.0] & 1.00 & 342 & 1.71 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 0.0 & -26.7 & [0.0, 20.0] & 0.10 & 0.5 & 0.04 \\
+\midrule
+  \multirow{5}{*}{\texttt{basketball}} & Baseline & 40.0 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 46.7 & +6.7 & [13.3, 80.0] & 1.00 & 588 & 0.10 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{60.0} & +20.0 & [26.7, 93.3] & 0.47 & 582 & 0.07 \\
+   & Positive-only \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & \textbf{60.0} & +20.0 & [20.0, 93.3] & 0.47 & 34 & 0.06 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 53.3 & +13.3 & [20.0, 86.7] & 0.72 & 0.5 & 0.07 \\
+\midrule
+  \multirow{5}{*}{\texttt{coffee-pull}} & Baseline & 93.3 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 80.0 & -13.3 & [53.3, 100.0] & 0.60 & 596 & 0.14 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & 86.7 & -6.7 & [66.7, 100.0] & 1.00 & 623 & 0.10 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & \textbf{100.0} & +6.7 & [93.3, 100.0] & 1.00 & 18 & 0.21 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & \textbf{100.0} & +6.7 & [93.3, 100.0] & 1.00 & 0.5 & 0.27 \\
+\midrule
+  \multirow{5}{*}{\texttt{coffee-push}} & Baseline & 80.0 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & \textbf{100.0} & +20.0 & [80.0, 100.0] & 0.22 & 632 & 0.56 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & \textbf{100.0} & +20.0 & [80.0, 100.0] & 0.22 & 626 & 0.38 \\
+   & Positive-only \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{100.0} & +20.0 & [80.0, 100.0] & 0.22 & 76 & 0.33 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 86.7 & +6.7 & [60.0, 100.0] & 1.00 & 0.5 & 0.05 \\
+\midrule
+  \multirow{5}{*}{\texttt{disassemble}} & Baseline & 60.0 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{93.3} & +33.3 & [66.7, 100.0] & 0.08 & 587 & 0.28 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{93.3} & +33.3 & [66.7, 100.0] & 0.08 & 583 & 0.20 \\
+   & Positive-only \scriptsize{($\alpha$=0.5, $\beta$=0.5)} & 86.7 & +26.7 & [60.0, 100.0] & 0.21 & 113 & 0.10 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 73.3 & +13.3 & [40.0, 100.0] & 0.70 & 0.5 & 0.04 \\
+\midrule
+  \multirow{5}{*}{\texttt{door-open}} & Baseline & 100.0 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{100.0} & 0.0 & [100.0, 100.0] & 1.00 & 602 & 0.33 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{100.0} & 0.0 & [100.0, 100.0] & 1.00 & 596 & 0.34 \\
+   & Positive-only \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{100.0} & 0.0 & [100.0, 100.0] & 1.00 & 71 & 0.13 \\
+   & Linear \scriptsize{($\alpha$=2.0)} & 93.3 & -6.7 & [80.0, 100.0] & 1.00 & 2 & 0.33 \\
+\midrule
+  \multirow{5}{*}{\texttt{faucet-close}} & Baseline & 80.0 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & \textbf{100.0} & +20.0 & [80.0, 100.0] & 0.22 & 641 & 0.52 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 93.3 & +13.3 & [73.2, 100.0] & 0.60 & 590 & 0.39 \\
+   & Positive-only \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 93.3 & +13.3 & [73.3, 100.0] & 0.60 & 60 & 0.03 \\
+   & Linear \scriptsize{($\alpha$=1.0)} & 93.3 & +13.3 & [73.3, 100.0] & 0.60 & 1 & 0.02 \\
+\midrule
+  \multirow{5}{*}{\texttt{hammer}} & Baseline & 33.3 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & \textbf{86.7} & +53.3 & [60.0, 100.0] & 0.008 & 612 & 0.32 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{86.7} & +53.3 & [53.3, 100.0] & 0.008 & 584 & 0.12 \\
+   & Positive-only \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & 40.0 & +6.7 & [6.7, 73.3] & 1.00 & 28 & 0.02 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 33.3 & 0.0 & [0.0, 66.7] & 1.00 & 0.5 & 0.02 \\
+\midrule
+  \multirow{5}{*}{\texttt{handle-pull-side}} & Baseline & 20.0 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 46.7 & +26.7 & [13.3, 80.0] & 0.25 & 632 & 0.11 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & 33.3 & +13.3 & [0.0, 66.7] & 0.68 & 657 & 0.14 \\
+   & Positive-only \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & \textbf{53.3} & +33.3 & [20.0, 86.7] & 0.13 & 36 & 0.03 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 46.7 & +26.7 & [13.3, 73.5] & 0.25 & 0.5 & 0.03 \\
+\midrule
+  \multirow{5}{*}{\texttt{handle-pull}} & Baseline & 46.7 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 46.7 & 0.0 & [13.3, 80.0] & 1.00 & 651 & 0.17 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 60.0 & +13.3 & [20.0, 93.3] & 0.72 & 645 & 0.18 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & 53.3 & +6.7 & [13.3, 86.7] & 1.00 & 23 & 0.04 \\
+   & Linear \scriptsize{($\alpha$=2.0)} & \textbf{66.7} & +20.0 & [33.3, 100.0] & 0.46 & 2 & 0.04 \\
+\midrule
+  \multirow{5}{*}{\texttt{lever-pull}} & Baseline & 26.7 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 60.0 & +33.3 & [26.7, 93.3] & 0.14 & 582 & 0.42 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & 66.7 & +40.0 & [33.3, 100.0] & 0.07 & 605 & 0.44 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.3)} & 73.3 & +46.7 & [40.0, 100.0] & 0.03 & 49 & 0.09 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & \textbf{80.0} & +53.3 & [46.7, 100.0] & 0.009 & 0.5 & 0.07 \\
+\midrule
+  \multirow{5}{*}{\texttt{peg-insert-side}} & Baseline & 33.3 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.3)} & 46.7 & +13.3 & [13.3, 80.0] & 0.71 & 1768 & 0.46 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.3)} & \textbf{66.7} & +33.3 & [33.3, 100.0] & 0.14 & 1766 & 0.28 \\
+   & Positive-only \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & 53.3 & +20.0 & [19.8, 86.7] & 0.46 & 32 & 0.03 \\
+   & Linear \scriptsize{($\alpha$=2.0)} & 53.3 & +20.0 & [20.0, 86.7] & 0.46 & 2 & 0.04 \\
+\midrule
+  \multirow{5}{*}{\texttt{pick-out-of-hole}} & Baseline & 20.0 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & 26.7 & +6.7 & [0.0, 53.3] & 1.00 & 626 & 0.12 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 46.7 & +26.7 & [13.3, 80.0] & 0.25 & 598 & 0.12 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & 46.7 & +26.7 & [13.3, 80.0] & 0.25 & 24 & 0.04 \\
+   & Linear \scriptsize{($\alpha$=5.0)} & \textbf{53.3} & +33.3 & [20.0, 86.7] & 0.13 & 5 & 0.06 \\
+\midrule
+  \multirow{5}{*}{\texttt{pick-place}} & Baseline & 86.7 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & \textbf{100.0} & +13.3 & [86.7, 100.0] & 0.48 & 639 & 0.71 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{100.0} & +13.3 & [86.7, 100.0] & 0.48 & 611 & 0.72 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & 80.0 & -6.7 & [53.3, 100.0] & 1.00 & 19 & 0.12 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 86.7 & 0.0 & [60.0, 100.0] & 1.00 & 0.5 & 0.19 \\
+\midrule
+  \multirow{5}{*}{\texttt{pick-place-wall}} & Baseline & 20.0 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & 86.7 & +66.7 & [60.0, 100.0] & $<$0.001 & 610 & 0.36 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{100.0} & +80.0 & [80.0, 100.0] & $<$0.001 & 596 & 0.39 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.3)} & 46.7 & +26.7 & [13.3, 80.0] & 0.25 & 60 & 0.05 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 40.0 & +20.0 & [6.7, 73.3] & 0.43 & 0.5 & 0.04 \\
+\midrule
+  \multirow{5}{*}{\texttt{plate-slide-back-side}} & Baseline & 60.0 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & 93.3 & +33.3 & [66.7, 100.0] & 0.08 & 616 & 1.08 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.3)} & \textbf{100.0} & +40.0 & [73.3, 100.0] & 0.02 & 1797 & 5.23 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & 60.0 & 0.0 & [26.7, 93.3] & 1.00 & 15 & 0.03 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 60.0 & 0.0 & [26.7, 93.3] & 1.00 & 0.5 & 0.02 \\
+\midrule
+  \multirow{5}{*}{\texttt{plate-slide-back}} & Baseline & 60.0 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{93.3} & +33.3 & [66.7, 100.0] & 0.08 & 597 & 0.13 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & \textbf{93.3} & +33.3 & [60.0, 100.0] & 0.08 & 622 & 0.19 \\
+   & Positive-only \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 73.3 & +13.3 & [40.0, 100.0] & 0.70 & 61 & 0.04 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 53.3 & -6.7 & [20.0, 86.7] & 1.00 & 0.5 & 0.02 \\
+\midrule
+  \multirow{5}{*}{\texttt{push-back}} & Baseline & 66.7 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{93.3} & +26.7 & [66.7, 100.0] & 0.17 & 577 & 0.23 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=1.0, $\beta$=0.3)} & 86.7 & +20.0 & [60.0, 100.0] & 0.39 & 1829 & 2.11 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & 86.7 & +20.0 & [60.0, 100.0] & 0.39 & 21 & 0.05 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 80.0 & +13.3 & [46.7, 100.0] & 0.68 & 0.5 & 0.06 \\
+\midrule
+  \multirow{5}{*}{\texttt{push}} & Baseline & 93.3 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{100.0} & +6.7 & [93.3, 100.0] & 1.00 & 609 & 1.61 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & \textbf{100.0} & +6.7 & [93.3, 100.0] & 1.00 & 636 & 1.30 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & 93.3 & 0.0 & [73.3, 100.0] & 1.00 & 17 & 0.06 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 93.3 & 0.0 & [73.3, 100.0] & 1.00 & 0.5 & 0.09 \\
+\midrule
+  \multirow{5}{*}{\texttt{reach}} & Baseline & 93.3 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 86.7 & -6.7 & [66.7, 100.0] & 1.00 & 592 & 1.38 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 93.3 & 0.0 & [73.3, 100.0] & 1.00 & 588 & 1.25 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.3)} & \textbf{100.0} & +6.7 & [93.3, 100.0] & 1.00 & 43 & 0.08 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & \textbf{100.0} & +6.7 & [93.3, 100.0] & 1.00 & 0.5 & 0.06 \\
+\midrule
+  \multirow{5}{*}{\texttt{shelf-place}} & Baseline & 73.3 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & \textbf{93.3} & +20.0 & [66.7, 100.0] & 0.33 & 604 & 0.08 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & \textbf{93.3} & +20.0 & [66.7, 100.0] & 0.33 & 604 & 0.09 \\
+   & Positive-only \scriptsize{($\alpha$=0.1, $\beta$=0.3)} & \textbf{93.3} & +20.0 & [66.7, 100.0] & 0.33 & 214 & 0.09 \\
+   & Linear \scriptsize{($\alpha$=1.0)} & 86.7 & +13.3 & [60.0, 100.0] & 0.65 & 1 & 0.04 \\
+\midrule
+  \multirow{5}{*}{\texttt{soccer}} & Baseline & 26.7 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.3)} & \textbf{40.0} & +13.3 & [6.7, 73.3] & 0.70 & 1795 & 0.78 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=1.0, $\beta$=0.5)} & \textbf{40.0} & +13.3 & [6.7, 73.3] & 0.70 & 3200 & 4.67 \\
+   & Positive-only \scriptsize{($\alpha$=0.1, $\beta$=0.5)} & \textbf{40.0} & +13.3 & [6.7, 73.3] & 0.70 & 323 & 1.42 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 26.7 & 0.0 & [0.0, 60.0] & 1.00 & 0.5 & 0.03 \\
+\midrule
+  \multirow{5}{*}{\texttt{stick-pull}} & Baseline & 73.3 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & \textbf{86.7} & +13.3 & [60.0, 100.0] & 0.65 & 619 & 0.07 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{86.7} & +13.3 & [60.0, 100.0] & 0.65 & 591 & 0.07 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & \textbf{86.7} & +13.3 & [60.0, 100.0] & 0.65 & 20 & 0.01 \\
+   & Linear \scriptsize{($\alpha$=2.0)} & 73.3 & 0.0 & [40.0, 100.0] & 1.00 & 2 & 0.02 \\
+\midrule
+  \multirow{5}{*}{\texttt{stick-push}} & Baseline & 20.0 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{80.0} & +60.0 & [53.3, 100.0] & 0.003 & 587 & 0.11 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & 73.3 & +53.3 & [40.0, 100.0] & 0.009 & 612 & 0.11 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.3)} & 40.0 & +20.0 & [6.7, 73.3] & 0.43 & 84 & 0.04 \\
+   & Linear \scriptsize{($\alpha$=1.0)} & 60.0 & +40.0 & [26.7, 86.8] & 0.06 & 1 & 0.05 \\
+\midrule
+  \multirow{5}{*}{\texttt{sweep-into}} & Baseline & 73.3 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & 86.7 & +13.3 & [60.0, 100.0] & 0.65 & 603 & 0.08 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & 86.7 & +13.3 & [60.0, 100.0] & 0.65 & 577 & 0.06 \\
+   & Positive-only \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & \textbf{93.3} & +20.0 & [66.7, 100.0] & 0.33 & 16 & 0.06 \\
+   & Linear \scriptsize{($\alpha$=2.0)} & 73.3 & 0.0 & [40.0, 100.0] & 1.00 & 2 & 0.04 \\
+\midrule
+  \multirow{5}{*}{\texttt{sweep}} & Baseline & 93.3 & --- & --- & --- & --- & --- \\
+   & Contrastive (global) \scriptsize{($\alpha$=1.0, $\beta$=0.1)} & \textbf{100.0} & +6.7 & [93.3, 100.0] & 1.00 & 632 & 0.18 \\
+   & Contrastive (per-step) \scriptsize{($\alpha$=0.5, $\beta$=0.1)} & \textbf{100.0} & +6.7 & [93.3, 100.0] & 1.00 & 629 & 0.11 \\
+   & Positive-only \scriptsize{($\alpha$=0.1, $\beta$=0.1)} & \textbf{100.0} & +6.7 & [93.3, 100.0] & 1.00 & 80 & 0.18 \\
+   & Linear \scriptsize{($\alpha$=0.5)} & 93.3 & 0.0 & [73.3, 100.0] & 1.00 & 0.5 & 0.04 \\
+\bottomrule
+\end{tabular}}
+\end{table}
