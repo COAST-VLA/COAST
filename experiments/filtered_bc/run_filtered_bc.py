@@ -50,9 +50,16 @@ from experiments.filtered_bc.merge_save import merge_lora_params
 from experiments.filtered_bc.merge_save import save_merged_jax_checkpoint
 from experiments.filtered_bc.train import train_lora
 from openpi import transforms as _transforms
+from openpi.models import pi0_fast as _pi0_fast
 from openpi.policies import policy as _policy
 from openpi.policies import policy_config as _policy_config
 from openpi.training import config as _config
+
+
+def _is_pi0_fast(model_config) -> bool:
+    """True for the pi0-FAST model family. pi0/pi0.5 return False."""
+    return isinstance(model_config, _pi0_fast.Pi0FASTConfig)
+
 
 logger = logging.getLogger(__name__)
 
@@ -217,10 +224,20 @@ def _run_one_task_inprocess(
     args: Args,
     train_config: _config.TrainConfig,
     adapter,
+    scratch_root: pathlib.Path | None = None,
 ) -> dict:
-    """MetaWorld: base policy is a live Policy, rollout + eval are in-process."""
+    """MetaWorld: base policy is a live Policy, rollout + eval are in-process.
+
+    Two eval-policy-build paths depending on model family:
+      * pi0 / pi0.5: convert merged JAX params → PyTorch model in-process via
+        :func:`build_pytorch_model_from_merged`, no disk I/O.
+      * pi0-FAST: save merged JAX ckpt to ``scratch_root`` then reload via
+        :func:`create_trained_policy(use_pytorch=False)`. The PyTorch converter only
+        knows about :class:`Pi0Config`, so for pi0-FAST we keep everything in JAX.
+    """
     import torch
 
+    is_fast = _is_pi0_fast(train_config.model)
     record: dict = {"task": task_name, "status": "started"}
     rollout_cfg = RolloutConfig(
         max_steps=args.max_steps,
@@ -273,23 +290,45 @@ def _run_one_task_inprocess(
         jax.clear_caches()
     except Exception:
         pass
-    try:
-        base_policy._model = base_policy._model.to("cpu")  # noqa: SLF001
-        if hasattr(base_policy, "_pytorch_device"):
-            base_policy._pytorch_device = "cpu"  # noqa: SLF001
-        torch.cuda.empty_cache()
-    except Exception as exc:
-        logger.warning(f"[{task_name}] couldn't move base policy to CPU: {exc}")
-    gc.collect()
 
-    t0 = time.time()
-    pytorch_model = build_pytorch_model_from_merged(merged, train_config.model)
-    del merged
+    # PyTorch base only: shuffle to CPU during eval to free GPU for the eval model.
+    # (pi0-FAST keeps the base on GPU since both eval and base are JAX.)
+    if not is_fast:
+        try:
+            base_policy._model = base_policy._model.to("cpu")  # noqa: SLF001
+            if hasattr(base_policy, "_pytorch_device"):
+                base_policy._pytorch_device = "cpu"  # noqa: SLF001
+            torch.cuda.empty_cache()
+        except Exception as exc:
+            logger.warning(f"[{task_name}] couldn't move base policy to CPU: {exc}")
     gc.collect()
-    record["t_build_pt_sec"] = round(time.time() - t0, 2)
 
     policy_train_config = _config.get_config(args.base_config)
-    policy = _build_policy_from_model(pytorch_model, policy_train_config, args.base_ckpt)
+    task_scratch: pathlib.Path | None = None
+    if is_fast:
+        if scratch_root is None:
+            raise RuntimeError("scratch_root is required for pi0-FAST in-process eval")
+        t0 = time.time()
+        task_scratch = scratch_root / task_name.replace(":", "_").replace("/", "_")
+        if task_scratch.exists():
+            shutil.rmtree(task_scratch)
+        save_merged_jax_checkpoint(merged, task_scratch, base_ckpt=args.base_ckpt)
+        del merged
+        gc.collect()
+        record["t_save_ckpt_sec"] = round(time.time() - t0, 2)
+
+        t0 = time.time()
+        policy = _policy_config.create_trained_policy(policy_train_config, str(task_scratch), use_pytorch=False)
+        record["t_build_eval_sec"] = round(time.time() - t0, 2)
+        pytorch_model = None
+    else:
+        t0 = time.time()
+        pytorch_model = build_pytorch_model_from_merged(merged, train_config.model)
+        del merged
+        gc.collect()
+        record["t_build_pt_sec"] = round(time.time() - t0, 2)
+        policy = _build_policy_from_model(pytorch_model, policy_train_config, args.base_ckpt)
+
     t0 = time.time()
     eval_result = adapter.eval(policy, task_name, num_episodes=args.eval_num_episodes, cfg=rollout_cfg)
     record.update(
@@ -307,16 +346,31 @@ def _run_one_task_inprocess(
         f"({100 * eval_result.success_rate:.0f}%), {record['t_eval_sec']:.1f}s"
     )
 
-    del policy, pytorch_model
+    del policy
+    if pytorch_model is not None:
+        del pytorch_model
     with contextlib.suppress(Exception):
         torch.cuda.empty_cache()
+    if is_fast:
+        try:
+            import jax
+
+            jax.clear_caches()
+        except Exception:
+            pass
     gc.collect()
-    try:
-        base_policy._model = base_policy._model.to("cuda")  # noqa: SLF001
-        if hasattr(base_policy, "_pytorch_device"):
-            base_policy._pytorch_device = "cuda"  # noqa: SLF001
-    except Exception as exc:
-        logger.warning(f"[{task_name}] couldn't restore base policy to GPU: {exc}")
+
+    if is_fast and task_scratch is not None and not args.keep_scratch:
+        with contextlib.suppress(Exception):
+            shutil.rmtree(task_scratch)
+
+    if not is_fast:
+        try:
+            base_policy._model = base_policy._model.to("cuda")  # noqa: SLF001
+            if hasattr(base_policy, "_pytorch_device"):
+                base_policy._pytorch_device = "cuda"  # noqa: SLF001
+        except Exception as exc:
+            logger.warning(f"[{task_name}] couldn't restore base policy to GPU: {exc}")
 
     record["status"] = "ok"
     return record
@@ -459,21 +513,31 @@ def main(args: Args) -> None:
     train_config = _override_config(_config.get_config(args.train_config), args)
     adapter = _make_adapter(args)
 
+    is_fast = _is_pi0_fast(train_config.model)
+
     # In-process envs (just MetaWorld for now) preload the base policy; subprocess
     # envs don't — the base server is launched per-task.
     in_process = args.env == "metaworld"
     base_policy = None
     if in_process:
-        from openpi.models_pytorch.convert import ensure_pytorch_checkpoint
-
         base_train_config = _config.get_config(args.base_config)
-        ensure_pytorch_checkpoint(args.base_ckpt, args.base_config)
-        base_policy = _policy_config.create_trained_policy(base_train_config, args.base_ckpt)
-        logger.info(f"Loaded base policy from {args.base_ckpt}")
+        if is_fast:
+            # pi0-FAST has no PyTorch converter (the existing one is pi0-only), so
+            # load directly as JAX. eval is also in-process JAX, see _run_one_task_inprocess.
+            base_policy = _policy_config.create_trained_policy(base_train_config, args.base_ckpt, use_pytorch=False)
+            logger.info(f"Loaded base pi0-FAST policy (JAX) from {args.base_ckpt}")
+        else:
+            from openpi.models_pytorch.convert import ensure_pytorch_checkpoint
 
-    # Scratch root for server-based envs' merged ckpts.
+            ensure_pytorch_checkpoint(args.base_ckpt, args.base_config)
+            base_policy = _policy_config.create_trained_policy(base_train_config, args.base_ckpt)
+            logger.info(f"Loaded base policy (PyTorch) from {args.base_ckpt}")
+
+    # Scratch root for merged ckpts. Subprocess envs always need it. In-process envs
+    # only need it for pi0-FAST (PyTorch flow keeps everything in memory).
     scratch_root: pathlib.Path | None = None
-    if not in_process:
+    needs_scratch = (not in_process) or is_fast
+    if needs_scratch:
         if args.scratch_dir:
             scratch_root = pathlib.Path(args.scratch_dir)
             scratch_root.mkdir(parents=True, exist_ok=True)
@@ -508,7 +572,9 @@ def main(args: Args) -> None:
     for task in tasks:
         try:
             if in_process:
-                record = _run_one_task_inprocess(base_policy, task, args, train_config, adapter)
+                record = _run_one_task_inprocess(
+                    base_policy, task, args, train_config, adapter, scratch_root=scratch_root
+                )
             else:
                 record = _run_one_task_subprocess(task, args, train_config, adapter, scratch_root)
         except Exception as exc:
@@ -527,7 +593,7 @@ def main(args: Args) -> None:
     results["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     _write_results(results_json_path, results)
 
-    if (not in_process) and (not args.keep_scratch) and scratch_root is not None:
+    if needs_scratch and (not args.keep_scratch) and scratch_root is not None:
         with contextlib.suppress(Exception):
             shutil.rmtree(scratch_root)
 

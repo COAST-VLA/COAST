@@ -75,14 +75,22 @@ def _einsum_merge(w, lora_a, lora_b, scale: float):
     return out
 
 
-def _resolve_lora_configs(model_config: pi0_config.Pi0Config) -> dict[str, dict[str, Any]]:
+def _resolve_lora_configs(model_config) -> dict[str, dict[str, Any]]:
+    """Build the {variant_name: {scope: lora_cfg}} map used by the merge loop.
+
+    pi0/pi0.5 have a separate action expert under ``llm_1``; pi0-FAST has no
+    action expert (autoregressive decode through PaliGemma's LM), so it only
+    contributes the ``llm`` variant.
+    """
     out: dict[str, dict[str, Any]] = {}
     paligemma = _gemma.get_config(model_config.paligemma_variant)
-    expert = _gemma.get_config(model_config.action_expert_variant)
     if paligemma.lora_configs:
         out["llm"] = dict(paligemma.lora_configs)
-    if expert.lora_configs:
-        out["llm_1"] = dict(expert.lora_configs)
+    expert_variant = getattr(model_config, "action_expert_variant", None)
+    if expert_variant is not None:
+        expert = _gemma.get_config(expert_variant)
+        if expert.lora_configs:
+            out["llm_1"] = dict(expert.lora_configs)
     return out
 
 
@@ -111,8 +119,12 @@ def _scope_for_einsum(path_tuple: tuple[str, ...]) -> str:
     return "attn"
 
 
-def merge_lora_params(params: dict, model_config: pi0_config.Pi0Config) -> dict:
+def merge_lora_params(params: dict, model_config) -> dict:
     """Return a new param tree with LoRA folded into base weights and LoRA leaves dropped.
+
+    Accepts either :class:`pi0_config.Pi0Config` (pi0/pi0.5) or
+    :class:`pi0_fast.Pi0FASTConfig` — the merge logic only reads ``paligemma_variant``
+    and (optionally) ``action_expert_variant`` via ``_resolve_lora_configs``.
 
     Mutates the flattened view in-place, dropping ``lora_a``/``lora_b`` and the
     superseded ``w`` immediately after each merge so Python can reclaim memory.

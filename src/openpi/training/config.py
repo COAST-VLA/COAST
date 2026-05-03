@@ -733,6 +733,44 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
     ),
     TrainConfig(
+        # pi0-FAST MetaWorld LoRA fine-tuning config, used by the filtered-BC baseline
+        # in experiments/filtered_bc/. Mirrors pi05_metaworld_low_mem_finetune's tuning
+        # (batch_size=32, peak_lr=5e-5, num_train_steps=200, ema_decay=None, vision
+        # tower frozen) so the same self-distillation recipe works on top of pi0-FAST.
+        # The model itself follows pi0_fast_metaworld (action_dim=4, action_horizon=32,
+        # max_token_len=250, extra_delta_transform=False) — only the paligemma variant
+        # is swapped to its LoRA counterpart. pi0-FAST has no separate action expert,
+        # so freeze_filter only takes the paligemma LoRA mask plus the SigLip freeze.
+        name="pi0_fast_metaworld_low_mem_finetune",
+        model=pi0_fast.Pi0FASTConfig(
+            action_dim=4, action_horizon=32, max_token_len=250, paligemma_variant="gemma_2b_lora"
+        ),
+        data=LeRobotMetaworldDataConfig(
+            repo_id="brandonyang/metaworld_ml45",
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+        ),
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=20,
+            peak_lr=5e-5,
+            decay_steps=200,
+            decay_lr=5e-6,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=None,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
+        num_train_steps=200,
+        # Same freeze pattern as pi05_metaworld_low_mem_finetune: freeze base LM dense
+        # weights (everything llm-prefixed except LoRA adapters) + SigLip vision tower.
+        freeze_filter=nnx.Any(
+            pi0_fast.Pi0FASTConfig(
+                action_dim=4, action_horizon=32, max_token_len=250, paligemma_variant="gemma_2b_lora"
+            ).get_freeze_filter(),
+            nnx_utils.PathRegex(".*img.*"),
+        ),
+    ),
+    TrainConfig(
         name="pi0_fast_droid",
         model=pi0_fast.Pi0FASTConfig(action_dim=8, action_horizon=10),
         data=SimpleDataConfig(
@@ -839,9 +877,15 @@ _CONFIGS = [
         num_train_steps=30_000,
     ),
     TrainConfig(
+        # pi0-FAST LIBERO LoRA fine-tuning config, used by the filtered-BC baseline in
+        # experiments/filtered_bc/. Mirrors pi05_libero_low_mem_finetune's tuning
+        # (batch_size=32, peak_lr=5e-5, num_train_steps=200, ema_decay=None, vision
+        # tower frozen) so the same self-distillation recipe works on top of pi0-FAST.
+        # The model itself follows pi0_fast_libero (action_dim=7, action_horizon=10,
+        # max_token_len=180, extra_delta_transform=True) — only the paligemma variant
+        # is swapped to its LoRA counterpart. pi0-FAST has no separate action expert,
+        # so freeze_filter only takes the paligemma LoRA mask plus the SigLip freeze.
         name="pi0_fast_libero_low_mem_finetune",
-        # Here is an example of loading a pi0-FAST model for LoRA finetuning.
-        # For setting action_dim, action_horizon, and max_token_len, see the comments above.
         model=pi0_fast.Pi0FASTConfig(
             action_dim=7, action_horizon=10, max_token_len=180, paligemma_variant="gemma_2b_lora"
         ),
@@ -850,15 +894,25 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=True,
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
-        num_train_steps=30_000,
-        # Again, make sure to match the model config above when extracting the freeze filter
-        # that specifies which parameters should be frozen during LoRA finetuning.
-        freeze_filter=pi0_fast.Pi0FASTConfig(
-            action_dim=7, action_horizon=10, max_token_len=180, paligemma_variant="gemma_2b_lora"
-        ).get_freeze_filter(),
-        # Turn off EMA for LoRA finetuning.
+        batch_size=32,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=20,
+            peak_lr=5e-5,
+            decay_steps=200,
+            decay_lr=5e-6,
+        ),
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         ema_decay=None,
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
+        num_train_steps=200,
+        # Same freeze pattern as pi05_libero_low_mem_finetune: freeze base LM dense
+        # weights (everything llm-prefixed except LoRA adapters) + SigLip vision tower.
+        freeze_filter=nnx.Any(
+            pi0_fast.Pi0FASTConfig(
+                action_dim=7, action_horizon=10, max_token_len=180, paligemma_variant="gemma_2b_lora"
+            ).get_freeze_filter(),
+            nnx_utils.PathRegex(".*img.*"),
+        ),
     ),
     TrainConfig(
         name="pi05_libero",

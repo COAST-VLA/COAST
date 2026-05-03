@@ -57,6 +57,14 @@ _SERVER_STARTUP_TIMEOUT_S = 600  # pi0.5 takes 1-2 min to cold-load params on GP
 _SERVER_SHUTDOWN_TIMEOUT_S = 30
 
 
+def _config_is_pi0_fast(config_name: str) -> bool:
+    """True if the named TrainConfig builds a Pi0FASTConfig model."""
+    from openpi.models import pi0_fast as _pi0_fast
+    from openpi.training import config as _config
+
+    return isinstance(_config.get_config(config_name).model, _pi0_fast.Pi0FASTConfig)
+
+
 def _pick_free_port() -> int:
     """Bind to port 0 and read back what the OS handed us, then release."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -84,20 +92,28 @@ def _launch_server(
     config_name: str,
     port: int,
     log_path: pathlib.Path,
+    *,
+    use_pytorch: bool = True,
 ) -> subprocess.Popen:
-    """Start a policy server subprocess in the root venv. Caller owns shutdown."""
+    """Start a policy server subprocess in the root venv. Caller owns shutdown.
+
+    ``use_pytorch=False`` is required for pi0-FAST (no PyTorch port for the
+    autoregressive decode); pi0/pi0.5 use the PyTorch path so the
+    ``torch.compile`` no-op shim still applies.
+    """
     cmd = [
         "uv",
         "run",
         "python",
         "-u",
         "experiments/filtered_bc/_serve_policy_nocompile.py",
-        "--pytorch",
         f"--port={port}",
         "policy:checkpoint",
         f"--policy.config={config_name}",
         f"--policy.dir={ckpt_dir}",
     ]
+    if use_pytorch:
+        cmd.insert(5, "--pytorch")
     env = os.environ.copy()
     env.setdefault("CUDA_VISIBLE_DEVICES", "0")
     env.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
@@ -252,7 +268,10 @@ class LiberoAdapter:
         client_log = scratch / "client.log"
         samples_path = scratch / "samples.pkl"
 
-        server = _launch_server(ckpt_dir, config_name, port, server_log)
+        # pi0-FAST has no PyTorch port for the autoregressive decode, so its server
+        # must serve the JAX checkpoint directly (no --pytorch flag).
+        use_pytorch = not _config_is_pi0_fast(config_name)
+        server = _launch_server(ckpt_dir, config_name, port, server_log, use_pytorch=use_pytorch)
         try:
             _wait_for_server(port, _SERVER_STARTUP_TIMEOUT_S, server)
             _run_client(
