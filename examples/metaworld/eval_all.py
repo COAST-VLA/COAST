@@ -267,6 +267,7 @@ def main(args: Args) -> None:
     for env_name, rate in sorted(results.items(), key=lambda x: x[1], reverse=True):
         logger.info(f"  {env_name:<40s} {rate:.2f}")
 
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     args = tyro.cli(Args)

@@ -144,6 +144,7 @@ class Args:
     # against the user's shell cwd, matching the libero and robocasa examples.
     output_dir: str | None = None
 
+
 class MultiCameraWrapper(gym.Wrapper):
     """Wrapper that renders multiple cameras and includes images in info dict."""
 
@@ -339,6 +340,7 @@ def main(args: Args) -> None:
             num_success,
             len(all_successes),
         )
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
