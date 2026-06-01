@@ -6,12 +6,15 @@ This is a fork of Physical Intelligence's openpi repository for **activation col
 
 ## Evaluation & Collection Clients
 
-| Client | Architecture | Venv | Activation Collection |
-|--------|-------------|------|----------------------|
-| **MetaWorld** | Server-client over WebSocket; client runs vectorized envs | Root venv | Server-side, batched (list-shaped `__collect__`, one server-side forward pass per `num_envs`) |
-| **LIBERO** | Server-client over WebSocket | **Separate venv (Python 3.8)** in `examples/libero_env/` | Server-side, single-env (dict-shaped `__collect__`) |
-| **RoboCasa** | Server-client over WebSocket | **Separate venv (Python 3.11)** in `examples/robocasa_env/` | Server-side, single-env (same protocol as LIBERO) |
-| **DROID** | Server-client over WebSocket; real-robot control laptop | Root venv (server), DROID conda env + `openpi-client` (laptop) | Server-side, single-env (same protocol as LIBERO) |
+| Client | Architecture | Venv | Activation Collection | Steering (`--steer`) |
+|--------|-------------|------|----------------------|----------------------|
+| **MetaWorld** | Server-client over WebSocket; client runs vectorized envs | Root venv | Server-side, batched (list-shaped `__collect__`, one server-side forward pass per `num_envs`) | ✅ WebSocket only (incompatible with `--collect`) |
+| **LIBERO** | Server-client over WebSocket | **Separate venv (Python 3.8)** in `examples/libero_env/` | Server-side (`--collect_activations` on server, `--collect` on client) | ✅ |
+| **RoboCasa** | Server-client over WebSocket | **Separate venv (Python 3.11)** in `examples/robocasa_env/` | Server-side (same protocol as LIBERO) | ✅ |
+| **DROID** | Server-client over WebSocket; real-robot control laptop | Root venv (server), DROID conda env + `openpi-client` (laptop) | Server-side (same protocol as LIBERO) | ✅ (manual single-condition eval) |
+| **GR00T N1.5** | Separate server (`groot_env/`) | Own Python 3.11 venv in `groot_env/` | Server-side | ❌ (different activation shape; separate effort) |
+
+For steering configuration, see `src/openpi/serving/steering.py` (runtime), `src/openpi/serving/conceptors.py` (offline NPZ builder), and `packages/openpi-client/src/openpi_client/steering.py` (wire protocol). Per-env tuning lives under `experiments/{libero,robocasa,metaworld,droid}/`. Steering currently targets the pi0.5 PyTorch action expert only; TODO: extend to pi0-fast (different autoregressive activation shape) and GR00T N1.5 (different backbone in `groot_env/`).
 
 Canonical activation-collection reference: [`docs/activation_collection.md`](docs/activation_collection.md). For per-client workflow details (dataset generation, training configs, eval commands), read the respective `examples/{client}/README.md`.
 

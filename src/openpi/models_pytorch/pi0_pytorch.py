@@ -120,7 +120,18 @@ def make_att_2d_masks(pad_masks, att_masks):
 
 
 class PI0Pytorch(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, *, torch_compile: bool = False):
+        """Construct a pi0/pi0.5 PyTorch model.
+
+        Args:
+            config: Model config (Pi0Config).
+            torch_compile: If True, wrap ``sample_actions`` with
+                ``torch.compile(mode="max-autotune")`` for ~2x inference throughput
+                at the cost of a 30-60s first-call warmup. Off by default — opt in
+                explicitly for baseline-only inference workloads. Irrelevant for
+                forward-hook based paths (``sample_actions_with_steering``,
+                ``sample_actions_with_intermediates``) which are never compiled.
+        """
         super().__init__()
         self.config = config
         self.pi05 = config.pi05
@@ -147,7 +158,8 @@ class PI0Pytorch(nn.Module):
             self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
         torch.set_float32_matmul_precision("high")
-        self.sample_actions = torch.compile(self.sample_actions, mode="max-autotune")
+        if torch_compile:
+            self.sample_actions = torch.compile(self.sample_actions, mode="max-autotune")
 
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
@@ -814,6 +826,115 @@ class PI0Pytorch(nn.Module):
             "adarms_cond_global": adarms_cond_global.float().numpy(),
         }
         return x_t, intermediates
+
+    @torch.no_grad()
+    def sample_actions_with_steering(
+        self,
+        device,
+        observation,
+        *,
+        noise=None,
+        num_steps=10,
+        steering_hooks=None,
+    ) -> tuple[Tensor, dict]:
+        """Like sample_actions() but applies steering hooks at specified layers during denoising.
+
+        Runs in eager mode (no torch.compile) for hook compatibility.
+        steering_hooks: list of (layer_idx, hook_callable) pairs. Each hook_callable
+            must implement __call__(module, input, output) -> modified_output and
+            have a set_denoise_step(t) method.
+
+        Returns (final_actions, diagnostics_dict).
+        """
+        bsize = observation.state.shape[0]
+        if noise is None:
+            actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
+            noise = self.sample_noise(actions_shape, device)
+
+        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
+
+        # Prefix pass — compute KV cache
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+
+        _, past_key_values = self.paligemma_with_expert.forward(
+            attention_mask=prefix_att_2d_masks_4d,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+
+        # Register steering hooks on action expert layers
+        hook_handles = []
+        expert_layers = self.paligemma_with_expert.gemma_expert.model.layers
+        if steering_hooks is not None:
+            for layer_idx, hook_fn in steering_hooks:
+                handle = expert_layers[layer_idx].register_forward_hook(hook_fn)
+                hook_handles.append(handle)
+
+        try:
+            dt = -1.0 / num_steps
+            dt_tensor = torch.tensor(dt, dtype=torch.float32, device=device)
+
+            x_t = noise
+            time = torch.tensor(1.0, dtype=torch.float32, device=device)
+            step_counter = 0
+
+            while time >= -dt_tensor / 2:
+                expanded_time = time.expand(bsize)
+
+                # Notify hooks of current denoising step
+                if steering_hooks is not None:
+                    for _, hook_fn in steering_hooks:
+                        if hasattr(hook_fn, "set_denoise_step"):
+                            hook_fn.set_denoise_step(step_counter)
+
+                # Inline denoise_step
+                suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(
+                    state, x_t, expanded_time
+                )
+
+                suffix_len = suffix_pad_masks.shape[1]
+                batch_size = prefix_pad_masks.shape[0]
+                prefix_len = prefix_pad_masks.shape[1]
+
+                prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+                suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+                full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+
+                prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+                position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+
+                full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+                self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
+
+                outputs_embeds, _ = self.paligemma_with_expert.forward(
+                    attention_mask=full_att_2d_masks_4d,
+                    position_ids=position_ids,
+                    past_key_values=past_key_values,
+                    inputs_embeds=[None, suffix_embs],
+                    use_cache=False,
+                    adarms_cond=[None, adarms_cond],
+                )
+
+                suffix_out = outputs_embeds[1]
+                suffix_out = suffix_out[:, -self.config.action_horizon :]
+                suffix_out = suffix_out.to(dtype=torch.float32)
+                v_t = self.action_out_proj(suffix_out)
+
+                # Euler step
+                x_t = x_t + dt_tensor * v_t
+                time += dt_tensor
+                step_counter += 1
+        finally:
+            for h in hook_handles:
+                h.remove()
+
+        return x_t, {}
 
     def denoise_step(
         self,

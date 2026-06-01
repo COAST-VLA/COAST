@@ -16,6 +16,7 @@ import dataclasses
 import json
 import logging
 import os
+import pathlib
 from typing import Literal
 
 # Reuse helpers from main.py so single-task and multi-task eval cannot diverge.
@@ -32,6 +33,8 @@ import metaworld
 import numpy as np
 from openpi_client import websocket_client_policy as _websocket_client_policy
 from openpi_client.collection_session import BatchCollectionSession
+from openpi_client.steering import load_and_validate_steering_config
+from openpi_client.steering import resolve_steering_for_task
 from tqdm import tqdm
 import tyro
 
@@ -109,6 +112,16 @@ class Args:
     # server (started with --collect_activations) saves intermediates to its disk.
     collect: bool = False
 
+    # --- Steering (requires WebSocket server started with --steer). ---
+    # Incompatible with --collect (collection bypasses the server). The config JSON,
+    # if provided, overrides the scalar flags per-task via resolve_steering_for_task.
+    steer: bool = False
+    steering_config: pathlib.Path | None = None
+    steering_layer: int = 11
+    steering_alpha: float = 0.1
+    steering_beta: float = 0.3
+    steering_strategy: str = "global"
+
 
 def _resolve_tasks(args: Args) -> list[str]:
     if args.tasks:
@@ -119,9 +132,23 @@ def _resolve_tasks(args: Args) -> list[str]:
     return list(ml45.train_classes.keys()) if args.split == "train" else list(ml45.test_classes.keys())
 
 
-def _per_task_args(env_name: str, args: Args, task_output_dir: str) -> _MainArgs:
-    """Build a ``main.Args`` for ``run_episode`` to consume for a given task."""
-    return _MainArgs(
+def _fallback_from_args(args: Args) -> dict:
+    """Extract the scalar steering fields from eval_all's Args for per-task fallback."""
+    return {
+        "layer": args.steering_layer,
+        "alpha": args.steering_alpha,
+        "beta": args.steering_beta,
+        "strategy": args.steering_strategy,
+    }
+
+
+def _per_task_args(env_name: str, args: Args, task_output_dir: str, cfg: dict | None = None) -> _MainArgs:
+    """Build a ``main.Args`` for ``run_episode`` to consume for a given task.
+
+    When ``args.steer`` is set, resolves per-task steering params from ``cfg`` (a
+    parsed best_configs.json) with fallback to the scalar CLI flags.
+    """
+    main_args = _MainArgs(
         host=args.host,
         port=args.port,
         env_name=env_name,
@@ -138,6 +165,14 @@ def _per_task_args(env_name: str, args: Args, task_output_dir: str) -> _MainArgs
         output_dir=task_output_dir,
         collect=args.collect,
     )
+    if args.steer:
+        resolved = resolve_steering_for_task(_fallback_from_args(args), cfg, env_name)
+        main_args.steer = True
+        main_args.steering_layer = int(resolved["layer"])
+        main_args.steering_alpha = float(resolved["alpha"])
+        main_args.steering_beta = float(resolved["beta"])
+        main_args.steering_strategy = str(resolved["strategy"])
+    return main_args
 
 
 def eval_task(
@@ -146,6 +181,7 @@ def eval_task(
     args: Args,
     output_dir: str,
     collect_session: BatchCollectionSession | None = None,
+    steering_cfg: dict | None = None,
 ) -> dict[str, float]:
     """Evaluate a single task over ``num_episodes`` and return mean success rate."""
     env = make_env(
@@ -160,7 +196,7 @@ def eval_task(
     task_output_dir = os.path.join(output_dir, env_name)
     os.makedirs(task_output_dir, exist_ok=True)
 
-    task_args = _per_task_args(env_name, args, task_output_dir)
+    task_args = _per_task_args(env_name, args, task_output_dir, cfg=steering_cfg)
 
     episode_success_rates: list[float] = []
     try:
@@ -192,10 +228,24 @@ def main(args: Args) -> None:
     # all per-env state at the beginning of each task's first episode.
     collect_session = BatchCollectionSession(policy, num_envs=args.num_envs) if args.collect else None
 
+    # Parse + validate the best_configs.json once up front so a malformed file
+    # fails the run before any GPU time is burned.
+    steering_cfg: dict | None = None
+    if args.steer and args.steering_config is not None:
+        steering_cfg = load_and_validate_steering_config(str(args.steering_config))
+        logger.info("Loaded steering config: %d task overrides", len(steering_cfg.get("tasks", {})))
+
     results_path = os.path.join(output_dir, "results.json")
     results: dict[str, float] = {}
     for env_name in tqdm(env_names, desc=f"ML45-{args.split}"):
-        task_result = eval_task(env_name, policy, args, output_dir, collect_session=collect_session)
+        task_result = eval_task(
+            env_name,
+            policy,
+            args,
+            output_dir,
+            collect_session=collect_session,
+            steering_cfg=steering_cfg,
+        )
         results[env_name] = task_result["success_rate"]
         logger.info(f"[{env_name}] success_rate={results[env_name]:.2f}")
         with open(results_path, "w") as f:
@@ -216,8 +266,11 @@ def main(args: Args) -> None:
     for env_name, rate in sorted(results.items(), key=lambda x: x[1], reverse=True):
         logger.info(f"  {env_name:<40s} {rate:.2f}")
 
-
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     args = tyro.cli(Args)
+    if args.steer and args.collect:
+        raise ValueError(
+            "--steer is incompatible with --collect. Run steering and activation collection in separate passes."
+        )
     main(args)

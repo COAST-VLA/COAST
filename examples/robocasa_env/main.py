@@ -29,6 +29,7 @@ import tyro
 from openpi_client import image_tools
 from openpi_client import websocket_client_policy as _websocket_client_policy
 from openpi_client.collection_session import CollectionSession
+from openpi_client.steering import STEERING_KEY, build_steering_payload
 from robocasa.utils.dataset_registry_utils import get_task_horizon
 from robocasa.utils.env_utils import convert_action
 from tqdm import tqdm
@@ -74,11 +75,43 @@ class Args:
     # If True, attach activation-collection metadata to every infer call so the
     # server (started with --collect_activations) saves intermediates to its disk.
     collect: bool = False
+    # The `env_id` tag attached to every `__collect__` payload — feeds into the
+    # server's output path `episode_{episode_id:03d}_env_{env_id:03d}/`. Leave
+    # at the default (0) in the common case. You only need to set this for a
+    # specific use case:
+    #
+    # **When you DO NOT need this flag** (almost always):
+    #   • Single main.py invocation (any --num_episodes value) — episode_id
+    #     varies per rollout, env_id=0 is fine.
+    #   • `eval_all.py` — dispatches one subprocess per env_name. The server
+    #     keys the path on task_name, so env_id=0 never collides across
+    #     subprocesses. This is the documented, "safe" parallel collection
+    #     pattern.
+    #
+    # **When you DO need this flag** (rare, opt-in):
+    #   • You're running N parallel main.py subprocesses on the *same*
+    #     env_name (e.g., to collect more rollouts of one task for a per-task
+    #     conceptor NPZ faster than running --num_episodes N sequentially).
+    #     Then all N share `(task_name, episode_id=0)`, so you must pass a
+    #     distinct `--collect_env_id` per subprocess (0, 1, 2, ...) to avoid
+    #     them clobbering each other's `episode_000_env_000/` files.
+    collect_env_id: int = 0
 
     # Override the top-level output directory (for videos / artifacts). If
     # None, defaults to ``output/`` — ``eval_task`` nests a per-env subdir, so
     # per-episode videos land at ``output/{env_name}/episode_NNN.mp4``.
     output_dir: Optional[str] = None
+
+    # ── Steering (requires server started with --steer). ──────────────────────
+    # When True, attach obs[STEERING_KEY] = {task, layer, alpha, beta, strategy}
+    # to every inference call so the server applies a conceptor steering hook.
+    steer: bool = False
+    steering_layer: int = 11
+    steering_alpha: float = 0.1
+    steering_beta: float = 0.3
+    steering_strategy: str = "global"
+    # Override the conceptor task key (default: args.env_name).
+    steering_task: Optional[str] = None
 
 
 def tile_frames(frames: list[np.ndarray]) -> np.ndarray:
@@ -157,6 +190,7 @@ def eval_task(
                 task_id=0,
                 episode_id=episode,
                 prompt=str(task_lang),
+                env_id=args.collect_env_id,
             )
 
         video_path = os.path.join(task_output_dir, f"episode_{episode:03d}.mp4")
@@ -216,6 +250,14 @@ def eval_task(
                     if collect_session is not None:
                         element["__collect__"] = collect_session.make_collect_metadata(
                             step
+                        )
+                    if args.steer:
+                        element[STEERING_KEY] = build_steering_payload(
+                            task=args.steering_task or env_name,
+                            layer=args.steering_layer,
+                            alpha=args.steering_alpha,
+                            beta=args.steering_beta,
+                            strategy=args.steering_strategy,
                         )
                     result = policy.infer(element)
                     action_chunk = result["actions"]  # (action_horizon, action_dim=12)

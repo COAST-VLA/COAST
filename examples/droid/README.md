@@ -76,6 +76,58 @@ Run loop (interactive):
 | Policy does not perform the task well | In our experiments, the policy could perform simple table top manipulation tasks (pick-and-place) across a wide range of environments, camera positions, and lighting conditions. If the policy does not perform the task well, you can try modifying the scene or object placement to make the task easier. Also make sure that the camera view you are passing to the policy can see all relevant objects in the scene (the policy is only conditioned on a single external camera + wrist camera, make sure you are feeding the desired camera to the policy). Use `ZED_Explore` to check that the camera view you are passing to the policy can see all relevant objects in the scene. Finally, the policy is far from perfect and will fail on more complex manipulation tasks, but it usually makes a decent effort. :) |
 
 
+## Running with Steering
+
+Conceptor-based activation steering nudges the action expert's hidden state toward the subspace of successful rollouts. DROID is a real-robot interactive loop — one instruction per `main.py` launch — so there is no suite-level `eval_all.py` and no per-task config file. To compare conditions, launch the client once per (strategy, α, β) with `--steer` and the matching scalars, and label success manually.
+
+The sweep driver in `experiments/droid/select_parameters.py` reads the conceptor NPZ's diagnostics (per-layer quota, success/failure overlap) and narrows the grid before you ever touch the robot; see `experiments/droid/README.md`.
+
+### Prereqs
+
+1. Download the conceptor NPZ (built offline from server-collected activations — see `experiments/droid/README.md`):
+
+   ```bash
+   hf download brandonyang/droid-conceptors droid_conceptors.npz \
+       --repo-type dataset --local-dir conceptors/
+   ```
+
+2. Start a steering-capable server on the GPU machine (`--steer` requires `--pytorch` and `--conceptor_npz`):
+
+   ```bash
+   uv run scripts/serve_policy.py --pytorch --steer \
+       --conceptor_npz conceptors/droid_conceptors.npz \
+       policy:checkpoint --policy.config=pi05_droid \
+       --policy.dir=gs://openpi-assets/checkpoints/pi05_droid
+   ```
+
+   The same server serves baseline (unsteered) clients too.
+
+### Run the DROID robot with steering
+
+On the control laptop, after following the setup steps above:
+
+```bash
+python3 scripts/main.py --remote_host=<server_ip> --remote_port=<server_port> \
+    --external_camera="left" \
+    --steer --steering_layer 11 --steering_alpha 0.1 --steering_beta 0.3 \
+    --steering_strategy global
+```
+
+The task key used for the NPZ lookup is derived from the instruction via `re.sub(r"[^a-zA-Z0-9]+", "-", instruction.lower()).strip("-")` (the same slug used server-side for activation collection). Override with `--steering_task <key>` if your NPZ uses a different key.
+
+### All steering flags
+
+| Flag                  | Default   | Notes                                         |
+|-----------------------|-----------|-----------------------------------------------|
+| `--steer`             | False     | Toggle steering on                            |
+| `--steering_layer`    | 11        | Action-expert transformer layer index         |
+| `--steering_alpha`    | 0.1       | Conceptor aperture                            |
+| `--steering_beta`     | 0.3       | Interpolation weight (β=0 is no-op)           |
+| `--steering_strategy` | "global"  | `global`, `per_step`, `positive_only`, `random_matched`, `linear` |
+| `--steering_task`     | None      | Override NPZ task key (default: instruction slug) |
+
+See `examples/libero_env/README.md` for the full strategy table and error-behavior notes — the math and wire protocol are shared across all four clients.
+
 ## Running Other Policies
 
 We provide configs for running the baseline DROID policies from the [RoboArena](https://robo-arena.github.io/) paper. Simply run the commands below to start inference servers for the respective policies. Then follow the instructions above to run evaluation on the DROID robot.

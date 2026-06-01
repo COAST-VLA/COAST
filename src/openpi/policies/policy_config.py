@@ -22,6 +22,7 @@ def create_trained_policy(
     default_prompt: str | None = None,
     norm_stats: dict[str, transforms.NormStats] | None = None,
     pytorch_device: str | None = None,
+    torch_compile: bool = False,
     use_pytorch: bool | None = None,
 ) -> _policy.Policy:
     """Create a policy from a trained checkpoint.
@@ -38,6 +39,10 @@ def create_trained_policy(
             from the checkpoint directory.
         pytorch_device: Device to use for PyTorch models (e.g., "cpu", "cuda", "cuda:0").
                       If None and is_pytorch=True, will use "cuda" if available, otherwise "cpu".
+        torch_compile: If True, wrap sample_actions with torch.compile for ~2x throughput
+                      at the cost of a 30-60s first-call warmup. Off by default — opt in
+                      for baseline-only inference. Irrelevant for forward-hook paths
+                      (activation collection, steering) which are never compiled.
 
     Note:
         The function automatically detects whether the model is PyTorch-based by checking for the
@@ -61,7 +66,7 @@ def create_trained_policy(
 
     logging.info("Loading model...")
     if is_pytorch:
-        model = train_config.model.load_pytorch(train_config, weight_path)
+        model = train_config.model.load_pytorch(train_config, weight_path, torch_compile=torch_compile)
         model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
     else:
         model = train_config.model.load(_model.restore_params(checkpoint_dir / "params", dtype=jnp.bfloat16))

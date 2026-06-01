@@ -1,0 +1,10 @@
+{
+  "task_suite": "metaworld_ml45_train",
+  "defaults": {
+    "layer": 11,
+    "alpha": 0.1,
+    "beta": 0.3,
+    "strategy": "global"
+  },
+  "tasks": {}
+}
