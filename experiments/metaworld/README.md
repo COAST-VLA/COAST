@@ -4,11 +4,11 @@ This directory contains the scripts that produce `best_configs.json` — the
 per-task `(layer, α, β, strategy)` quadruple consumed by
 `examples/metaworld/eval_all.py --steer --steering_config ...`.
 
-MetaWorld differs from LIBERO/RoboCasa in the collection phase: `--collect`
-is **in-process** (no server needed — the script loads the pi0.5 PyTorch
-policy directly). Steering itself still requires a WebSocket server
-(`--steer` is incompatible with in-process `--collect`), so the eval phases
-(sweep + final held-out) use the server-client path.
+MetaWorld now uses the same server-side activation collection pattern as
+LIBERO/RoboCasa: start `scripts/serve_policy.py --collect_activations`, then
+run the client with `--collect`. Steering also runs through a WebSocket server,
+but it uses a different server wrapper (`--steer`), so collection and steering
+still happen as separate passes.
 
 MetaWorld's `--seed` feeds `env.reset(seed=args.seed + episode)`, so
 different base seeds yield different per-episode seeds and thus different
@@ -33,13 +33,15 @@ Logs land in `experiments/metaworld/run_logs/`. Runs the 5 stages below sequenti
 ## Commands
 
 ```bash
-# (a) Collect activations IN-PROCESS on every ML45 train task: seed=0
-#     No server needed — --collect loads the policy from --policy.dir.
-CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
-    --collect --split train --num_envs 16 --seed 0 \
-    --policy.config=pi05_metaworld \
-    --policy.dir=checkpoints/openpi-metaworld-5000 \
-    --collect_output_dir activations/metaworld
+# (a0) Start a collection server.
+CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --collect_activations \
+    --output-dir activations/metaworld --port 8201 \
+    policy:checkpoint --policy.config pi05_metaworld \
+    --policy.dir checkpoints/openpi-metaworld-5000
+
+# (a1) In a second terminal, collect activations on every ML45 train task: seed=0.
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+    --collect --split train --num_envs 16 --seed 0 --port 8201
 
 # (b) Build the conceptor NPZ (CPU-only, ~10 min). Output path MUST be
 #     `conceptors/metaworld_conceptors.npz` — this is the hardcoded path the
@@ -47,18 +49,18 @@ CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
 #     checkpoint) are skipped with a warning — conceptor steering needs both
 #     classes. Pick harder tasks or collect more episodes if too many skip.
 CUDA_VISIBLE_DEVICES="" uv run python experiments/metaworld/compute_conceptors.py \
-    --activation_root activations/metaworld \
+    --activation_root activations/metaworld/openpi-metaworld-5000 \
     --output_path conceptors/metaworld_conceptors.npz
 
 # (c) Sweep hyperparameters: seed=15 → disjoint env seeds vs collection.
-#     The sweep driver loads the policy itself and starts its own in-process
+#     The sweep driver loads the policy itself and starts a local WebSocket
 #     steering server on `--port` (default 8103). Spawns main.py per
 #     (task, condition) via WebSocket to that local server.
 CUDA_VISIBLE_DEVICES=0 uv run python experiments/metaworld/find_best_configs.py \
     --num_episodes 10 --num_envs 10 --seed 15
 
 # (d) Start a steering server for the final held-out eval (the sweep driver
-#     exited after (c) and took its in-process server with it).
+#     exited after (c) and took its local background server with it).
 CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --steer \
     --conceptor_npz conceptors/metaworld_conceptors.npz --port 8301 \
     policy:checkpoint --policy.config pi05_metaworld \
@@ -121,11 +123,10 @@ seed and pick disjoint sweep/eval seeds.
 
 ## Notes
 
-- **Steering is WebSocket-only.** `--steer` requires a steering-capable
-  server and is incompatible with in-process `--collect` (which bypasses
-  `SteeredPolicyWrapper` entirely by design). The pipeline above handles
-  this by putting collection first (step a, in-process, no server),
-  before any `--steer` work — keep that order.
+- **Collection and steering use separate server modes.** `--collect` expects a
+  server started with `--collect_activations`; `--steer` expects a server
+  started with `--steer --conceptor_npz`. Run them as separate passes, in the
+  order shown above.
 - **Partial sweep recovery.** If a sweep crashes partway, the partial
   JSONL at `experiments/metaworld/steering_results/<ts>/partial_results.jsonl`
   is valid — re-aggregate by grouping on task, picking argmax steered SR

@@ -2,8 +2,9 @@
 # Full MetaWorld steering pipeline, end-to-end.
 #
 # Mirrors the 5-stage flow from experiments/metaworld/README.md.
-# MetaWorld collects IN-PROCESS (no server) via `eval_all.py --collect`,
-# then switches to the WebSocket server path for the sweep + final eval.
+# MetaWorld uses the same server-side activation collection path as the other
+# clients: start `serve_policy.py --collect_activations`, then run
+# `eval_all.py --collect`.
 #
 # Usage (from repo root):
 #   bash experiments/metaworld/run_end_to_end.sh
@@ -24,6 +25,7 @@ SEED_COLLECT="${SEED_COLLECT:-0}"
 SEED_SWEEP="${SEED_SWEEP:-15}"
 SEED_EVAL="${SEED_EVAL:-30}"
 EVAL_PORT="${EVAL_PORT:-8301}"
+COLLECT_PORT="${COLLECT_PORT:-8201}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ACTIVATIONS_DIR="$REPO_ROOT/activations/metaworld"
@@ -55,17 +57,28 @@ banner() { echo; echo "======= $1 ======="; }
 
 cd "$REPO_ROOT"
 
-banner "(a) Collect activations IN-PROCESS (split=$SPLIT, seed=$SEED_COLLECT)"
-CUDA_VISIBLE_DEVICES="$GPU" MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+banner "(a0) Start collection server on GPU=$GPU port=$COLLECT_PORT"
+CUDA_VISIBLE_DEVICES="$GPU" uv run scripts/serve_policy.py --pytorch --collect_activations \
+    --output-dir "$ACTIVATIONS_DIR" --port "$COLLECT_PORT" \
+    policy:checkpoint --policy.config pi05_metaworld \
+    --policy.dir "$CHECKPOINT_DIR" \
+    > "$LOG_DIR/00_collect_server.log" 2>&1 &
+SERVER_PID=$!
+wait_for_port "$COLLECT_PORT"
+echo "[ok] collection server PID=$SERVER_PID"
+
+banner "(a1) Collect activations via server (split=$SPLIT, seed=$SEED_COLLECT)"
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
     --collect --split "$SPLIT" --num_envs "$NUM_ENVS" --seed "$SEED_COLLECT" \
-    --policy.config=pi05_metaworld \
-    --policy.dir="$CHECKPOINT_DIR" \
-    --collect_output_dir "$ACTIVATIONS_DIR" \
+    --port "$COLLECT_PORT" \
     2>&1 | tee "$LOG_DIR/01_collect.log"
+
+cleanup
+SERVER_PID=""
 
 banner "(b) Build conceptor NPZ → $NPZ_PATH"
 CUDA_VISIBLE_DEVICES="" uv run python experiments/metaworld/compute_conceptors.py \
-    --activation_root "$ACTIVATIONS_DIR" \
+    --activation_root "$ACTIVATIONS_DIR/$(basename "$CHECKPOINT_DIR")" \
     --output_path "$NPZ_PATH" \
     2>&1 | tee "$LOG_DIR/02_compute_conceptors.log"
 

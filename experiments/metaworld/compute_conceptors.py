@@ -6,20 +6,21 @@ NPZ lives at ``brandonyang/metaworld-conceptors`` on HuggingFace (download via
 when rebuilding from fresh activations (e.g., a new checkpoint).
 
 Pipeline:
-  1. Collect activations *in-process* with:
-     ``CUDA_VISIBLE_DEVICES=0 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
-         --collect --split train --num_envs 16 \
-         --policy.config=pi05_metaworld \
+  1. Collect activations with a collection-mode server:
+     ``CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch \
+         --collect_activations --output-dir activations/metaworld \
+         policy:checkpoint --policy.config=pi05_metaworld \
          --policy.dir=checkpoints/openpi-metaworld-5000``
-     (MetaWorld collection is in-process — no separate server — but the on-disk
-     tree layout matches LIBERO/RoboCasa's server-side collection.)
+     then, in another terminal:
+     ``MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
+         --collect --split train --num_envs 16``
   2. Run this script pointing at the resulting activation root.
   3. The output NPZ is drop-in compatible with ``src/openpi/serving/steering.py``.
 
 Usage (from repo root)::
 
     uv run python experiments/metaworld/compute_conceptors.py \\
-        --activation_root activations/openpi-metaworld-5000 \\
+        --activation_root activations/metaworld/openpi-metaworld-5000 \\
         --output_path conceptors/metaworld_conceptors_fresh.npz
 
 All math lives in ``src/openpi/serving/conceptors.py``; this is just a CLI

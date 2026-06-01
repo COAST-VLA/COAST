@@ -91,8 +91,8 @@ class Args:
     # GR00T N1.5 (different backbone, served from groot_env/).
     steer: bool = False
     # Path to the conceptor NPZ. Required when --steer is set.
-    # Download from brandonyang/libero-conceptors or brandonyang/robocasa-conceptors,
-    # or rebuild via experiments/{libero,robocasa}/compute_conceptors.py.
+    # Download the appropriate {env}-conceptors dataset, or rebuild via
+    # experiments/{libero,robocasa,metaworld,droid}/compute_conceptors.py.
     conceptor_npz: str | None = None
 
     # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
@@ -190,8 +190,8 @@ def main(args: Args) -> None:
         if args.conceptor_npz is None:
             raise ValueError(
                 "--steer requires --conceptor_npz <path>. "
-                "Download from brandonyang/libero-conceptors or brandonyang/robocasa-conceptors, "
-                "or rebuild via experiments/{libero,robocasa}/compute_conceptors.py."
+                "Download the appropriate {env}-conceptors dataset, or rebuild via "
+                "experiments/{libero,robocasa,metaworld,droid}/compute_conceptors.py."
             )
 
     policy = create_policy(args)

@@ -130,7 +130,7 @@ Pre-collected datasets:
 
 Conceptor-based activation steering nudges the action expert's hidden state toward the subspace of successful rollouts. End-user surface is one flag: `--steer`. Tuned per-task hyperparameters (once produced by the research sweep) live at `experiments/metaworld/best_configs.json`; producing new ones is a research task (see `experiments/metaworld/README.md`).
 
-**Only the WebSocket eval path supports steering** — the in-process `--collect` path loads a PyTorch policy directly and bypasses `SteeredPolicyWrapper`. For steered eval, start the server separately and let the client connect over WebSocket.
+**Only the steering WebSocket server supports steering** — `--collect` targets a collection-mode server, while `--steer` targets a steering-mode server. Run collection and steering as separate passes, each with the matching server mode.
 
 **Only pi0.5 (`pi05_metaworld`) is supported.** TODO: extend to pi0-fast — the autoregressive decoder has a different activation shape (per-token hidden states, not per-denoise-step), so `per_step` and the NPZ key schema need rethinking.
 

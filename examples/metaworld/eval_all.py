@@ -113,8 +113,9 @@ class Args:
     collect: bool = False
 
     # --- Steering (requires WebSocket server started with --steer). ---
-    # Incompatible with --collect (collection bypasses the server). The config JSON,
-    # if provided, overrides the scalar flags per-task via resolve_steering_for_task.
+    # Incompatible with --collect because collection and steering use separate
+    # server-side wrappers. The config JSON, if provided, overrides the scalar
+    # flags per-task via resolve_steering_for_task.
     steer: bool = False
     steering_config: pathlib.Path | None = None
     steering_layer: int = 11
