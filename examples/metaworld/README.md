@@ -4,7 +4,7 @@
 
 ## Installation
 
-MetaWorld uses the **root openpi venv** — no separate environment needed. Initialize submodules and sync once:
+MetaWorld uses the **root COAST venv** — no separate environment needed. Initialize submodules and sync once:
 
 ```bash
 git submodule update --init --recursive
@@ -41,7 +41,7 @@ The `pi05_metaworld` and `pi0_fast_metaworld` configs are registered in `src/ope
 
 | Config | Checkpoint |
 |---|---|
-| `pi05_metaworld`       | [`brandonyang/openpi-metaworld-5000`](https://huggingface.co/brandonyang/openpi-metaworld-5000), [`brandonyang/openpi-metaworld-25000`](https://huggingface.co/brandonyang/openpi-metaworld-25000) |
+| `pi05_metaworld`       | `5000`, `25000` intermediate checkpoints. Download into local COAST directories such as `checkpoints/coast-metaworld-5000` and `checkpoints/coast-metaworld-25000`. |
 | `pi0_fast_metaworld`   | [`1000`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints/tree/main/pi0_fast_metaworld_b200_bs512/1000), [`2000`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints/tree/main/pi0_fast_metaworld_b200_bs512/2000), [`2500`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints/tree/main/pi0_fast_metaworld_b200_bs512/2500) (subdirs of [`brandonyang/pi0fast-metaworld-checkpoints`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints)) |
 
 ## Serving the policy
@@ -155,7 +155,7 @@ head, using Miranda-v2-style fast conceptor keys.
    uv run scripts/serve_policy.py --pytorch --steer \
        --conceptor_npz conceptors/metaworld_conceptors.npz \
        policy:checkpoint \
-       --policy.config pi05_metaworld --policy.dir checkpoints/openpi-metaworld-5000
+       --policy.config pi05_metaworld --policy.dir checkpoints/coast-metaworld-5000
 
    # pi0-FAST:
    uv run scripts/serve_policy.py --steer \

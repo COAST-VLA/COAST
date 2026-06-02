@@ -54,7 +54,7 @@ SUCCESS_RATE_RE = re.compile(r"success_rate=([0-9.]+)")
 @dataclasses.dataclass
 class Args:
     config: str = "pi05_metaworld"
-    checkpoint_dir: str = "checkpoints/openpi-metaworld-5000"
+    checkpoint_dir: str = "checkpoints/coast-metaworld-5000"
 
     tasks: tuple[str, ...] = DEFAULT_TASKS
 

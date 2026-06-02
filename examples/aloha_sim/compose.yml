@@ -4,7 +4,7 @@ services:
   runtime:
     image: aloha_sim
     depends_on:
-      - openpi_server
+      - coast_policy_server
     build:
       context: ../..
       dockerfile: examples/aloha_sim/Dockerfile
@@ -16,8 +16,8 @@ services:
       - $PWD:/app
       - ../../data:/data
 
-  openpi_server:
-    image: openpi_server
+  coast_policy_server:
+    image: coast_policy_server
     build:
       context: ../..
       dockerfile: scripts/docker/serve_policy.Dockerfile

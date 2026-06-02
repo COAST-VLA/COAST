@@ -1,7 +1,7 @@
 [project]
 name = "groot_env"
 version = "0.1.0"
-description = "Isolated venv that serves NVIDIA GR00T N1.5 via openpi's WebSocket protocol"
+description = "Isolated venv that serves NVIDIA GR00T N1.5 via COAST's WebSocket protocol"
 readme = "README.md"
 # GR00T N1.5 recommends Python 3.10 (its pyproject allows >=3.10, but the NVIDIA
 # README install guide pins 3.10 in a conda env). Sticking with 3.10 here to

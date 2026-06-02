@@ -1,6 +1,6 @@
 """Unit tests for openpi_client.collection_session.CollectionSession.
 
-These tests run in the main openpi venv against the editable-installed
+These tests run in the root COAST venv against the editable-installed
 openpi-client package — no libero/robocasa/droid venv needed. They cover the
 state-tracking and protocol-payload-shaping behavior of the helper, with a
 stub policy that just records every infer() call so we can inspect the

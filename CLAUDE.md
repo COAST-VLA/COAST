@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This is a fork of Physical Intelligence's openpi repository for **activation collection and mechanistic interpretability** on Vision-Language-Action (VLA) models (pi0, pi0-FAST, pi0.5) plus NVIDIA GR00T N1.5. The models are implemented in JAX (primary) and PyTorch, with fine-tuning, evaluation, and activation collection pipelines across four robot environments.
+COAST is a VLA evaluation, activation-collection, and steering repository built on Physical Intelligence's openpi codebase for pi0, pi0-FAST, pi0.5, and NVIDIA GR00T N1.5. The models are implemented in JAX (primary) and PyTorch, with fine-tuning, evaluation, activation collection, and steering pipelines across four robot environments.
 
 ## Evaluation & Collection Clients
 

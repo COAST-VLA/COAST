@@ -132,7 +132,7 @@ WebSocket request must carry exactly one of `__collect__` or
 `__finalize_episode__` on the obs dict, or the server raises `ValueError` and
 closes the connection.
 
-The transport is standard openpi WebSocket (`msgpack_numpy` serialization,
+The transport is the standard COAST WebSocket protocol (`msgpack_numpy` serialization,
 same `policy.infer(obs_dict)` shape). The magic keys are pulled off before
 dispatch.
 

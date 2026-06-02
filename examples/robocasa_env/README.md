@@ -1,6 +1,6 @@
 # RoboCasa
 
-[RoboCasa](https://robocasa.ai/docs/build/html/index.html) is a kitchen-environment benchmark built on robosuite. Its dependencies conflict with the root `openpi` venv, so this directory is a **separate venv**. The sim runs here and talks to the policy server (in the root venv, or in [`groot_env/`](../../groot_env/README.md)) over WebSocket.
+[RoboCasa](https://robocasa.ai/docs/build/html/index.html) is a kitchen-environment benchmark built on robosuite. Its dependencies conflict with the root COAST venv, so this directory is a **separate venv**. The sim runs here and talks to the policy server (in the root venv, or in [`groot_env/`](../../groot_env/README.md)) over WebSocket.
 
 The client is **backend-agnostic** — `main.py` / `eval_all.py` target either a **pi0.5 server** (`scripts/serve_policy.py`) or an **NVIDIA GR00T N1.5 server** (`groot_env/serve.py`) with no client-side changes; just point `--host` / `--port` at whichever is running.
 
