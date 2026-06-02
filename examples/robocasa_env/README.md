@@ -15,6 +15,17 @@ uv run python -m robocasa.scripts.setup_macros
 uv run python -m robocasa.scripts.download_kitchen_assets   # ~10GB
 ```
 
+`download_kitchen_assets` prompts before downloading; type `y` when it asks
+whether to proceed. For non-interactive setup, use:
+
+```bash
+printf 'y\n' | uv run python -m robocasa.scripts.download_kitchen_assets
+```
+
+This venv declares `requires-python = ">=3.11"`. `uv` may select a newer
+compatible interpreter, such as Python 3.13, depending on what is installed or
+cached locally; the CPU tests and install smoke have passed under that setup.
+
 ## Dataset & Training
 
 We do not train RoboCasa in-repo — evaluate against upstream checkpoints directly.
