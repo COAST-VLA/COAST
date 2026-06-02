@@ -2,11 +2,34 @@
 
 COAST is a VLA evaluation, activation-collection, and steering repo built on [Physical Intelligence's openpi](https://github.com/Physical-Intelligence/openpi). It wires MetaWorld, LIBERO, and RoboCasa examples end-to-end, adds server-side activation collection, and includes a pluggable policy-server layer. RoboCasa can target either the pi0/pi0.5 server or the isolated NVIDIA GR00T server without changing the client. For GR00T setup steps, please follow the [groot_env/README.md](groot_env/README.md). The setup steps below are for the openpi-derived pi0 and pi0.5 models.
 
-https://github.com/user-attachments/assets/343316f1-37d3-464c-ad97-2965f0ebe456
+## Rollout Demos
 
-https://github.com/user-attachments/assets/84053a5e-bb96-4368-843a-466db44f5d3d
+Selected policy-server + simulator rollouts from the three supported evaluation
+clients.
 
-https://github.com/user-attachments/assets/9fa72915-379a-4107-9759-f9a6794db4b4
+<table>
+  <tr>
+    <th>RoboCasa</th>
+    <th>MetaWorld</th>
+    <th>LIBERO</th>
+  </tr>
+  <tr>
+    <td>
+      <video src="https://github.com/user-attachments/assets/343316f1-37d3-464c-ad97-2965f0ebe456" controls muted width="100%"></video>
+    </td>
+    <td>
+      <video src="https://github.com/user-attachments/assets/84053a5e-bb96-4368-843a-466db44f5d3d" controls muted width="100%"></video>
+    </td>
+    <td>
+      <video src="https://github.com/user-attachments/assets/9fa72915-379a-4107-9759-f9a6794db4b4" controls muted width="100%"></video>
+    </td>
+  </tr>
+  <tr>
+    <td><strong>SlideDishwasherRack</strong><br>Multi-camera kitchen rollout with tiled agent and wrist views.</td>
+    <td><strong>button-press-v3</strong><br>Parallel rollout grid across MetaWorld env instances.</td>
+    <td><strong>libero_spatial task 0</strong><br>Bowl pick-and-place rollout with tiled scene and wrist views.</td>
+  </tr>
+</table>
 
 ## Installation
 
