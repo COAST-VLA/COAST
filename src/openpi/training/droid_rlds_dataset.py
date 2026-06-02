@@ -1,6 +1,6 @@
 """
 RLDS-based data loader for DROID.
-While openpi typically uses LeRobot's data loader, it is not currently scalable enough for larger datasets like DROID.
+While COAST typically uses LeRobot's data loader, it is not currently scalable enough for larger datasets like DROID.
 Thus, we provide a data loader example here that uses the RLDS data format.
 The data loader also applies a few DROID-specific data filters / transformations.
 """

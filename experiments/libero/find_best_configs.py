@@ -58,7 +58,7 @@ SUCCESS_RATE_RE = re.compile(r"success_rate=([0-9.]+)")
 @dataclasses.dataclass
 class Args:
     config: str = "pi05_libero"
-    checkpoint_dir: str = "checkpoints/openpi-libero-2000"
+    checkpoint_dir: str = "checkpoints/coast-libero-2000"
 
     tasks: tuple[str, ...] = ALL_TASKS
 

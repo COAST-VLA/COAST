@@ -6,7 +6,7 @@ services:
     depends_on:
       - aloha_ros_nodes
       - ros_master
-      - openpi_server
+      - coast_policy_server
     build:
       context: ../..
       dockerfile: examples/aloha_real/Dockerfile
@@ -40,8 +40,8 @@ services:
     command:
       - roscore
 
-  openpi_server:
-    image: openpi_server
+  coast_policy_server:
+    image: coast_policy_server
     build:
       context: ../..
       dockerfile: scripts/docker/serve_policy.Dockerfile

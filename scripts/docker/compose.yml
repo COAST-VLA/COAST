@@ -1,15 +1,15 @@
 # Run with:
 # docker compose -f scripts/docker/compose.yml up --build
 services:
-  openpi_server:
-    image: openpi_server
+  coast_policy_server:
+    image: coast_policy_server
     build:
       context: ../..
       dockerfile: scripts/docker/serve_policy.Dockerfile
     init: true
     tty: true
     network_mode: host
-    # Populate configured openpi data home to /openpi_assets inside the container.
+    # Populate configured policy data home to /openpi_assets inside the container.
     # Populate aws credential inside the container.
     volumes:
       - $PWD:/app

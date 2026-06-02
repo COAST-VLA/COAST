@@ -4,7 +4,7 @@
 
 ## Installation
 
-MetaWorld uses the **root openpi venv** — no separate environment needed. Initialize submodules and sync once:
+MetaWorld uses the **root COAST venv** — no separate environment needed. Initialize submodules and sync once:
 
 ```bash
 git submodule update --init --recursive

@@ -19,7 +19,7 @@
 #
 # Required env:
 #   GPU            which CUDA device to use (default 0)
-#   CHECKPOINT_DIR path to the pi0.5 LIBERO checkpoint (default checkpoints/openpi-libero-2000)
+#   CHECKPOINT_DIR path to the pi0.5 LIBERO checkpoint (default checkpoints/coast-libero-2000)
 #   NUM_EPISODES   eps per task in each stage (default 15)
 #   SEED_COLLECT   seed for collection  (default 0)
 #   SEED_SWEEP     seed for sweep       (default 15)
@@ -31,7 +31,7 @@
 set -euo pipefail
 
 GPU="${GPU:-0}"
-CHECKPOINT_DIR="${CHECKPOINT_DIR:-checkpoints/openpi-libero-2000}"
+CHECKPOINT_DIR="${CHECKPOINT_DIR:-checkpoints/coast-libero-2000}"
 NUM_EPISODES="${NUM_EPISODES:-15}"
 SEED_COLLECT="${SEED_COLLECT:-0}"
 SEED_SWEEP="${SEED_SWEEP:-15}"

@@ -1,7 +1,7 @@
 
-# Running openpi models remotely
+# Running COAST policy servers remotely
 
-We provide utilities for running openpi models remotely. This is useful for running inference on more powerful GPUs off-robot, and also helps keep the robot and policy environments separate (and e.g. avoid dependency hell with robot software).
+COAST provides utilities for running openpi-derived policy models remotely. This is useful for running inference on more powerful GPUs off-robot, and also helps keep the robot and policy environments separate (and e.g. avoid dependency hell with robot software).
 
 ## Starting a remote policy server
 
@@ -26,7 +26,7 @@ We provide a client utility with minimal dependencies that you can easily embed 
 First, install the `openpi-client` package in your robot environment:
 
 ```bash
-cd $OPENPI_ROOT/packages/openpi-client
+cd $COAST_ROOT/packages/openpi-client
 pip install -e .
 ```
 

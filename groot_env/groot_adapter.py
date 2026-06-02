@@ -360,7 +360,7 @@ class GR00TAdapterPolicy(_base_policy.BasePolicy):
                                 `inner_dim -> dim` contraction Linear); matches
                                 pi0's `suffix_mlp_hidden` which hooks inputs of
                                 `expert_layers[i].mlp.down_proj`.
-        Batch dim B is always 1 here (openpi server sends one obs at a time).
+        Batch dim B is always 1 here (the policy server sends one obs at a time).
         """
         groot_obs = self._build_groot_obs(obs)
         action_dict, intermediates = _get_action_with_intermediates(

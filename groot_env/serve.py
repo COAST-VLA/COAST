@@ -1,6 +1,6 @@
-"""Serve an NVIDIA GR00T N1.5 checkpoint via openpi's WebSocket protocol.
+"""Serve an NVIDIA GR00T N1.5 checkpoint via COAST's WebSocket protocol.
 
-GR00T N1.5 has deep dependency conflicts with the openpi root venv (torch 2.5.1
+GR00T N1.5 has deep dependency conflicts with the root COAST venv (torch 2.5.1
 vs 2.7.1, wandb 0.18.0 vs >=0.19.1, etc.), so it lives in its own venv here at
 the repo root, peer to `examples/` (which holds CLIENTS) and `scripts/` (which
 holds the pi0 server). The server uses the same wire protocol as
@@ -18,8 +18,8 @@ Then from the RoboCasa client:
     cd examples/robocasa_env
     MUJOCO_GL=egl uv run python main.py --env_name CloseBlenderLid
 
-No client-side changes are needed. `groot_adapter.py` translates the openpi
-robocasa client's flat observation dict into GR00T N1.5's flat
+No client-side changes are needed. `groot_adapter.py` translates the COAST
+RoboCasa client's flat observation dict into GR00T N1.5's flat
 {video.X, state.Y, annotation.Z} format, then concatenates GR00T's
 per-action-key outputs back into a single (action_horizon, action_dim) array.
 """

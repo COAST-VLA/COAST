@@ -46,9 +46,7 @@ class Args:
 
     # Remote server parameters
     remote_host: str = "0.0.0.0"  # point this to the IP address of the policy server, e.g., "192.168.1.100"
-    remote_port: int = (
-        8000  # point this to the port of the policy server, default server port for openpi servers is 8000
-    )
+    remote_port: int = 8000  # point this to the port of the policy server, default COAST policy-server port is 8000
 
     # If True, attach activation-collection metadata to every infer call so the
     # server (started with --collect_activations) saves intermediates to its disk.

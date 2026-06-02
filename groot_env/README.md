@@ -1,6 +1,6 @@
 # GR00T N1.5 Server
 
-An isolated-venv server that serves [NVIDIA Isaac GR00T N1.5](https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release) checkpoints over openpi's WebSocket protocol. In this branch, the GR00T adapter is wired for the RoboCasa client only; MetaWorld and LIBERO do not have GR00T adapters. N1.5 pins `torch==2.5.1`, which conflicts with the root openpi env — hence the separate venv.
+An isolated-venv server that serves [NVIDIA Isaac GR00T N1.5](https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release) checkpoints over COAST's WebSocket protocol. In this branch, the GR00T adapter is wired for the RoboCasa client only; MetaWorld and LIBERO do not have GR00T adapters. N1.5 pins `torch==2.5.1`, which conflicts with the root COAST env — hence the separate venv.
 
 ## Installation
 
@@ -182,15 +182,15 @@ RoboCasa's published N1.5 multitask atomic-seen average is **43.0%** over all 18
 
 ## Known limitations
 
-1. **Image resolution upsampling.** The pi0-compatible openpi robocasa client sends 224×224 images (pi0.5's training resolution); N1.5's robocasa head expects 256×256 per its modality config, so `groot_adapter._resize_to_256` upscales via `cv2.INTER_LINEAR` before inference. Rendering the env natively at 256×256 would be marginally better but would require either (a) client-side `--resize_size 256` (breaks pi0.5 compat) or (b) an env-wrapper change.
+1. **Image resolution upsampling.** The pi0-compatible COAST RoboCasa client sends 224×224 images (pi0.5's training resolution); N1.5's RoboCasa head expects 256×256 per its modality config, so `groot_adapter._resize_to_256` upscales via `cv2.INTER_LINEAR` before inference. Rendering the env natively at 256×256 would be marginally better but would require either (a) client-side `--resize_size 256` (breaks pi0.5 compat) or (b) an env-wrapper change.
 2. **Fixed action horizon, short client replan.** The DiT always produces a 16-step action chunk; the robocasa client uses `replan_steps=5`, so 11 of 16 predicted steps are recomputed every call. Correctness is unaffected — only a perf tax.
-3. **Right-view cross-camera fallback.** `build_robocasa_videos` prefers `observation/image2` (agentview_right) when the client sends it. Older clients without `observation/image2` fall back to duplicating `observation/image` as the right view, which degrades the stereo signal N1.5 was trained on but keeps the 3-channel shape contract. The openpi robocasa `main.py` in this repo emits `observation/image2` by default, so this fallback isn't hit in normal use.
+3. **Right-view cross-camera fallback.** `build_robocasa_videos` prefers `observation/image2` (agentview_right) when the client sends it. Older clients without `observation/image2` fall back to duplicating `observation/image` as the right view, which degrades the stereo signal N1.5 was trained on but keeps the 3-channel shape contract. The COAST RoboCasa `main.py` in this repo emits `observation/image2` by default, so this fallback isn't hit in normal use.
 4. **RoboCasa-only steering.** GR00T steering is wired for the RoboCasa adapter in this server. There is no GR00T MetaWorld or LIBERO adapter in this branch.
 
 ## How this integrates (for reference)
 
 - `serve.py` — thin wrapper that loads the checkpoint and starts a `WebsocketPolicyServer`. Mirrors `scripts/serve_policy.py` on the pi0 side.
-- `groot_adapter.py` — `GR00TAdapterPolicy(BasePolicy)` translating openpi's flat `observation/*`-keyed client dict to GR00T's nested `{video, state, language}` dict, running `Gr00tPolicy.get_action`, concatenating the per-action-key dict back to a single `(action_horizon, action_dim)` array under `"actions"`. Also houses `_get_action_with_intermediates`, a hybrid re-implementation + hook-based collector matching pi0's `sample_actions_with_intermediates` pattern.
+- `groot_adapter.py` — `GR00TAdapterPolicy(BasePolicy)` translating COAST's flat `observation/*`-keyed client dict to GR00T's nested `{video, state, language}` dict, running `Gr00tPolicy.get_action`, concatenating the per-action-key dict back to a single `(action_horizon, action_dim)` array under `"actions"`. Also houses `_get_action_with_intermediates`, a hybrid re-implementation + hook-based collector matching pi0's `sample_actions_with_intermediates` pattern.
 - `groot_activation_collector.py` — `CollectingPolicy` wrapper that dispatches `__collect__` / `__finalize_episode__` magic keys and writes the per-step/per-episode .npz files. Schema matches pi0's semantically; only file names and shapes differ per the architecture.
 - `groot_steering.py` — `SteeredGrootPolicyWrapper` and GR00T-local conceptor/linear hooks for `serve.py --steer`.
 - `websocket_policy_server.py` — copied verbatim from `src/openpi/serving/` (sha noted in its header) so `groot_env/` can serve without pulling in JAX/flax.

@@ -33,7 +33,7 @@ Logs land in `experiments/libero/run_logs/`. Runs the 7 stages below sequentiall
 CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --collect_activations \
     --output_dir activations/libero --port 8100 \
     policy:checkpoint --policy.config pi05_libero \
-    --policy.dir checkpoints/openpi-libero-2000
+    --policy.dir checkpoints/coast-libero-2000
 
 # (b) Collect activations on every libero_10 task: seed=0 → init-state slots 0..14.
 #     The server's --output_dir is the authoritative sink; the client's per-rollout
@@ -65,7 +65,7 @@ CUDA_VISIBLE_DEVICES=0 uv run python experiments/libero/find_best_configs.py \
 CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --steer \
     --conceptor_npz conceptors/libero_conceptors.npz --port 8101 \
     policy:checkpoint --policy.config pi05_libero \
-    --policy.dir checkpoints/openpi-libero-2000
+    --policy.dir checkpoints/coast-libero-2000
 
 # (g) Final held-out eval with per-task tuned configs: seed=30 → slots 30..44
 #     (disjoint from both (b) and (e)). Run TWICE — once without --steer for
@@ -87,7 +87,7 @@ cd examples/libero_env && MUJOCO_GL=egl uv run python eval_all.py \
 
 | Step | Output | Notes |
 |------|--------|-------|
-| (b) | `activations/libero/openpi-libero-2000/<task>/episode_NNN_env_000/step_NNNN/*.npz` | Per-step intermediates for each of 10 tasks × 15 eps |
+| (b) | `activations/libero/coast-libero-2000/<task>/episode_NNN_env_000/step_NNNN/*.npz` | Per-step intermediates for each of 10 tasks × 15 eps |
 | (d) | `conceptors/libero_conceptors.npz` | ~2k keys: `{task}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
 | (f) | `experiments/libero/steering_results/<ts>/partial_results.jsonl` + `per_task_results.json` | Streaming per-condition SR |
 | (f) | `experiments/libero/best_configs.json` | Per-task `(layer, α, β, strategy)` + baseline and steered SR |

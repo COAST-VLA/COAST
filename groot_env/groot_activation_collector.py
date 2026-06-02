@@ -2,7 +2,7 @@
 
 Independent of the pi0-side ``src/openpi/serving/activation_collector.py`` —
 lives here because GR00T has its own venv (torch 2.5.1, conflicts with the root
-openpi env). The on-disk schema (``groot_v1``) is distinct from pi0's ``v1``
+COAST env). The on-disk schema (``groot_v1``) is distinct from pi0's ``v1``
 (denoising is the same file, but conditioning + per-layer tensors have
 GR00T-specific names; see ``save_step_activations`` below).
 

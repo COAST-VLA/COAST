@@ -1,5 +1,5 @@
 {
-  "description": "openpi-libero eval results, 15 episodes per task, eval_all.py @ num_workers=10",
+  "description": "COAST LIBERO eval results, 15 episodes per task, eval_all.py @ num_workers=10",
   "checkpoints": {
     "2000": {
       "task_suites": {

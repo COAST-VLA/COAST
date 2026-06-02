@@ -15,7 +15,7 @@ Pipeline:
 Usage (from repo root)::
 
     uv run python experiments/libero/compute_conceptors.py \\
-        --activation_root activations/openpi-libero-2000 \\
+        --activation_root activations/coast-libero-2000 \\
         --output_path conceptors/libero_conceptors_fresh.npz
 
 All math lives in ``src/openpi/serving/conceptors.py``; this script is just
