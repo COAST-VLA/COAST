@@ -2,7 +2,28 @@
 # Post-edit hook: Run ruff check on edited Python files to catch issues early.
 
 INPUT=$(cat)
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+
+json_field() {
+  JSON_INPUT="$INPUT" JSON_PATH="$1" python3 - <<'PY'
+import json
+import os
+
+try:
+    value = json.loads(os.environ.get("JSON_INPUT", "{}"))
+except json.JSONDecodeError:
+    value = {}
+
+for key in os.environ["JSON_PATH"].split("."):
+    if not isinstance(value, dict):
+        value = ""
+        break
+    value = value.get(key, "")
+
+print("" if value is None else value)
+PY
+}
+
+FILE_PATH=$(json_field "tool_input.file_path")
 
 # Only check Python files
 if [[ "$FILE_PATH" != *.py ]]; then
@@ -19,7 +40,7 @@ if [ ! -f "$FILE_PATH" ]; then
   exit 0
 fi
 
-PROJECT_DIR=$(echo "$INPUT" | jq -r '.cwd // empty')
+PROJECT_DIR=$(json_field "cwd")
 if [ -z "$PROJECT_DIR" ]; then
   PROJECT_DIR="$CLAUDE_PROJECT_DIR"
 fi

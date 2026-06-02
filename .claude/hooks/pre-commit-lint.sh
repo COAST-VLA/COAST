@@ -3,14 +3,35 @@
 # so pre-commit hooks never block the commit.
 
 INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+
+json_field() {
+  JSON_INPUT="$INPUT" JSON_PATH="$1" python3 - <<'PY'
+import json
+import os
+
+try:
+    value = json.loads(os.environ.get("JSON_INPUT", "{}"))
+except json.JSONDecodeError:
+    value = {}
+
+for key in os.environ["JSON_PATH"].split("."):
+    if not isinstance(value, dict):
+        value = ""
+        break
+    value = value.get(key, "")
+
+print("" if value is None else value)
+PY
+}
+
+COMMAND=$(json_field "tool_input.command")
 
 # Only act on git commit commands
 if ! echo "$COMMAND" | grep -qE '^\s*git\s+commit'; then
   exit 0
 fi
 
-PROJECT_DIR=$(echo "$INPUT" | jq -r '.cwd // empty')
+PROJECT_DIR=$(json_field "cwd")
 if [ -z "$PROJECT_DIR" ]; then
   PROJECT_DIR="$CLAUDE_PROJECT_DIR"
 fi

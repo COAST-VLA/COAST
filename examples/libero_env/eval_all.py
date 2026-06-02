@@ -33,19 +33,42 @@ import os
 import re
 import subprocess
 import sys
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
 import tyro
+from openpi_client.steering import (
+    load_and_validate_steering_config,
+    resolve_steering_for_task,
+)
 
 from main import get_task_suite
 
 logger = logging.getLogger(__name__)
 
+_MUTUALLY_EXCLUSIVE_MODE_ERROR = (
+    "--collect and --steer are mutually exclusive; run activation collection and "
+    "steering evaluation as separate passes."
+)
+
 # Pulls the last ``success_rate=0.50`` (or similar) from the main.py log stream.
 # main.py logs this once at the end of eval_task via ``logger.info``, e.g.:
 #   [libero_spatial/pick_up.../task_00] success_rate=1.00 (1/1)
 SUCCESS_RATE_RE = re.compile(r"success_rate=([0-9.]+)")
+
+
+def _fallback_from_args(args: Any) -> Dict[str, Any]:
+    return {
+        "layer": args.steering_layer,
+        "alpha": args.steering_alpha,
+        "beta": args.steering_beta,
+        "strategy": args.steering_strategy,
+    }
+
+
+def _validate_args(args: Any) -> None:
+    if args.collect and args.steer:
+        raise ValueError(_MUTUALLY_EXCLUSIVE_MODE_ERROR)
 
 
 @dataclasses.dataclass
@@ -105,14 +128,38 @@ class Args:
     # are resolved against the user's shell cwd.
     output_dir: Optional[str] = None
 
+    # ── Steering (requires server started with --steer). ──────────────────────
+    # Forwarded verbatim to each main.py subprocess. If --steering_config is
+    # set, per-task overrides from that JSON take precedence.
+    steer: bool = False
+    # Path to a best_configs.json (see src/openpi/serving/steering.py
+    # the standalone validator below). Per-task entries override the scalar flags
+    # below. Tasks missing from the config fall back to the scalar flags
+    # (or to `defaults` within the config if present).
+    steering_config: Optional[str] = None
+    steering_layer: int = 11
+    steering_alpha: float = 0.1
+    steering_beta: float = 0.3
+    steering_strategy: str = "global"
 
-def _build_command(args: Args, task_id: int, output_dir: str) -> List[str]:
+
+def _build_command(
+    args: Args,
+    task_id: int,
+    output_dir: str,
+    task_name: Optional[str] = None,
+    steering_config: Optional[Dict[str, Any]] = None,
+) -> List[str]:
     """Build the ``main.py`` CLI invocation for one task_id.
 
     ``output_dir`` is the absolute path where this subprocess should write its
     per-task video directory. It is unconditionally forwarded as ``--output_dir``
     so that main.py does not fall back to its own default (which would land
     videos in a separate ``output/{suite}-task{id:02d}/`` tree).
+
+    When ``args.steer`` is True, appends ``--steer`` plus the per-task scalar
+    steering flags. If ``steering_config`` is provided, its per-task entries
+    override the scalar defaults.
     """
     cmd = [
         sys.executable,
@@ -151,11 +198,38 @@ def _build_command(args: Args, task_id: int, output_dir: str) -> List[str]:
         cmd.append("--collect")
     if args.max_steps is not None:
         cmd.extend(["--max_steps", str(args.max_steps)])
+    if args.steer:
+        if task_name is None:
+            raise ValueError("_build_command: steer=True requires task_name")
+        steer_cfg = resolve_steering_for_task(
+            _fallback_from_args(args), steering_config, task_name
+        )
+        cmd.extend(
+            [
+                "--steer",
+                "--steering_layer",
+                str(int(steer_cfg["layer"])),
+                "--steering_alpha",
+                str(float(steer_cfg["alpha"])),
+                "--steering_beta",
+                str(float(steer_cfg["beta"])),
+                "--steering_strategy",
+                str(steer_cfg["strategy"]),
+                "--steering_task",
+                task_name,
+            ]
+        )
     return cmd
 
 
 def _run_one_task(
-    args: Args, task_id: int, log_dir: str, cwd: str, output_dir: str
+    args: Args,
+    task_id: int,
+    log_dir: str,
+    cwd: str,
+    output_dir: str,
+    task_name: Optional[str] = None,
+    steering_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, object]:
     """Launch main.py for a single task_id and return a parsed result dict.
 
@@ -163,7 +237,13 @@ def _run_one_task(
     so the main process doesn't have to deal with interleaved output, and so
     the user can re-inspect the per-task logs after the run.
     """
-    cmd = _build_command(args, task_id, output_dir)
+    cmd = _build_command(
+        args,
+        task_id,
+        output_dir,
+        task_name=task_name,
+        steering_config=steering_config,
+    )
     env = os.environ.copy()
     env.setdefault("MUJOCO_GL", "egl")
 
@@ -202,6 +282,7 @@ def _run_one_task(
 
 
 def main(args: Args) -> None:
+    _validate_args(args)
     np.random.seed(args.seed)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -258,6 +339,27 @@ def main(args: Args) -> None:
             "task_description": str(task.language),
         }
 
+    # Load steering config once up-front (fail-fast before any subprocesses launch).
+    steering_config: Optional[Dict[str, Any]] = None
+    if args.steer and args.steering_config:
+        steering_config = load_and_validate_steering_config(args.steering_config)
+        suite_task_names = {
+            task_metadata[i]["task_name"] for i in range(task_suite.n_tasks)
+        }
+        unknown = set(steering_config["tasks"]) - suite_task_names
+        if unknown:
+            logger.warning(
+                "steering_config has %d tasks not in suite (will be ignored): %s",
+                len(unknown),
+                sorted(unknown)[:3],
+            )
+        logger.info(
+            "Loaded steering_config from %s (%d task entries, defaults=%s)",
+            args.steering_config,
+            len(steering_config["tasks"]),
+            "yes" if "defaults" in steering_config else "no",
+        )
+
     results: List[Dict[str, object]] = []
     results_path = os.path.join(output_dir, "results.json")
 
@@ -268,7 +370,14 @@ def main(args: Args) -> None:
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.num_workers) as pool:
         futures = {
             pool.submit(
-                _run_one_task, args, task_id, log_dir, script_dir, output_dir
+                _run_one_task,
+                args,
+                task_id,
+                log_dir,
+                script_dir,
+                output_dir,
+                task_metadata[task_id]["task_name"],
+                steering_config,
             ): task_id
             for task_id in range(task_suite.n_tasks)
         }

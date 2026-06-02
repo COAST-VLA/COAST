@@ -126,6 +126,94 @@ Pre-collected datasets:
 - [`brandonyang/pi05-metaworld-activations-v1-ml45train-16env`](https://huggingface.co/datasets/brandonyang/pi05-metaworld-activations-v1-ml45train-16env) — pi0.5, `v1` schema, 16 envs × 45 ML45-train tasks.
 - [`brandonyang/pi0fast-metaworld-activations-v1-ml45train-16env`](https://huggingface.co/datasets/brandonyang/pi0fast-metaworld-activations-v1-ml45train-16env) — pi0-FAST, `fast_v1` schema, 16 envs × 45 ML45-train tasks.
 
+## Running with Steering
+
+Conceptor-based activation steering nudges the action expert's hidden state toward the subspace of successful rollouts. End-user surface is one flag: `--steer`. Tuned per-task hyperparameters (once produced by the research sweep) live at `experiments/metaworld/best_configs.json`; producing new ones is a research task (see `experiments/metaworld/README.md`).
+
+**Only the steering WebSocket server supports steering** — `--collect` targets a collection-mode server, while `--steer` targets a steering-mode server. Run collection and steering as separate passes, each with the matching server mode.
+
+Both `pi05_metaworld` and `pi0_fast_metaworld` are supported. pi0.5 steering
+uses PyTorch hooks on denoising activations. pi0-fast steering is JAX-only and
+applies conceptor matrices to autoregressive token `pre_logits` before the LM
+head, using Miranda-v2-style fast conceptor keys.
+
+### Prereqs
+
+1. Download the conceptor NPZ:
+
+   ```bash
+   hf download brandonyang/metaworld-conceptors metaworld_conceptors.npz \
+       --repo-type dataset --local-dir conceptors/
+   ```
+
+2. Start a steering-capable server. `--steer` always requires
+   `--conceptor_npz`. For pi0.5, add `--pytorch` because steering uses hooks.
+   For pi0-fast, do not add `--pytorch`; the fast path is JAX-only:
+
+   ```bash
+   # pi0.5:
+   uv run scripts/serve_policy.py --pytorch --steer \
+       --conceptor_npz conceptors/metaworld_conceptors.npz \
+       policy:checkpoint \
+       --policy.config pi05_metaworld --policy.dir checkpoints/openpi-metaworld-5000
+
+   # pi0-FAST:
+   uv run scripts/serve_policy.py --steer \
+       --conceptor_npz conceptors/pi0fast_metaworld_conceptors.npz \
+       policy:checkpoint \
+       --policy.config pi0_fast_metaworld --policy.dir checkpoints/pi0_fast_metaworld/pi0_fast_metaworld_b200_bs512/2500
+   ```
+
+   The same `--steer` server happily serves baseline (unsteered) clients too — an obs without an `__steering__` key passes straight through.
+
+### Single task, default steering params
+
+```bash
+MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3 --steer
+```
+
+Defaults (duplicated from `src/openpi/serving/steering.py`): `--steering_layer 11 --steering_alpha 0.1 --steering_beta 0.3 --steering_strategy global`. For pi0-fast, `--steering_layer` is accepted for wire compatibility but ignored because the fast NPZ has no layer axis.
+
+### Single task, explicit params
+
+```bash
+MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3 --steer \
+    --steering_layer 17 --steering_alpha 0.5 --steering_beta 0.1 \
+    --steering_strategy per_step
+```
+
+### Full sweep, uniform defaults
+
+```bash
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train --steer
+```
+
+### Full sweep, per-task tuned configs
+
+```bash
+MUJOCO_GL=egl uv run examples/metaworld/eval_all.py --split train \
+    --steer --steering_config experiments/metaworld/best_configs.json
+```
+
+Tasks not present in `best_configs.json` fall back to the config's `defaults` block if present, or the CLI scalar flags otherwise.
+
+### All steering flags
+
+`main.py`:
+
+| Flag                   | Default   | Notes                                     |
+|------------------------|-----------|-------------------------------------------|
+| `--steer`              | False     | Toggle steering on                        |
+| `--steering_layer`     | 11        | Action-expert transformer layer index     |
+| `--steering_alpha`     | 0.1       | Conceptor aperture                        |
+| `--steering_beta`      | 0.3       | Interpolation weight (β=0 is no-op)       |
+| `--steering_strategy`  | "global"  | See strategy table in `examples/libero_env/README.md` |
+| `--steering_task`      | None      | Override NPZ task key (default: `--env_name`) |
+
+`eval_all.py` adds `--steering_config <path>` for per-task overrides.
+
+See `examples/libero_env/README.md` for the full strategy table (`global`, `per_step`, `positive_only`, `random_matched`, `linear`) and error-behavior notes. For pi0-fast, `per_step` maps to first/mid/last token-position conceptors, and `linear` is rejected unless a separate fast linear/ActAdd implementation is added.
+
 ## Results
 
 Mean success rate and per-task comparisons across released checkpoints:

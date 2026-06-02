@@ -6,12 +6,14 @@ This is a fork of Physical Intelligence's openpi repository for **activation col
 
 ## Evaluation & Collection Clients
 
-| Client | Architecture | Venv | Activation Collection |
-|--------|-------------|------|----------------------|
-| **MetaWorld** | Server-client over WebSocket; client runs vectorized envs | Root venv | Server-side, batched (list-shaped `__collect__`, one server-side forward pass per `num_envs`) |
-| **LIBERO** | Server-client over WebSocket | **Separate venv (Python 3.8)** in `examples/libero_env/` | Server-side, single-env (dict-shaped `__collect__`) |
-| **RoboCasa** | Server-client over WebSocket | **Separate venv (Python 3.11)** in `examples/robocasa_env/` | Server-side, single-env (same protocol as LIBERO) |
-| **DROID** | Server-client over WebSocket; real-robot control laptop | Root venv (server), DROID conda env + `openpi-client` (laptop) | Server-side, single-env (same protocol as LIBERO) |
+| Client | Architecture | Venv | Naive eval | Activation collection | Steering (`--steer`) |
+|--------|-------------|------|------------|----------------------|----------------------|
+| **MetaWorld** | Server-client over WebSocket; client runs vectorized envs | Root venv | pi0.5, pi0-fast | pi0.5 `v1`, pi0-fast `fast_v1` server-side batched collection | pi0.5 PyTorch hooks; pi0-fast JAX pre-logit steering |
+| **LIBERO** | Server-client over WebSocket | **Separate venv (Python 3.8)** in `examples/libero_env/` | pi0.5, pi0-fast | pi0.5 `v1`, pi0-fast `fast_v1` server-side collection | pi0.5 PyTorch hooks; pi0-fast JAX pre-logit steering |
+| **RoboCasa** | Server-client over WebSocket | **Separate venv (Python 3.11)** in `examples/robocasa_env/` | pi0.5, GR00T N1.5 | pi0.5 `v1`, GR00T `groot_v1` server-side collection | pi0.5 PyTorch hooks; GR00T N1.5 DiT hooks; no pi0-fast RoboCasa path |
+| **DROID** | Server-client over WebSocket; real-robot control laptop | Root venv (server), DROID conda env + `openpi-client` (laptop) | See `examples/droid/README.md` | See `examples/droid/README.md` | Real-robot/manual path; outside the simulator support matrix |
+
+For steering configuration, see `src/openpi/serving/steering.py` (root runtime), `groot_env/groot_steering.py` (GR00T runtime), `src/openpi/serving/conceptors.py` (offline NPZ builder), and `packages/openpi-client/src/openpi_client/steering.py` (wire protocol). Per-env tuning lives under `experiments/{libero,robocasa,metaworld,droid}/`. pi0/pi0.5 steering uses PyTorch hooks on the action expert; pi0-fast steering is JAX-only and applies Miranda-v2-style conceptor matrices to autoregressive token `pre_logits` before the LM head; GR00T N1.5 RoboCasa steering uses PyTorch hooks on the action DiT residual stream from `groot_env/`. There is no pi0-fast RoboCasa config/checkpoint path in this branch.
 
 Canonical activation-collection reference: [`docs/activation_collection.md`](docs/activation_collection.md). For per-client workflow details (dataset generation, training configs, eval commands), read the respective `examples/{client}/README.md`.
 
@@ -113,7 +115,7 @@ Central config file. All named configs (e.g., `pi05_metaworld`, `pi05_libero`) r
 Three-stage: **repack** (dataset-specific -> common) -> **normalize** (z-score/quantile) -> **model transforms** (tokenization, resizing). Data from LeRobot-format datasets.
 
 ### Serving & Collection (`src/openpi/serving/`)
-WebSocket policy server. Collection-mode server (`--collect_activations`) saves per-step activations to disk via PyTorch hooks. Clients use `openpi-client` package.
+WebSocket policy server. Collection-mode server (`--collect_activations`) saves per-step activations to disk: pi0/pi0.5 use PyTorch hooks, pi0-fast uses JAX intermediates, and GR00T uses its own collector in `groot_env/`. Clients use the `openpi-client` package.
 
 ## HuggingFace Downloads
 

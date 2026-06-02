@@ -1,0 +1,13 @@
+{
+  "task_suite": "robocasa_pretrain",
+  "source_sweep": "placeholder — run find_best_configs.py to populate",
+  "generated_at": "1970-01-01T00:00:00Z",
+  "num_episodes_per_condition": 0,
+  "defaults": {
+    "layer": 11,
+    "alpha": 0.1,
+    "beta": 0.3,
+    "strategy": "global"
+  },
+  "tasks": {}
+}

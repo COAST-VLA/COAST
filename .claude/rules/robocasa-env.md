@@ -5,7 +5,7 @@ paths:
 
 # RoboCasa Environment Rules
 
-This directory has its own **separate virtual environment** (Python 3.11, but isolated dependencies).
+This directory has its own **separate virtual environment** (`requires-python >=3.11`; `uv` may select a newer compatible interpreter such as Python 3.13).
 
 ## Critical: Venv Isolation
 
@@ -21,6 +21,8 @@ cd examples/robocasa_env
 uv sync                                    # first-time setup
 uv run python -m robocasa.scripts.setup_macros
 uv run python -m robocasa.scripts.download_kitchen_assets  # ~10GB download
+# For non-interactive setup:
+printf 'y\n' | uv run python -m robocasa.scripts.download_kitchen_assets
 MUJOCO_GL=egl uv run python main.py ...   # single task eval
 MUJOCO_GL=egl uv run python eval_all.py ...  # full task set eval
 ```

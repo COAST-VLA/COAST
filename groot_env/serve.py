@@ -3,8 +3,9 @@
 GR00T N1.5 has deep dependency conflicts with the openpi root venv (torch 2.5.1
 vs 2.7.1, wandb 0.18.0 vs >=0.19.1, etc.), so it lives in its own venv here at
 the repo root, peer to `examples/` (which holds CLIENTS) and `scripts/` (which
-holds the pi0 server). Every openpi client in `examples/*_env/` can target this
-server unchanged — the wire protocol matches `scripts/serve_policy.py`.
+holds the pi0 server). The server uses the same wire protocol as
+`scripts/serve_policy.py`; in this branch the GR00T adapter is wired for the
+RoboCasa client only.
 
     cd groot_env
     uv sync
@@ -12,7 +13,7 @@ server unchanged — the wire protocol matches `scripts/serve_policy.py`.
         --model-path ../checkpoints/groot_n15/gr00t_n1-5/multitask_learning/checkpoint-120000 \\
         --port 8000
 
-Then from any env client:
+Then from the RoboCasa client:
 
     cd examples/robocasa_env
     MUJOCO_GL=egl uv run python main.py --env_name CloseBlenderLid
@@ -34,6 +35,7 @@ import tyro
 
 import groot_activation_collector
 import groot_adapter
+import groot_steering
 import websocket_policy_server
 
 
@@ -68,6 +70,12 @@ class Args:
     # and MetaWorld's in-process collector also default to. For named dataset
     # runs, pass ``--output-dir ../activations/<dataset-name>/``.
     output_dir: str = "../activations"
+    # Enable conceptor steering. The RoboCasa client already sends the shared
+    # __steering__ payload; this flag wraps the GR00T policy with DiT hooks that
+    # consume a compatible conceptor NPZ.
+    steer: bool = False
+    # Path to a GR00T-compatible conceptor NPZ. Required when --steer is set.
+    conceptor_npz: str | None = None
 
 
 def _build_policy(args: Args):
@@ -82,7 +90,18 @@ def _build_policy(args: Args):
     )
 
 
+def _validate_args(args: Args) -> None:
+    if args.steer and args.collect_activations:
+        raise ValueError(
+            "--steer and --collect_activations are mutually exclusive; run steering "
+            "and activation collection as separate server modes."
+        )
+    if args.steer and not args.conceptor_npz:
+        raise ValueError("--steer requires --conceptor_npz")
+
+
 def main(args: Args) -> None:
+    _validate_args(args)
     logging.info(
         "Loading GR00T N1.5: model=%s, embodiment=%s, device=%s, denoising_steps=%d",
         args.model_path,
@@ -98,6 +117,16 @@ def main(args: Args) -> None:
         "embodiment": args.embodiment,
         "denoising_steps": args.denoising_steps,
     }
+
+    if args.steer:
+        logging.info("GR00T steering enabled (conceptor_npz=%s)", args.conceptor_npz)
+        policy = groot_steering.SteeredGrootPolicyWrapper(
+            policy=policy,
+            conceptor_npz_path=args.conceptor_npz,
+            device=args.device,
+            num_denoising_steps=args.denoising_steps,
+        )
+        metadata.update(policy.metadata)
 
     if args.collect_activations:
         # Label activations by the checkpoint's final directory component (e.g.

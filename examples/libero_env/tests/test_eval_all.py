@@ -427,3 +427,8 @@ class TestArgsDefaults:
         assert args.output_dir is None
         assert args.max_steps is None
         assert args.render_cameras == ["agentview", "eye_in_hand"]
+
+    def test_collect_and_steer_are_mutually_exclusive(self) -> None:
+        args = eval_all.Args(collect=True, steer=True)
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            eval_all._validate_args(args)

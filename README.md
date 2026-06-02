@@ -1,6 +1,6 @@
 # openpi-metaworld
 
-This is a fork of [Physical Intelligence's openpi](https://github.com/Physical-Intelligence/openpi) with three sim environment examples wired up end-to-end, plus a pluggable policy-server layer so you can swap the pi0/pi0.5 server for NVIDIA's GR00T without touching any client. For GR00T setup steps, please follow the [groot_env/README.md](groot_env/README.md). The setup steps below are for the original openpi and the pi0/pi0.5 models.
+This is a fork of [Physical Intelligence's openpi](https://github.com/Physical-Intelligence/openpi) with three sim environment examples wired up end-to-end, plus a pluggable policy-server layer. RoboCasa can target either the pi0/pi0.5 server or the isolated NVIDIA GR00T server without changing the client. For GR00T setup steps, please follow the [groot_env/README.md](groot_env/README.md). The setup steps below are for the original openpi and the pi0/pi0.5 models.
 
 ## Installation
 
@@ -17,7 +17,7 @@ The base install above is everything `examples/metaworld/` needs. `examples/libe
 
 | Environment | README | Notes |
 |---|---|---|
-| **MetaWorld** | [`examples/metaworld/README.md`](examples/metaworld/README.md) | 50 manipulation tasks (ML45 split). Shares the parent openpi venv. Includes in-process activation collection (V1 + V2) for mechanistic interpretability, plus the ML45 evaluation results table. |
+| **MetaWorld** | [`examples/metaworld/README.md`](examples/metaworld/README.md) | 50 manipulation tasks (ML45 split). Shares the parent openpi venv. Uses server-side activation collection for mechanistic interpretability, plus the ML45 evaluation results table. |
 | **LIBERO** | [`examples/libero_env/README.md`](examples/libero_env/README.md) | WebSocket client/server LIBERO benchmark. Has its own Python 3.8 venv (`examples/libero_env/.venv`). |
 | **Robocasa** | [`examples/robocasa_env/README.md`](examples/robocasa_env/README.md) | RoboCasa kitchen tasks. Has its own venv (`examples/robocasa_env/.venv`) because robosuite/robocasa conflict with the parent venv. Uses a client/server WebSocket eval pattern. |
 
@@ -26,13 +26,15 @@ The base install above is everything `examples/metaworld/` needs. `examples/libe
 | Model | Entry point | Venv | Notes |
 |---|---|---|---|
 | **pi0 / pi0-FAST / pi0.5** | [`scripts/serve_policy.py`](scripts/serve_policy.py) | root (`uv sync`) | Primary openpi server. Serves any `pi05_*` / `pi0_*` training config. Supports `--collect_activations` for mech-interp. |
-| **NVIDIA GR00T N1.5** | [`groot_env/serve.py`](groot_env/README.md) | `groot_env/.venv` (Python 3.10) | Serves `nvidia/GR00T-N1.5-3B` or any robocasa365 fine-tuned checkpoint. Has its own venv — N1.5 pins torch 2.5.1 which conflicts with the root openpi env. Same WebSocket protocol as `serve_policy.py`, so existing clients hit it unchanged. |
+| **NVIDIA GR00T N1.5** | [`groot_env/serve.py`](groot_env/README.md) | `groot_env/.venv` (Python 3.10) | Serves `nvidia/GR00T-N1.5-3B` or any robocasa365 fine-tuned checkpoint. Has its own venv — N1.5 pins torch 2.5.1 which conflicts with the root openpi env. Uses the same WebSocket protocol as `serve_policy.py`; in this branch the GR00T adapter is wired for RoboCasa only. |
 
 ## Support
 
-What each client + model combination supports today. ❌ means either the
-training config, the input-transform branch, or the serve integration is not
-yet wired up — see the per-example READMEs for how to add one.
+What each client + model combination supports today. This table excludes
+baseline-only experiment branches. `✅` means the code path is implemented and
+intended to run; `❌` means the training config, input transform, checkpoint, or
+serve integration is not wired up in this branch. `E2E` in the notes means a
+real server + simulator client rollout was run locally on this branch.
 
 ### Training
 
@@ -45,25 +47,35 @@ We run fine-tuning in-repo for MetaWorld and LIBERO, and release a series of **i
 | **RoboCasa** | ❌ | — | — | upstream [`robocasa/robocasa365_checkpoints`](https://huggingface.co/robocasa/robocasa365_checkpoints) |
 | **DROID** | ❌ | — | — | upstream `gs://openpi-assets/checkpoints/pi05_droid`, `gs://openpi-assets/checkpoints/pi0_fast_droid` |
 
-### Inference (serve + client)
+### Simulator Evaluation, Collection, Steering
 
-| Client | pi0.5 | pi0-FAST | GR00T-N1.5 |
-|---|---|---|---|
-| **MetaWorld** | ✅ | ✅ | ❌ |
-| **LIBERO** | ✅ | ✅ | ❌ |
-| **RoboCasa** | ✅ | ❌ | ✅ |
-| **DROID** | ✅ | ❌ | ❌ |
+MetaWorld, LIBERO, and RoboCasa route collection through a
+`--collect_activations` policy server. Protocol, output directory layout,
+per-schema file lists (`v1` / `fast_v1` / `groot_v1`), and verification are all
+in [`docs/activation_collection.md`](docs/activation_collection.md).
+The DROID real-robot client is documented separately in
+[`examples/droid/README.md`](examples/droid/README.md) and is intentionally not
+part of this simulator matrix.
 
-### Activation Collection
+Steering is served by `scripts/serve_policy.py --steer` for pi0/pi0.5/pi0-FAST
+and by `groot_env/serve.py --steer` for RoboCasa GR00T N1.5. pi0/pi0.5
+steering uses PyTorch hooks and requires `--pytorch`; pi0-FAST steering is
+JAX-only and must run without `--pytorch`, using fast conceptors built from
+`token_pre_logits` (`fast_v1` activations). GR00T steering uses PyTorch hooks on
+the action DiT residual stream and conceptors built from `groot_v1`
+`dit_hidden_states.npz` activations.
 
-MetaWorld runs collection in-process (loads the policy directly); the other clients route through a `--collect_activations` policy server. Protocol, output directory layout, per-schema file lists (`v1` / `fast_v1` / `groot_v1`), and verification are all in [`docs/activation_collection.md`](docs/activation_collection.md).
-
-| Client | pi0.5 | pi0-FAST | GR00T-N1.5 |
-|---|---|---|---|
-| **MetaWorld** | ✅ `v1` (in-process) | ✅ `fast_v1` (in-process) | ❌ |
-| **LIBERO** | ✅ `v1` (server) | ✅ `fast_v1` (server) | ❌ |
-| **RoboCasa** | ✅ `v1` (server) | ❌ | ✅ `groot_v1` (server) |
-| **DROID** | ✅ `v1` (server) | ❌ | ❌ |
+| Client | Model | Naive eval | Activation collection | Steering eval | Notes |
+|---|---|---:|---:|---:|---|
+| **MetaWorld** | pi0.5 | ✅ | ✅ `v1` | ✅ PyTorch hooks | `pi05_metaworld`; collection and steering are separate server modes. |
+| **MetaWorld** | pi0-FAST | ✅ | ✅ `fast_v1` | ✅ JAX pre-logit | `pi0_fast_metaworld`; steering E2E: `reach-v3`, 3 full episodes, 2/3 success. |
+| **MetaWorld** | GR00T-N1.5 | ❌ | ❌ | ❌ | No GR00T MetaWorld policy/server wiring. |
+| **LIBERO** | pi0.5 | ✅ | ✅ `v1` | ✅ PyTorch hooks | `pi05_libero`; collection and steering are separate server modes. |
+| **LIBERO** | pi0-FAST | ✅ | ✅ `fast_v1` | ✅ JAX pre-logit | `pi0_fast_libero`; steering E2E: `libero_10` task 0, 3 full episodes, 2/3 success; one nonfatal FAST detokenization warning observed. |
+| **LIBERO** | GR00T-N1.5 | ❌ | ❌ | ❌ | No GR00T LIBERO policy/server wiring in this branch. |
+| **RoboCasa** | pi0.5 | ✅ | ✅ `v1` | ✅ PyTorch hooks | `pi05_robocasa`; upstream RoboCasa checkpoint. |
+| **RoboCasa** | pi0-FAST | ❌ | ❌ | ❌ | No `pi0_fast_robocasa` config/checkpoint/client path is wired. |
+| **RoboCasa** | GR00T-N1.5 | ✅ | ✅ `groot_v1` | ✅ DiT hooks | Served from `groot_env/`; conceptors use `groot_v1` DiT residuals. |
 
 ## Repo Layout
 

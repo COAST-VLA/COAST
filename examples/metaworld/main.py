@@ -24,6 +24,8 @@ import metaworld  # noqa: F401
 import numpy as np
 from openpi_client import websocket_client_policy as _websocket_client_policy
 from openpi_client.collection_session import BatchCollectionSession
+from openpi_client.steering import STEERING_KEY
+from openpi_client.steering import build_steering_payload
 from tqdm import tqdm
 import tyro
 
@@ -125,6 +127,17 @@ class Args:
     # vectorized batch) to every infer call so the server (started with
     # --collect_activations) saves intermediates to its disk.
     collect: bool = False
+
+    # --- Steering (requires WebSocket server started with --steer). ---
+    # Steering is incompatible with --collect because they use separate
+    # server-side wrappers and wire-protocol metadata keys.
+    steer: bool = False
+    steering_layer: int = 11
+    steering_alpha: float = 0.1
+    steering_beta: float = 0.3
+    steering_strategy: str = "global"
+    # Override the conceptor NPZ task key (default: args.env_name).
+    steering_task: str | None = None
 
     # Override the eval-artifact directory (videos). If None, defaults to
     # ``examples/metaworld/output/{env_name}/``. Relative paths are resolved
@@ -242,6 +255,15 @@ def run_episode(
                 if collect_session is not None:
                     obs_dict["__collect__"] = collect_session.make_collect_metadata(step)
 
+                if args.steer:
+                    obs_dict[STEERING_KEY] = build_steering_payload(
+                        task=args.steering_task or args.env_name,
+                        layer=args.steering_layer,
+                        alpha=args.steering_alpha,
+                        beta=args.steering_beta,
+                        strategy=args.steering_strategy,
+                    )
+
                 result = policy.infer(obs_dict)
                 action_chunk = np.clip(result["actions"], -1.0, 1.0).astype(np.float32)
 
@@ -299,14 +321,32 @@ def main(args: Args) -> None:
 
     collect_session = BatchCollectionSession(policy, num_envs=args.num_envs) if args.collect else None
 
+    all_successes: list[bool] = []
     try:
         for episode in range(args.num_episodes):
-            run_episode(env, policy, args, episode, output_dir, collect_session=collect_session)
+            _, success = run_episode(env, policy, args, episode, output_dir, collect_session=collect_session)
+            all_successes.extend(bool(s) for s in success)
     finally:
         env.close()
+
+    if all_successes:
+        sr = float(np.mean(all_successes))
+        num_success = sum(all_successes)
+        # Matches the parse pattern used by experiments/*/find_best_configs.py.
+        logger.info(
+            "[%s] success_rate=%.2f (%d/%d)",
+            args.env_name,
+            sr,
+            num_success,
+            len(all_successes),
+        )
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     args = tyro.cli(Args)
+    if args.steer and args.collect:
+        raise ValueError(
+            "--steer is incompatible with --collect. Run steering and activation collection in separate passes."
+        )
     main(args)

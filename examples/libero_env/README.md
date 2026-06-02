@@ -150,3 +150,124 @@ uv run pytest tests/ -v -m "not manual"
 # Full suite including env rollouts (GPU + EGL):
 MUJOCO_GL=egl uv run pytest tests/ -v
 ```
+## Running with Steering
+
+Conceptor-based activation steering nudges the action expert's hidden state
+toward the subspace of successful rollouts. The end-user surface is one flag:
+`--steer`. Tuned per-task hyperparameters are committed at
+`experiments/libero/best_configs.json`; producing new ones is a research task
+(see `experiments/libero/README.md`).
+
+### Prereqs
+
+1. Download the conceptor NPZ:
+
+   ```bash
+   hf download brandonyang/libero-conceptors libero_conceptors.npz \
+       --repo-type dataset --local-dir conceptors/
+   ```
+
+2. Start a steering-capable server. `--steer` always requires
+   `--conceptor_npz`. For pi0.5, add `--pytorch` because steering uses forward
+   hooks. For pi0-fast, do not add `--pytorch`; steering is JAX-only and uses
+   fast conceptors built from `token_pre_logits`.
+
+   ```bash
+   # pi0.5:
+   uv run scripts/serve_policy.py --pytorch --steer \
+       --conceptor_npz conceptors/libero_conceptors.npz \
+       policy:checkpoint \
+       --policy.config pi05_libero --policy.dir checkpoints/openpi-libero-2000
+
+   # pi0-FAST:
+   uv run scripts/serve_policy.py --steer \
+       --conceptor_npz conceptors/pi0fast_libero_conceptors.npz \
+       policy:checkpoint \
+       --policy.config pi0_fast_libero --policy.dir checkpoints/pi0_fast_libero/pi0_fast_libero_b200_bs512/2000
+   ```
+
+   The same `--steer` server happily serves baseline (unsteered) clients too —
+   an obs without an `__steering__` key passes straight through.
+
+### Single task, default steering params
+
+```bash
+cd examples/libero_env
+MUJOCO_GL=egl uv run python main.py \
+    --task_suite_name libero_10 --task_id 2 --steer
+```
+
+Defaults (duplicated from `src/openpi/serving/steering.py`):
+`--steering_layer 11 --steering_alpha 0.1 --steering_beta 0.3 --steering_strategy global`.
+For pi0-fast, `--steering_layer` is accepted for wire compatibility but ignored;
+the fast NPZ has no layer axis.
+
+### Single task, explicit params
+
+```bash
+MUJOCO_GL=egl uv run python main.py \
+    --task_suite_name libero_10 --task_id 2 --steer \
+    --steering_layer 17 --steering_alpha 0.5 --steering_beta 0.1 \
+    --steering_strategy per_step
+```
+
+### Full suite, uniform defaults
+
+```bash
+MUJOCO_GL=egl uv run python eval_all.py \
+    --task_suite_name libero_10 --num_episodes 10 --steer
+```
+
+### Full suite, per-task tuned configs
+
+This is the standard way to reproduce tuned steering results:
+
+```bash
+MUJOCO_GL=egl uv run python eval_all.py \
+    --task_suite_name libero_10 --num_episodes 10 \
+    --steer --steering_config ../../experiments/libero/best_configs.json
+```
+
+Tasks not present in `best_configs.json` fall back to the config's `defaults`
+block if present, or the CLI scalar flags otherwise.
+
+### All steering flags
+
+`main.py`:
+
+| Flag                   | Default   | Notes                                     |
+|------------------------|-----------|-------------------------------------------|
+| `--steer`              | False     | Toggle steering on                        |
+| `--steering_layer`     | 11        | Action-expert transformer layer index; ignored by pi0-fast |
+| `--steering_alpha`     | 0.1       | Conceptor aperture                        |
+| `--steering_beta`      | 0.3       | Interpolation weight (β=0 is no-op)       |
+| `--steering_strategy`  | "global"  | See strategy table below                  |
+| `--steering_task`      | None      | Override NPZ task key (default: LIBERO task name) |
+
+`eval_all.py` adds:
+
+| Flag                 | Default | Notes                                            |
+|----------------------|---------|--------------------------------------------------|
+| `--steering_config`  | None    | Path to `best_configs.json` (per-task overrides) |
+
+### Steering strategies
+
+| Strategy          | Math                                               | Params used                  | Notes |
+|-------------------|----------------------------------------------------|------------------------------|-------|
+| `global`          | `h' = (1−β)h + β(h @ C_contrastive.T)`             | `layer`, `alpha`, `beta`     | Default. Contrastive conceptor `C_s ∧ NOT(C_f)` at aperture α. |
+| `per_step`        | Same as `global` but with a DIFFERENT conceptor by position | pi0.5: `layer`, `beta`; pi0-fast: `alpha`, `beta` | pi0.5 NPZ must contain per_step_0..per_step_9 keys. pi0-fast NPZ must contain per_token_first/mid/last keys. |
+| `positive_only`   | `h' = (1−β)h + β(h @ C_success.T)`                 | `layer`, `alpha`, `beta`     | Ablation dropping the `NOT(C_failure)` term. |
+| `random_matched`  | Same as `global` but with a random-eigenvector conceptor whose spectrum matches `C_contrastive` | pi0.5: `layer`, `alpha`, `beta`; pi0-fast: `alpha`, `beta` | Control. If this helps, the benefit wasn't from the learned direction. |
+| `linear`          | `h' = h + α · v`, where `v` = unit(μ_success − μ_failure) | pi0.5: `layer`, `alpha` (β ignored) | ActAdd-style additive baseline for pi0.5. pi0-fast rejects this strategy unless a separate fast linear implementation is added. |
+
+### Error behavior
+
+- Server started without `--steer` receiving an `__steering__` payload: hard
+  error back to the client ("CollectingPolicy requires..."/wrong wrapper).
+- `task` not present in the conceptor NPZ: `ValueError` listing available task keys.
+- Malformed `best_configs.json`: `eval_all.py` fails before spawning any
+  subprocesses and points at the offending field.
+
+### Producing new tuned configs
+
+Not a normal-user task. See `experiments/libero/README.md`.

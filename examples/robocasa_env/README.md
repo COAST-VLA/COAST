@@ -15,6 +15,17 @@ uv run python -m robocasa.scripts.setup_macros
 uv run python -m robocasa.scripts.download_kitchen_assets   # ~10GB
 ```
 
+`download_kitchen_assets` prompts before downloading; type `y` when it asks
+whether to proceed. For non-interactive setup, use:
+
+```bash
+printf 'y\n' | uv run python -m robocasa.scripts.download_kitchen_assets
+```
+
+This venv declares `requires-python = ">=3.11"`. `uv` may select a newer
+compatible interpreter, such as Python 3.13, depending on what is installed or
+cached locally; the CPU tests and install smoke have passed under that setup.
+
 ## Dataset & Training
 
 We do not train RoboCasa in-repo — evaluate against upstream checkpoints directly.
@@ -194,3 +205,90 @@ uv run pytest tests/ -v -m "not manual"
 # Full suite including env rollouts (GPU + EGL):
 MUJOCO_GL=egl uv run pytest tests/ -v
 ```
+
+Each `eval_all.py` subprocess creates its own `CollectionSession` keyed on its distinct `env_name`, so the shared collection-mode server writes activations to disjoint output directories with no cross-subprocess coordination. The server's single-threaded asyncio dispatch serializes the underlying hook-based `infer_with_intermediates` call automatically, and `CollectingPolicy`'s explicit lock documents the invariant for future executor-based optimizations.
+
+Notes:
+- pi0.5 collection mode requires `--pytorch` on `scripts/serve_policy.py`.
+  `infer_with_intermediates` is implemented for the PyTorch backend only. GR00T
+  RoboCasa collection uses `groot_env/serve.py --collect_activations`, which has
+  its own isolated server and does not take `--pytorch`.
+- A collection-mode server **rejects** plain inference requests. If you want to
+  also run regular eval, start a separate non-collection server on a different
+  port.
+- The server's `--output-dir` is on the **server's** filesystem. With
+  `--output-dir ./activations`, files land at
+  `./activations/<checkpoint_step>/<env_name>/episode_NNN_env_000/step_NNNN/`
+  relative to wherever the server was launched from.
+- The robocasa client uses `env_name` (e.g. `CloseBlenderLid`) as the
+  `task_name` in the collection metadata. The `task_id` field is fixed at 0
+  since each robocasa env is its own standalone task. The `episode_id` cycles
+  through `0..num_episodes-1` per env.
+- See `examples/libero_env/README.md` (the **Protocol** section under
+  Activation Collection) for the full wire-level spec of the `__collect__`
+  and `__finalize_episode__` payloads. The same `openpi_client.collection_session.CollectionSession`
+  helper handles the bookkeeping for libero, robocasa, and any future client.
+
+## Running with Steering
+
+Same flag surface as libero — the end-user entry point is `--steer`. The NPZ
+key is the RoboCasa env name directly (e.g., `CloseFridge`). RoboCasa steering
+is supported for `pi05_robocasa` and GR00T N1.5. There is no
+`pi0_fast_robocasa` config/checkpoint path in this branch.
+
+### Prereqs
+
+```bash
+hf download brandonyang/robocasa-conceptors robocasa_conceptors.npz \
+    --repo-type dataset --local-dir conceptors/
+
+# pi0.5 server (from repo root)
+uv run scripts/serve_policy.py --pytorch --steer \
+    --conceptor_npz conceptors/robocasa_conceptors.npz \
+    policy:checkpoint \
+    --policy.config pi05_robocasa \
+    --policy.dir checkpoints/pi05_pretrain_human300/multitask_learning/75000
+
+# GR00T conceptors are built from groot_v1 activations.
+uv run python experiments/robocasa/compute_groot_conceptors.py \
+    --activation_root activations/groot_n15-robocasa-activations-v1-15env \
+    --output_path conceptors/groot_robocasa_conceptors.npz
+
+# GR00T server (from groot_env/)
+cd groot_env
+uv run python serve.py --port 8000 --steer \
+    --model-path ../checkpoints/groot_n15/gr00t_n1-5/multitask_learning/checkpoint-120000 \
+    --conceptor-npz ../conceptors/groot_robocasa_conceptors.npz
+```
+
+### Single env, default steering
+
+```bash
+cd examples/robocasa_env
+MUJOCO_GL=egl uv run python main.py --env_name CloseFridge --steer
+```
+
+### Single env, explicit params
+
+```bash
+MUJOCO_GL=egl uv run python main.py --env_name CloseFridge --steer \
+    --steering_layer 11 --steering_alpha 0.5 --steering_beta 0.1 \
+    --steering_strategy per_step
+```
+
+### Full task_set with per-env tuned configs
+
+```bash
+MUJOCO_GL=egl uv run python eval_all.py \
+    --task_set atomic_seen --num_episodes 10 \
+    --steer --steering_config ../../experiments/robocasa/best_configs.json
+```
+
+Flag names match libero; see `examples/libero_env/README.md#running-with-steering`
+for the full table. The only difference is the NPZ task-key source: robocasa
+uses `args.env_name` directly, so `--steering_task` is rarely needed.
+For GR00T, `per_step` expects `per_step_0..per_step_3` conceptors by default
+because `groot_env/serve.py` runs 4 denoising steps unless you override
+`--denoising-steps`.
+
+To produce new tuned configs, see `experiments/robocasa/README.md`.

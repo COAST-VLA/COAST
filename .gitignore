@@ -13,8 +13,19 @@ activations/
 # top-level location. Remove this line once the dataset is moved under activations/.
 pi0fast-metaworld-activations-v1-26subset-15env/
 
+# Experiment artifacts (per-run sweep outputs; best_configs.json IS committed)
+experiments/*/steering_results/
+experiments/*/diagnostic_results/
+
+# Pre-computed conceptor NPZs (download from brandonyang/libero-conceptors, brandonyang/robocasa-conceptors)
+conceptors/
+
+# Worktree
+.claude/worktrees/
+
 # Analysis outputs
 results/
+e2e_proofs/
 
 # Debug artifacts
 *.pkl

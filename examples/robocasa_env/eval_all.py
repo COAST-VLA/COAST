@@ -47,17 +47,27 @@ import json
 import logging
 import math
 import os
+import pathlib
 import re
 import subprocess
 import sys
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import robocasa  # noqa: F401
 import tyro
+from openpi_client.steering import (
+    load_and_validate_steering_config,
+    resolve_steering_for_task,
+)
 from robocasa.utils.dataset_registry import TASK_SET_REGISTRY
 
 logger = logging.getLogger(__name__)
+
+_MUTUALLY_EXCLUSIVE_MODE_ERROR = (
+    "--collect and --steer are mutually exclusive; run activation collection and "
+    "steering evaluation as separate passes."
+)
 
 # Curated 7-task subset: these are the tasks with published pi0.5 + GR00T N1.5
 # success rates in this repo (see examples/robocasa_env/README.md and
@@ -77,6 +87,11 @@ SUBSET = [
 # main.py logs this once at the end of eval_task via ``logger.info``, e.g.:
 #   [CloseBlenderLid/pretrain] success_rate=1.00 (1/1)
 SUCCESS_RATE_RE = re.compile(r"success_rate=([0-9.]+)")
+
+
+def _validate_args(args: Any) -> None:
+    if args.collect and args.steer:
+        raise ValueError(_MUTUALLY_EXCLUSIVE_MODE_ERROR)
 
 
 @dataclasses.dataclass
@@ -140,6 +155,25 @@ class Args:
     # are resolved against the user's shell cwd.
     output_dir: Optional[str] = None
 
+    # ── Steering (requires server started with --steer). ──────────────────────
+    steer: bool = False
+    # Path to a best_configs.json (see src/openpi/serving/steering.py
+    # the standalone validator below). Per-env_name entries override scalar flags.
+    steering_config: Optional[str] = None
+    steering_layer: int = 11
+    steering_alpha: float = 0.1
+    steering_beta: float = 0.3
+    steering_strategy: str = "global"
+
+
+def _fallback_from_args(args: Any) -> Dict[str, Any]:
+    return {
+        "layer": args.steering_layer,
+        "alpha": args.steering_alpha,
+        "beta": args.steering_beta,
+        "strategy": args.steering_strategy,
+    }
+
 
 def _sanitize_env_name(env_name: str) -> str:
     """Defensive slug of env_name for log filenames. RoboCasa env names like
@@ -151,7 +185,11 @@ def _sanitize_env_name(env_name: str) -> str:
 
 
 def _build_command(
-    args: Args, env_name: str, output_dir: str, task_idx: int = 0
+    args: Args,
+    env_name: str,
+    output_dir: str,
+    task_idx: int = 0,
+    steering_config: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     """Build the ``main.py`` CLI invocation for one env_name.
 
@@ -201,6 +239,25 @@ def _build_command(
         cmd.append("--collect")
     if args.max_steps is not None:
         cmd.extend(["--max_steps", str(args.max_steps)])
+    if args.steer:
+        steer_cfg = resolve_steering_for_task(
+            _fallback_from_args(args), steering_config, env_name
+        )
+        cmd.extend(
+            [
+                "--steer",
+                "--steering_layer",
+                str(int(steer_cfg["layer"])),
+                "--steering_alpha",
+                str(float(steer_cfg["alpha"])),
+                "--steering_beta",
+                str(float(steer_cfg["beta"])),
+                "--steering_strategy",
+                str(steer_cfg["strategy"]),
+                "--steering_task",
+                env_name,
+            ]
+        )
     return cmd
 
 
@@ -211,6 +268,7 @@ def _run_one_task(
     log_dir: str,
     cwd: str,
     output_dir: str,
+    steering_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, object]:
     """Launch main.py for a single env_name and return a parsed result dict.
 
@@ -220,7 +278,9 @@ def _run_one_task(
     per-task logs after the run. The ``task_idx`` prefix makes the log files
     sort in submission order even when env_names are alphabetical.
     """
-    cmd = _build_command(args, env_name, output_dir, task_idx=task_idx)
+    cmd = _build_command(
+        args, env_name, output_dir, task_idx=task_idx, steering_config=steering_config
+    )
     env = os.environ.copy()
     env.setdefault("MUJOCO_GL", "egl")
 
@@ -281,6 +341,7 @@ def _resolve_tasks(args: Args) -> List[str]:
 
 
 def main(args: Args) -> None:
+    _validate_args(args)
     env_names: List[str] = _resolve_tasks(args)
 
     np.random.seed(args.seed)
@@ -336,6 +397,24 @@ def main(args: Args) -> None:
         env_name: {"task_idx": idx} for idx, env_name in enumerate(env_names)
     }
 
+    # Load steering config once up-front (fail-fast before any subprocesses launch).
+    steering_config: Optional[Dict[str, Any]] = None
+    if args.steer and args.steering_config:
+        steering_config = load_and_validate_steering_config(args.steering_config)
+        unknown = set(steering_config["tasks"]) - set(env_names)
+        if unknown:
+            logger.warning(
+                "steering_config has %d envs not in task_set (ignored): %s",
+                len(unknown),
+                sorted(unknown)[:3],
+            )
+        logger.info(
+            "Loaded steering_config from %s (%d entries, defaults=%s)",
+            args.steering_config,
+            len(steering_config["tasks"]),
+            "yes" if "defaults" in steering_config else "no",
+        )
+
     results: List[Dict[str, object]] = []
     results_path = os.path.join(output_dir, "results.json")
 
@@ -353,6 +432,7 @@ def main(args: Args) -> None:
                 log_dir,
                 script_dir,
                 output_dir,
+                steering_config,
             ): env_name
             for env_name in env_names
         }

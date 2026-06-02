@@ -1,6 +1,6 @@
 # GR00T N1.5 Server
 
-An isolated-venv server that serves [NVIDIA Isaac GR00T N1.5](https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release) checkpoints over openpi's WebSocket protocol, so any openpi env client (robocasa, libero, metaworld, droid, …) can target GR00T without client-side changes. N1.5 pins `torch==2.5.1`, which conflicts with the root openpi env — hence the separate venv.
+An isolated-venv server that serves [NVIDIA Isaac GR00T N1.5](https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release) checkpoints over openpi's WebSocket protocol. In this branch, the GR00T adapter is wired for the RoboCasa client only; MetaWorld and LIBERO do not have GR00T adapters. N1.5 pins `torch==2.5.1`, which conflicts with the root openpi env — hence the separate venv.
 
 ## Installation
 
@@ -64,7 +64,9 @@ Metadata reported on connect (`client.get_server_metadata()`):
   "denoising_steps": 4,
   "collection_mode": "groot_v1",  // only when --collect_activations
   "model_type": "groot_n15",      // parallels pi0-side "pi0" / "pi05" / "pi0_fast"
-  "checkpoint_step": "checkpoint-120000"
+  "checkpoint_step": "checkpoint-120000",
+  "steering_enabled": true,       // only when --steer
+  "steering_backend": "groot_dit_hooks"
 }
 ```
 
@@ -130,6 +132,37 @@ Pre-collected datasets:
 
 - [`brandonyang/groot_n15-robocasa-activations-v1-15env`](https://huggingface.co/datasets/brandonyang/groot_n15-robocasa-activations-v1-15env) — GR00T N1.5, `groot_v1` schema, 7 tasks × 15 episodes on `multitask_learning/checkpoint-120000`.
 
+## Steering
+
+`serve.py --steer` wraps the GR00T adapter with PyTorch forward hooks on the
+action DiT residual stream (`transformer_blocks[layer]` output). The RoboCasa
+client uses the same `--steer` flags as pi0.5; the server is the backend-specific
+piece.
+
+```bash
+# Build a GR00T-compatible conceptor NPZ from collected groot_v1 activations.
+cd ..
+uv run python experiments/robocasa/compute_groot_conceptors.py \
+    --activation_root activations/groot_n15-robocasa-activations-v1-15env \
+    --output_path conceptors/groot_robocasa_conceptors.npz
+
+# Serve GR00T with steering enabled.
+cd groot_env
+export CUDA_VISIBLE_DEVICES=0
+uv run python serve.py --port 8000 --steer \
+    --model-path ../checkpoints/groot_n15/gr00t_n1-5/multitask_learning/checkpoint-120000 \
+    --conceptor-npz ../conceptors/groot_robocasa_conceptors.npz
+
+# In another terminal:
+cd examples/robocasa_env
+MUJOCO_GL=egl uv run python main.py --env_name OpenDrawer --steer
+```
+
+Supported strategies match the shared client protocol: `global`, `per_step`,
+`positive_only`, `random_matched`, and `linear`. For GR00T, `per_step` expects
+`per_step_0..per_step_3` keys by default because the published RoboCasa server
+runs 4 denoising steps.
+
 ## Results
 
 Robocasa atomic-seen, 15 ep/task, `multitask_learning/checkpoint-120000`:
@@ -152,13 +185,16 @@ RoboCasa's published N1.5 multitask atomic-seen average is **43.0%** over all 18
 1. **Image resolution upsampling.** The pi0-compatible openpi robocasa client sends 224×224 images (pi0.5's training resolution); N1.5's robocasa head expects 256×256 per its modality config, so `groot_adapter._resize_to_256` upscales via `cv2.INTER_LINEAR` before inference. Rendering the env natively at 256×256 would be marginally better but would require either (a) client-side `--resize_size 256` (breaks pi0.5 compat) or (b) an env-wrapper change.
 2. **Fixed action horizon, short client replan.** The DiT always produces a 16-step action chunk; the robocasa client uses `replan_steps=5`, so 11 of 16 predicted steps are recomputed every call. Correctness is unaffected — only a perf tax.
 3. **Right-view cross-camera fallback.** `build_robocasa_videos` prefers `observation/image2` (agentview_right) when the client sends it. Older clients without `observation/image2` fall back to duplicating `observation/image` as the right view, which degrades the stereo signal N1.5 was trained on but keeps the 3-channel shape contract. The openpi robocasa `main.py` in this repo emits `observation/image2` by default, so this fallback isn't hit in normal use.
+4. **RoboCasa-only steering.** GR00T steering is wired for the RoboCasa adapter in this server. There is no GR00T MetaWorld or LIBERO adapter in this branch.
 
 ## How this integrates (for reference)
 
 - `serve.py` — thin wrapper that loads the checkpoint and starts a `WebsocketPolicyServer`. Mirrors `scripts/serve_policy.py` on the pi0 side.
 - `groot_adapter.py` — `GR00TAdapterPolicy(BasePolicy)` translating openpi's flat `observation/*`-keyed client dict to GR00T's nested `{video, state, language}` dict, running `Gr00tPolicy.get_action`, concatenating the per-action-key dict back to a single `(action_horizon, action_dim)` array under `"actions"`. Also houses `_get_action_with_intermediates`, a hybrid re-implementation + hook-based collector matching pi0's `sample_actions_with_intermediates` pattern.
 - `groot_activation_collector.py` — `CollectingPolicy` wrapper that dispatches `__collect__` / `__finalize_episode__` magic keys and writes the per-step/per-episode .npz files. Schema matches pi0's semantically; only file names and shapes differ per the architecture.
+- `groot_steering.py` — `SteeredGrootPolicyWrapper` and GR00T-local conceptor/linear hooks for `serve.py --steer`.
 - `websocket_policy_server.py` — copied verbatim from `src/openpi/serving/` (sha noted in its header) so `groot_env/` can serve without pulling in JAX/flax.
 - `tests/test_groot_adapter.py` — unit tests for translation logic + a `@pytest.mark.manual` real-model equivalence test that asserts `_get_action_with_intermediates` is bit-identical to `Gr00tPolicy.get_action`.
 - `tests/test_groot_activation_collector.py` — stub-based unit tests for writers + dispatcher, analog of pi0's `tests/test_activation_collector.py`.
+- `tests/test_groot_steering.py` — stub-based steering tests for NPZ lookup, hook math, wrapper dispatch, metadata, and serve-flag validation.
 - `tests/test_groot_activations.py` — post-collection dataset validator (one task dir at a time, driven by `ACTIVATIONS_DIR`), analog of pi0's `tests/test_activations.py`.

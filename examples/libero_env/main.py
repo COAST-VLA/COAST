@@ -30,9 +30,15 @@ from libero.libero.envs import OffScreenRenderEnv
 from openpi_client import image_tools
 from openpi_client import websocket_client_policy as _websocket_client_policy
 from openpi_client.collection_session import CollectionSession
+from openpi_client.steering import STEERING_KEY, build_steering_payload
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
+
+_MUTUALLY_EXCLUSIVE_MODE_ERROR = (
+    "--collect and --steer are mutually exclusive; run activation collection and "
+    "steering evaluation as separate passes."
+)
 
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 LIBERO_ENV_RESOLUTION = 256
@@ -93,10 +99,46 @@ class Args:
     # If True, attach activation-collection metadata to every infer call so the
     # server (started with --collect_activations) saves intermediates to its disk.
     collect: bool = False
+    # The `env_id` tag attached to every `__collect__` payload — feeds into the
+    # server's output path `episode_{episode_id:03d}_env_{env_id:03d}/`. Leave
+    # at the default (0) in the common case. You only need to set this for a
+    # specific use case:
+    #
+    # **When you DO NOT need this flag** (almost always):
+    #   • Single main.py invocation (any --num_episodes value) — episode_id
+    #     varies per rollout, env_id=0 is fine.
+    #   • `eval_all.py` — dispatches one subprocess per task_id (LIBERO) or
+    #     env_name (RoboCasa). The server keys the path on task_name, so
+    #     env_id=0 never collides across subprocesses. This is the documented,
+    #     "safe" parallel collection pattern.
+    #
+    # **When you DO need this flag** (rare, opt-in):
+    #   • You're running N parallel main.py subprocesses on the *same*
+    #     task_id/env_name (e.g., to collect more rollouts of one task for a
+    #     per-task conceptor NPZ faster than running --num_episodes N
+    #     sequentially). Then all N share `(task_name, episode_id=0)`, so you
+    #     must pass a distinct `--collect_env_id` per subprocess (0, 1, 2, ...)
+    #     to avoid them clobbering each other's `episode_000_env_000/` files.
+    #
+    # In-process MetaWorld collection is unaffected (it sets env_id via its
+    # own loop, not via this flag). See examples/metaworld/main.py.
+    collect_env_id: int = 0
 
     # Override the per-task output directory (for videos / artifacts). If None,
     # defaults to ``output/{task_suite_name}-task{task_id:02d}``.
     output_dir: Optional[str] = None
+
+    # ── Steering (requires server started with --steer). ──────────────────────
+    # When True, attach obs[STEERING_KEY] = {task, layer, alpha, beta, strategy}
+    # to every inference call so the server applies a conceptor steering hook.
+    steer: bool = False
+    steering_layer: int = 11
+    steering_alpha: float = 0.1
+    steering_beta: float = 0.3
+    # One of "global", "per_step", "positive_only", "random_matched", "linear".
+    steering_strategy: str = "global"
+    # Override the conceptor task key (default: the current LIBERO task name).
+    steering_task: Optional[str] = None
 
 
 def tile_frames(frames: List[np.ndarray]) -> np.ndarray:
@@ -275,6 +317,7 @@ def eval_task(
                     task_id=task_id,
                     episode_id=episode,
                     prompt=task_description,
+                    env_id=args.collect_env_id,
                 )
 
             with iio.get_writer(video_path, fps=args.fps) as video:
@@ -303,6 +346,14 @@ def eval_task(
                         if collect_session is not None:
                             element["__collect__"] = (
                                 collect_session.make_collect_metadata(rollout_step)
+                            )
+                        if args.steer:
+                            element[STEERING_KEY] = build_steering_payload(
+                                task=args.steering_task or task_name,
+                                layer=args.steering_layer,
+                                alpha=args.steering_alpha,
+                                beta=args.steering_beta,
+                                strategy=args.steering_strategy,
                             )
                         action_chunk = np.asarray(
                             policy.infer(element)["actions"], dtype=np.float32
@@ -369,7 +420,13 @@ def quat_to_axisangle(quat: np.ndarray) -> np.ndarray:
     return (quat[:3] * 2.0 * math.acos(float(quat[3])) / denominator).astype(np.float32)
 
 
+def _validate_args(args: Args) -> None:
+    if args.collect and args.steer:
+        raise ValueError(_MUTUALLY_EXCLUSIVE_MODE_ERROR)
+
+
 def main(args: Args) -> None:
+    _validate_args(args)
     np.random.seed(args.seed)
 
     policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)

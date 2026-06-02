@@ -29,6 +29,16 @@ import pytest
 import main
 import setup_libero_config
 
+# ---------------------------------------------------------- Args validation
+
+
+class TestArgsValidation:
+    def test_collect_and_steer_are_mutually_exclusive(self) -> None:
+        args = main.Args(collect=True, steer=True)
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            main._validate_args(args)
+
+
 # ---------------------------------------------------------- env smoke tests
 
 
