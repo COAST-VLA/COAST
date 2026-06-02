@@ -1,9 +1,10 @@
 """Conceptor computation pipeline.
 
-Consumes the on-disk activation tree written by ``activation_collector.py``
-and produces the conceptor ``.npz`` that ``steering.py`` consumes. The key
-format matches the miranda-v2 collaborator branch so NPZs produced here are
-drop-in compatible with the ``brandonyang/libero-conceptors`` and
+Consumes the on-disk activation tree written by ``activation_collector.py`` or
+``groot_env/groot_activation_collector.py`` and produces the conceptor ``.npz``
+that ``steering.py`` / ``groot_env/groot_steering.py`` consume. The key format
+matches the miranda-v2 collaborator branch so NPZs produced here are drop-in
+compatible with the ``brandonyang/libero-conceptors`` and
 ``brandonyang/robocasa-conceptors`` datasets.
 
 Math reference (Jaeger 2014 + standard Boolean-AND identity):
@@ -19,6 +20,9 @@ directions that are both (in success subspace) AND (not in failure subspace).
 Shape conventions for the flattening step:
     suffix_residual.npz:all_suffix_residual has shape
         (num_denoise_steps=10, num_collected_layers, num_tokens=32, hidden_dim=1024)
+    dit_hidden_states.npz:all_dit_hidden_states has shape
+        (num_denoise_steps=4, num_dit_layers=16, num_tokens, hidden_dim) for
+        GR00T N1.5's default RoboCasa server.
 
     For a *global* conceptor at layer L, alpha α:
         1. For each episode: slice axis-1 to layer L, yielding (10, 32, 1024)
@@ -65,6 +69,8 @@ DEFAULT_ALPHAS: tuple[float, ...] = (0.1, 0.5, 1.0, 2.0, 10.0)
 # iteration. Legacy NPZs built with a narrower tuple must be rebuilt to support
 # ``per_step``.
 DEFAULT_PER_STEP_INDICES: tuple[int, ...] = tuple(range(10))
+GROOT_COLLECT_LAYERS: tuple[int, ...] = tuple(range(16))
+GROOT_PER_STEP_INDICES: tuple[int, ...] = tuple(range(4))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -254,13 +260,16 @@ def episode_is_success(ep_dir: pathlib.Path) -> bool:
 
 
 def load_episode_hiddens(ep_dir: pathlib.Path) -> np.ndarray:
-    """Concatenate all step_NNNN/suffix_residual.npz into one array.
+    """Concatenate all step_NNNN residual-stream activations into one array.
 
     Returns:
         shape (total_rollout_steps, num_denoise_steps, num_collected_layers, num_tokens, hidden_dim)
 
     Rollout steps correspond to distinct infer() calls in the episode; denoise
-    steps are the 10 flow-matching steps *within* each infer call.
+    steps are the flow-matching steps *within* each infer call. Supports both
+    pi0/pi0.5 ``suffix_residual.npz:all_suffix_residual`` and GR00T
+    ``dit_hidden_states.npz:all_dit_hidden_states`` files because both arrays
+    use the same logical axis order.
     """
     step_dirs = sorted(d for d in ep_dir.iterdir() if d.is_dir() and d.name.startswith("step_"))
     if not step_dirs:
@@ -268,14 +277,20 @@ def load_episode_hiddens(ep_dir: pathlib.Path) -> np.ndarray:
     chunks = []
     for sd in step_dirs:
         sr_path = sd / "suffix_residual.npz"
-        if not sr_path.exists():
+        groot_path = sd / "dit_hidden_states.npz"
+        if sr_path.exists():
+            with np.load(sr_path) as data:
+                # shape: (10, num_layers, 32, 1024)
+                chunks.append(np.asarray(data["all_suffix_residual"]))
             continue
-        with np.load(sr_path) as data:
-            # shape: (10, num_layers, 32, 1024)
-            chunks.append(np.asarray(data["all_suffix_residual"]))
+        if groot_path.exists():
+            with np.load(groot_path) as data:
+                # shape: (num_denoising_steps, num_dit_layers, seq_len, hidden_dim)
+                chunks.append(np.asarray(data["all_dit_hidden_states"]))
+            continue
     if not chunks:
-        raise FileNotFoundError(f"No suffix_residual.npz under {ep_dir}")
-    return np.stack(chunks, axis=0)  # (T, 10, L, 32, 1024)
+        raise FileNotFoundError(f"No suffix_residual.npz or dit_hidden_states.npz under {ep_dir}")
+    return np.stack(chunks, axis=0)  # (T, denoise, L, tokens, hidden)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

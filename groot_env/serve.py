@@ -34,6 +34,7 @@ import tyro
 
 import groot_activation_collector
 import groot_adapter
+import groot_steering
 import websocket_policy_server
 
 
@@ -68,6 +69,12 @@ class Args:
     # and MetaWorld's in-process collector also default to. For named dataset
     # runs, pass ``--output-dir ../activations/<dataset-name>/``.
     output_dir: str = "../activations"
+    # Enable conceptor steering. The RoboCasa client already sends the shared
+    # __steering__ payload; this flag wraps the GR00T policy with DiT hooks that
+    # consume a compatible conceptor NPZ.
+    steer: bool = False
+    # Path to a GR00T-compatible conceptor NPZ. Required when --steer is set.
+    conceptor_npz: str | None = None
 
 
 def _build_policy(args: Args):
@@ -82,7 +89,18 @@ def _build_policy(args: Args):
     )
 
 
+def _validate_args(args: Args) -> None:
+    if args.steer and args.collect_activations:
+        raise ValueError(
+            "--steer and --collect_activations are mutually exclusive; run steering "
+            "and activation collection as separate server modes."
+        )
+    if args.steer and not args.conceptor_npz:
+        raise ValueError("--steer requires --conceptor_npz")
+
+
 def main(args: Args) -> None:
+    _validate_args(args)
     logging.info(
         "Loading GR00T N1.5: model=%s, embodiment=%s, device=%s, denoising_steps=%d",
         args.model_path,
@@ -98,6 +116,16 @@ def main(args: Args) -> None:
         "embodiment": args.embodiment,
         "denoising_steps": args.denoising_steps,
     }
+
+    if args.steer:
+        logging.info("GR00T steering enabled (conceptor_npz=%s)", args.conceptor_npz)
+        policy = groot_steering.SteeredGrootPolicyWrapper(
+            policy=policy,
+            conceptor_npz_path=args.conceptor_npz,
+            device=args.device,
+            num_denoising_steps=args.denoising_steps,
+        )
+        metadata.update(policy.metadata)
 
     if args.collect_activations:
         # Label activations by the checkpoint's final directory component (e.g.

@@ -368,6 +368,26 @@ class GR00TAdapterPolicy(_base_policy.BasePolicy):
         )
         return {"actions": self._action_dict_to_array(action_dict)}, intermediates
 
+    def infer_with_steering(
+        self, obs: dict[str, Any], *, steering_hooks: list[tuple[int, Any]]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Run inference while applying hooks to selected GR00T DiT layers.
+
+        ``steering_hooks`` is a list of ``(layer_idx, hook)`` pairs. The hook is
+        registered on ``head.model.transformer_blocks[layer_idx]`` and receives
+        the block output tensor ``(B, seq_len_sa, hidden_dim)``. If the hook has
+        ``set_denoise_step(t)``, it is called before every DiT forward so
+        per-step conceptors can select the active matrix.
+        """
+        groot_obs = self._build_groot_obs(obs)
+        action_dict, steering_metadata = _get_action_with_steering(
+            self._policy, groot_obs, steering_hooks=steering_hooks
+        )
+        return {
+            "actions": self._action_dict_to_array(action_dict),
+            "steering_metadata": steering_metadata,
+        }, steering_metadata
+
     def reset(self) -> None:
         # N1.5 Gr00tPolicy is stateless between calls; nothing to reset.
         pass
@@ -603,6 +623,136 @@ def _get_action_with_intermediates(gr00t_policy, groot_obs):
         "all_dit_mlp_hidden": all_dit_mlp_hidden,
     }
     return unnormalized_action, intermediates
+
+
+def _get_action_with_steering(gr00t_policy, groot_obs, *, steering_hooks):
+    """Run Gr00tPolicy inference while applying DiT residual steering hooks."""
+    import torch
+
+    obs_copy = {}
+    for k, v in groot_obs.items():
+        if not isinstance(v, np.ndarray) and not isinstance(v, list):
+            obs_copy[k] = np.array(v)
+        else:
+            obs_copy[k] = v
+
+    from gr00t.model.policy import squeeze_dict_values, unsqueeze_dict_values
+
+    is_batch = gr00t_policy._check_state_is_batched(obs_copy)
+    if not is_batch:
+        obs_copy = unsqueeze_dict_values(obs_copy)
+
+    normalized_input = gr00t_policy.apply_transforms(obs_copy)
+
+    model = gr00t_policy.model
+    head = model.action_head
+    num_layers = len(head.model.transformer_blocks)
+
+    hooks = []
+    for layer_idx, hook in steering_hooks:
+        layer_idx = int(layer_idx)
+        if layer_idx < 0 or layer_idx >= num_layers:
+            raise ValueError(
+                f"GR00T steering layer {layer_idx} out of range "
+                f"(num_layers={num_layers})"
+            )
+        hooks.append(
+            head.model.transformer_blocks[layer_idx].register_forward_hook(hook)
+        )
+
+    backbone_inputs, action_inputs = model.prepare_input(normalized_input)
+    autocast_device_type = torch.device(gr00t_policy.device).type
+
+    try:
+        if autocast_device_type in ("cuda", "mps"):
+            ac_ctx = torch.autocast(
+                device_type=autocast_device_type, dtype=torch.bfloat16
+            )
+        else:
+            ac_ctx = contextlib.nullcontext()
+        with torch.inference_mode(), ac_ctx:
+            backbone_outputs = model.backbone(backbone_inputs)
+            processed_backbone = head.process_backbone_output(backbone_outputs)
+            vl_embs = processed_backbone.backbone_features
+            embodiment_id = action_inputs.embodiment_id
+            state_features = head.state_encoder(action_inputs.state, embodiment_id)
+
+            batch_size = vl_embs.shape[0]
+            device = vl_embs.device
+            actions = torch.randn(
+                size=(
+                    batch_size,
+                    head.config.action_horizon,
+                    head.config.action_dim,
+                ),
+                dtype=vl_embs.dtype,
+                device=device,
+            )
+
+            num_steps = head.num_inference_timesteps
+            dt = 1.0 / num_steps
+
+            for t in range(num_steps):
+                for _, hook in steering_hooks:
+                    if hasattr(hook, "set_denoise_step"):
+                        hook.set_denoise_step(t)
+
+                t_cont = t / float(num_steps)
+                t_discretized = int(t_cont * head.num_timestep_buckets)
+                timesteps_tensor = torch.full(
+                    size=(batch_size,), fill_value=t_discretized, device=device
+                )
+                action_features = head.action_encoder(
+                    actions, timesteps_tensor, embodiment_id
+                )
+                if head.config.add_pos_embed:
+                    pos_ids = torch.arange(
+                        action_features.shape[1], dtype=torch.long, device=device
+                    )
+                    pos_embs = head.position_embedding(pos_ids).unsqueeze(0)
+                    action_features = action_features + pos_embs
+                future_tokens = head.future_tokens.weight.unsqueeze(0).expand(
+                    vl_embs.shape[0], -1, -1
+                )
+                sa_embs = torch.cat(
+                    (state_features, future_tokens, action_features), dim=1
+                )
+
+                model_output = head.model(
+                    hidden_states=sa_embs,
+                    encoder_hidden_states=vl_embs,
+                    timestep=timesteps_tensor,
+                )
+
+                pred = head.action_decoder(model_output, embodiment_id)
+                pred_velocity = pred[:, -head.action_horizon :]
+                actions = actions + dt * pred_velocity
+
+            final_action_tensor = actions.float().cpu()
+    finally:
+        for h in hooks:
+            h.remove()
+
+    unnormalized_action = gr00t_policy.unapply_transforms(
+        {"action": final_action_tensor}
+    )
+
+    if not is_batch:
+        unnormalized_action = squeeze_dict_values(unnormalized_action)
+
+    steering_metadata = {
+        "steering_hooks": [
+            {
+                "layer": int(layer_idx),
+                "hook": repr(hook),
+                "intervention_norms": [
+                    float(v) for v in getattr(hook, "intervention_norms", [])
+                ],
+            }
+            for layer_idx, hook in steering_hooks
+        ]
+    }
+    return unnormalized_action, steering_metadata
 
 
 def make_robocasa_policy(

@@ -74,7 +74,7 @@ class Args:
 
     # Enable activation-collection mode. The server wraps the policy in CollectingPolicy
     # and rejects any client request that doesn't include the __collect__ or __finalize_episode__
-    # magic key. Requires --pytorch (infer_with_intermediates is PyTorch-only).
+    # magic key. pi0/pi0.5 use --pytorch hooks; pi0-fast uses JAX intermediates.
     collect_activations: bool = False
     # Server-side root directory for collected activations. Activations are written to
     # <output_dir>/<checkpoint_step>/<task_name>/episode_NNN_env_NNN/step_NNNN/. Only
@@ -83,12 +83,9 @@ class Args:
 
     # Enable conceptor steering. When set, the server wraps the policy in
     # SteeredPolicyWrapper and dispatches on obs["__steering__"] (see
-    # src/openpi/serving/steering.py). Implies --pytorch
-    # (sample_actions_with_steering is PyTorch-only) and requires
-    # --conceptor_npz.
-    # Only pi0.5 (flow-matching, 10-step denoise) is supported. TODO:
-    # extend to pi0-fast (different autoregressive activation shape) and
-    # GR00T N1.5 (different backbone, served from groot_env/).
+    # src/openpi/serving/steering.py). pi0/pi0.5 steering uses PyTorch hooks and
+    # therefore requires --pytorch. pi0-fast steering is JAX-only and must run
+    # without --pytorch.
     steer: bool = False
     # Path to the conceptor NPZ. Required when --steer is set.
     # Download the appropriate {env}-conceptors dataset, or rebuild via
@@ -163,6 +160,22 @@ def create_policy(args: Args) -> _policy.Policy:
             )
 
 
+def resolve_policy_config_name(args: Args) -> str:
+    """Return the train config name that will be used to create the policy."""
+    match args.policy:
+        case Checkpoint():
+            return args.policy.config
+        case Default():
+            if checkpoint := DEFAULT_CHECKPOINT.get(args.env):
+                return checkpoint.config
+            raise ValueError(f"Unsupported environment mode: {args.env}")
+
+
+def resolve_policy_model_type(args: Args) -> _model.ModelType:
+    """Return the model type before creating the policy."""
+    return _config.get_config(resolve_policy_config_name(args)).model.model_type
+
+
 def main(args: Args) -> None:
     if args.collect_activations:
         if not isinstance(args.policy, Checkpoint):
@@ -170,7 +183,7 @@ def main(args: Args) -> None:
         # pi0 / pi0.5 capture intermediates through PyTorch forward hooks; pi0-fast
         # has no PyTorch port of the autoregressive decode, so it captures through
         # JAX. Pick the backend here based on the configured model_type.
-        model_type = _config.get_config(args.policy.config).model.model_type
+        model_type = resolve_policy_model_type(args)
         if model_type == _model.ModelType.PI0_FAST and args.pytorch:
             raise ValueError(
                 "--pytorch cannot be combined with a pi0-fast model — there is no PyTorch port "
@@ -183,8 +196,6 @@ def main(args: Args) -> None:
             )
 
     if args.steer:
-        if not args.pytorch:
-            raise ValueError("--steer requires --pytorch (sample_actions_with_steering is PyTorch-only).")
         if args.collect_activations:
             raise ValueError("--steer and --collect_activations are mutually exclusive.")
         if args.conceptor_npz is None:
@@ -193,6 +204,18 @@ def main(args: Args) -> None:
                 "Download the appropriate {env}-conceptors dataset, or rebuild via "
                 "experiments/{libero,robocasa,metaworld,droid}/compute_conceptors.py."
             )
+        model_type = resolve_policy_model_type(args)
+        if model_type == _model.ModelType.PI0_FAST:
+            if args.pytorch:
+                raise ValueError(
+                    "--pytorch cannot be combined with a pi0-fast model — pi0-fast steering is JAX-only. "
+                    "Drop --pytorch and let the server load the JAX checkpoint."
+                )
+        elif not args.pytorch:
+            raise ValueError(
+                f"--steer requires --pytorch for {model_type.value} "
+                "(sample_actions_with_steering uses PyTorch hooks for diffusion models)."
+            )
 
     policy = create_policy(args)
 
@@ -200,7 +223,7 @@ def main(args: Args) -> None:
         assert isinstance(args.policy, Checkpoint)  # narrowed above
         checkpoint_step = pathlib.Path(args.policy.dir).name
         output_root = pathlib.Path(args.output_dir).resolve()
-        model_type = _config.get_config(args.policy.config).model.model_type
+        model_type = resolve_policy_model_type(args)
         logging.info(
             "Activation collection enabled (checkpoint_step=%s, output_root=%s, model_type=%s)",
             checkpoint_step,
@@ -217,7 +240,7 @@ def main(args: Args) -> None:
         )
 
     if args.steer:
-        device = str(policy._pytorch_device)  # noqa: SLF001
+        device = str(getattr(policy, "_pytorch_device", None) or "cpu")
         logging.info("Steering enabled: loading conceptor NPZ from %s (device=%s)", args.conceptor_npz, device)
         policy = SteeredPolicyWrapper(policy, conceptor_npz_path=args.conceptor_npz, device=device)
 

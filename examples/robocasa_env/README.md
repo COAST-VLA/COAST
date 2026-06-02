@@ -219,7 +219,9 @@ Notes:
 ## Running with Steering
 
 Same flag surface as libero — the end-user entry point is `--steer`. The NPZ
-key is the RoboCasa env name directly (e.g., `CloseFridge`).
+key is the RoboCasa env name directly (e.g., `CloseFridge`). RoboCasa steering
+is supported for `pi05_robocasa` and GR00T N1.5. There is no
+`pi0_fast_robocasa` config/checkpoint path in this branch.
 
 ### Prereqs
 
@@ -227,12 +229,23 @@ key is the RoboCasa env name directly (e.g., `CloseFridge`).
 hf download brandonyang/robocasa-conceptors robocasa_conceptors.npz \
     --repo-type dataset --local-dir conceptors/
 
-# Server (from repo root)
+# pi0.5 server (from repo root)
 uv run scripts/serve_policy.py --pytorch --steer \
     --conceptor_npz conceptors/robocasa_conceptors.npz \
     policy:checkpoint \
     --policy.config pi05_robocasa \
     --policy.dir checkpoints/pi05_pretrain_human300/multitask_learning/75000
+
+# GR00T conceptors are built from groot_v1 activations.
+uv run python experiments/robocasa/compute_groot_conceptors.py \
+    --activation_root activations/groot_n15-robocasa-activations-v1-15env \
+    --output_path conceptors/groot_robocasa_conceptors.npz
+
+# GR00T server (from groot_env/)
+cd groot_env
+uv run python serve.py --port 8000 --steer \
+    --model-path ../checkpoints/groot_n15/gr00t_n1-5/multitask_learning/checkpoint-120000 \
+    --conceptor-npz ../conceptors/groot_robocasa_conceptors.npz
 ```
 
 ### Single env, default steering
@@ -261,6 +274,8 @@ MUJOCO_GL=egl uv run python eval_all.py \
 Flag names match libero; see `examples/libero_env/README.md#running-with-steering`
 for the full table. The only difference is the NPZ task-key source: robocasa
 uses `args.env_name` directly, so `--steering_task` is rarely needed.
+For GR00T, `per_step` expects `per_step_0..per_step_3` conceptors by default
+because `groot_env/serve.py` runs 4 denoising steps unless you override
+`--denoising-steps`.
 
 To produce new tuned configs, see `experiments/robocasa/README.md`.
-

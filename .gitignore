@@ -25,6 +25,7 @@ conceptors/
 
 # Analysis outputs
 results/
+e2e_proofs/
 
 # Debug artifacts
 *.pkl

@@ -98,7 +98,12 @@ class Policy(BasePolicy):
                     "ModelType.PI0_FAST must define sample_actions_with_intermediates "
                     "(required by Policy.infer_with_intermediates)"
                 )
+                assert hasattr(model, "sample_actions_with_steering_fast"), (
+                    "ModelType.PI0_FAST must define sample_actions_with_steering_fast "
+                    "(required by Policy.infer_with_steering_fast)"
+                )
                 self._sample_actions_with_intermediates = nnx_utils.module_jit(model.sample_actions_with_intermediates)
+                self._sample_actions_with_steering_fast = nnx_utils.module_jit(model.sample_actions_with_steering_fast)
             self._rng = rng or jax.random.key(0)
 
     @override
@@ -410,6 +415,74 @@ class Policy(BasePolicy):
         outputs = self._output_transform(outputs)
         outputs["policy_timing"] = {"infer_ms": model_time * 1000}
         return outputs, diagnostics
+
+    def infer_with_steering_fast(
+        self,
+        obs: dict,
+        *,
+        beta,
+        c_stack,
+        step_to_c_idx,
+    ) -> dict:
+        """Diagnostics-free steered inference for JAX pi0-fast.
+
+        This mirrors ``infer_batched``/``infer`` but routes action sampling
+        through ``Pi0FAST.sample_actions_with_steering_fast``. It accepts the
+        compact fast steering representation from ``openpi.serving.steering``:
+        ``c_stack`` with shape ``(K, d, d)``, scalar ``beta``, and
+        ``step_to_c_idx`` with one conceptor index per decode step.
+        """
+        is_fast = (
+            self._model_type == _model.ModelType.PI0_FAST
+            and not self._is_pytorch_model
+            and hasattr(self, "_sample_actions_with_steering_fast")
+        )
+        if not is_fast:
+            raise NotImplementedError(
+                "infer_with_steering_fast requires a JAX pi0-fast model with sample_actions_with_steering_fast defined"
+            )
+
+        inputs = jax.tree.map(lambda x: x, obs)
+        unbatched = inputs["observation/state"].ndim == 1
+
+        if unbatched:
+            inputs = self._input_transform(inputs)
+            inputs = jax.tree.map(lambda x: jnp.asarray(x)[None, ...], inputs)
+        else:
+            eval_batch_size = int(inputs["observation/state"].shape[0])
+            singles = [{k: v[i] for k, v in inputs.items()} for i in range(eval_batch_size)]
+            singles = [self._input_transform(ex) for ex in singles]
+            inputs = collate_transformed_singles(singles)
+            inputs = jax.tree.map(lambda x: jnp.asarray(x), inputs)
+
+        observation = _model.Observation.from_dict(inputs)
+        self._rng, sample_rng = jax.random.split(self._rng)
+        sample_kwargs = dict(self._sample_kwargs)
+        start_time = time.monotonic()
+        actions = self._sample_actions_with_steering_fast(
+            sample_rng,
+            observation,
+            beta=beta,
+            c_stack=c_stack,
+            step_to_c_idx=step_to_c_idx,
+            **sample_kwargs,
+        )
+        model_time = time.monotonic() - start_time
+
+        batch_size = int(inputs["state"].shape[0])
+        per_sample_outputs = []
+        for i in range(batch_size):
+            single_out = {
+                "state": np.asarray(inputs["state"][i]),
+                "actions": np.asarray(actions[i]),
+            }
+            single_out = self._output_transform(single_out)
+            per_sample_outputs.append(single_out)
+        outputs = {k: np.stack([o[k] for o in per_sample_outputs], axis=0) for k in per_sample_outputs[0]}
+        if unbatched:
+            outputs = {k: v[0] for k, v in outputs.items()}
+        outputs["policy_timing"] = {"infer_ms": model_time * 1000}
+        return outputs
 
     @property
     def metadata(self) -> dict[str, Any]:

@@ -71,13 +71,11 @@ math. Short summary:
 2. A PyTorch-converted checkpoint for the target config.
 3. A free GPU (`nvidia-smi`, then `export CUDA_VISIBLE_DEVICES=<id>`).
 
-Note: only pi0.5 is currently supported. TODO: extend to
+Model notes:
 
-- **pi0-fast**: autoregressive decoder, per-token activations instead of
-  per-denoise-step — the `per_step` strategy and NPZ key schema need
-  rethinking. Checkpoints live at
-  [`brandonyang/pi0fast-metaworld-checkpoints`](https://huggingface.co/brandonyang/pi0fast-metaworld-checkpoints)
-  (see `examples/metaworld/README.md`).
-- **GR00T N1.5** (`groot_env/`): different DiT backbone with different hook
-  attach points and activation dimensionality. Served from its own venv,
-  not from `scripts/serve_policy.py`. See `groot_env/README.md`.
+- **pi0.5**: PyTorch hook steering via `scripts/serve_policy.py --pytorch --steer`.
+- **pi0-fast**: JAX pre-logit steering for MetaWorld and LIBERO using
+  `fast_v1` conceptors; there is no pi0-fast RoboCasa path in this branch.
+- **GR00T N1.5**: RoboCasa steering is served from `groot_env/serve.py --steer`
+  using DiT residual hooks and `groot_v1` conceptors. Build those with
+  `experiments/robocasa/compute_groot_conceptors.py`.

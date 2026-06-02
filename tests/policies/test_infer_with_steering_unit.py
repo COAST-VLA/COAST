@@ -15,9 +15,11 @@ from __future__ import annotations
 
 from unittest import mock
 
+import jax
 import numpy as np
 import torch
 
+from openpi.models import model as _model
 from openpi.policies import policy as _policy_mod
 from openpi.policies.policy import Policy
 
@@ -133,3 +135,45 @@ def test_infer_with_steering_passes_steering_hooks_separately():
     _run_infer(policy, steering_hooks=hooks)
     assert captured.get("hooks") is hooks
     assert "steering_hooks" not in (captured.get("kwargs") or {}), "steering_hooks must not leak into **sample_kwargs"
+
+
+def test_infer_with_steering_fast_forwards_stack_and_sample_kwargs():
+    p = Policy.__new__(Policy)
+    p._model_type = _model.ModelType.PI0_FAST
+    p._is_pytorch_model = False
+    p._rng = jax.random.key(0)
+    p._sample_kwargs = {"max_decoding_steps": 6, "temperature": 0.0}
+    p._input_transform = lambda x: x
+    p._output_transform = lambda x: x
+
+    captured: dict = {}
+
+    def _sample_actions_with_steering_fast(rng, observation, *, c_stack, beta, step_to_c_idx, **kwargs):
+        captured["c_stack"] = c_stack
+        captured["beta"] = beta
+        captured["step_to_c_idx"] = step_to_c_idx
+        captured["kwargs"] = kwargs
+        return np.zeros((1, 10, 7), dtype=np.float32)
+
+    p._sample_actions_with_steering_fast = _sample_actions_with_steering_fast
+
+    obs = {
+        "observation/state": np.zeros(8, dtype=np.float32),
+        "state": np.zeros(8, dtype=np.float32),
+    }
+    c_stack = np.broadcast_to(np.eye(4, dtype=np.float32), (3, 4, 4))
+    step_to_c_idx = np.asarray([0, 0, 1, 1, 2, 2], dtype=np.int32)
+
+    with mock.patch.object(_policy_mod._model.Observation, "from_dict", return_value=object()):
+        out = p.infer_with_steering_fast(
+            obs,
+            beta=0.3,
+            c_stack=c_stack,
+            step_to_c_idx=step_to_c_idx,
+        )
+
+    assert captured["c_stack"] is c_stack
+    assert captured["beta"] == 0.3
+    assert captured["step_to_c_idx"] is step_to_c_idx
+    assert captured["kwargs"] == {"max_decoding_steps": 6, "temperature": 0.0}
+    assert out["actions"].shape == (10, 7)

@@ -48,10 +48,9 @@ STEERING_KEY = "__steering__"
 
 # Strategies (see openpi.serving.steering for the math):
 #   global          — h' = (1-β)h + β(h @ C_contrastive.T), α selects aperture
-#   per_step        — same but a DIFFERENT conceptor at each of the 10 pi0.5
-#                     flow-matching denoising steps. Requires the NPZ to contain
-#                     per_step_0..per_step_9 keys (built automatically by
-#                     compute_conceptors.py).
+#   per_step        — same but a DIFFERENT conceptor by position. For pi0.5 this
+#                     means the 10 flow-matching denoising steps; for pi0-fast it
+#                     maps to first/mid/last autoregressive token conceptors.
 #   positive_only   — h' = (1-β)h + β(h @ C_success.T), α selects aperture
 #   random_matched  — h' = (1-β)h + β(h @ C_rand.T), C_rand has same spectrum
 #                     as C_contrastive at α but random eigenvectors

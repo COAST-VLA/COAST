@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 import torch
 
+from openpi.models import model as _model
 from openpi.serving import steering
 from openpi.serving.steering import ConceptorSteeringHook
 from openpi.serving.steering import SteeredPolicyWrapper
@@ -305,6 +306,24 @@ def mini_npz(tmp_path: pathlib.Path) -> pathlib.Path:
     return path
 
 
+@pytest.fixture
+def fast_npz(tmp_path: pathlib.Path) -> pathlib.Path:
+    """Build a tiny pi0-fast NPZ with Miranda-v2-style keys."""
+    d = 8
+    arrays = {}
+    for task in ("taskA", "taskB"):
+        for alpha in ("0.1", "0.5"):
+            arrays[f"{task}__global__{alpha}__C_contrastive"] = np.eye(d, dtype=np.float32) * 0.5
+            arrays[f"{task}__global__{alpha}__C_success"] = np.eye(d, dtype=np.float32) * 0.4
+            arrays[f"{task}__global__{alpha}__C_failure"] = np.eye(d, dtype=np.float32) * 0.35
+            arrays[f"{task}__per_token_first__{alpha}__C_contrastive"] = np.eye(d, dtype=np.float32) * 0.1
+            arrays[f"{task}__per_token_mid__{alpha}__C_contrastive"] = np.eye(d, dtype=np.float32) * 0.2
+            arrays[f"{task}__per_token_last__{alpha}__C_contrastive"] = np.eye(d, dtype=np.float32) * 0.3
+    path = tmp_path / "fast.npz"
+    np.savez(path, **arrays)
+    return path
+
+
 def test_load_conceptor_npz_missing_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         steering.load_conceptor_npz(tmp_path / "nope.npz")
@@ -315,11 +334,74 @@ def test_available_tasks_extracts_keys(mini_npz: pathlib.Path):
     assert available_tasks(npz) == {"taskA", "taskB"}
 
 
+def test_available_tasks_extracts_fast_keys(fast_npz: pathlib.Path):
+    npz = steering.load_conceptor_npz(fast_npz)
+    assert available_tasks(npz) == {"taskA", "taskB"}
+
+
 def test_get_conceptor_matrix_global(mini_npz: pathlib.Path):
     npz = steering.load_conceptor_npz(mini_npz)
     C = get_conceptor_matrix(npz, "taskA", 11, 0.1, "global")
     assert C.shape == (8, 8)
     np.testing.assert_allclose(C, np.eye(8) * 0.5)
+
+
+def test_get_fast_conceptor_matrix_global(fast_npz: pathlib.Path):
+    npz = steering.load_conceptor_npz(fast_npz)
+    C = steering.get_fast_conceptor_matrix(npz, "taskA", 0.1, "global")
+    assert C.shape == (8, 8)
+    np.testing.assert_allclose(C, np.eye(8) * 0.5)
+
+
+def test_get_fast_conceptor_matrix_positive_only_uses_global_success(fast_npz: pathlib.Path):
+    npz = steering.load_conceptor_npz(fast_npz)
+    C = steering.get_fast_conceptor_matrix(npz, "taskA", 0.1, "positive_only")
+    np.testing.assert_allclose(C, np.eye(8) * 0.4)
+
+
+def test_get_fast_per_token_conceptors(fast_npz: pathlib.Path):
+    npz = steering.load_conceptor_npz(fast_npz)
+    mats = steering.get_fast_per_token_conceptor_matrices(npz, "taskA", 0.1)
+    assert len(mats) == 3
+    np.testing.assert_allclose(mats[0], np.eye(8) * 0.1)
+    np.testing.assert_allclose(mats[1], np.eye(8) * 0.2)
+    np.testing.assert_allclose(mats[2], np.eye(8) * 0.3)
+
+
+def test_build_fast_steering_stack_global(fast_npz: pathlib.Path):
+    npz = steering.load_conceptor_npz(fast_npz)
+    c_stack, beta, step_to_c_idx = steering.build_fast_steering_stack(
+        npz,
+        {"task": "taskA", "layer": 99, "alpha": 0.1, "beta": 0.3, "strategy": "global"},
+        max_decoding_steps=6,
+    )
+    assert beta == 0.3
+    np.testing.assert_allclose(np.asarray(c_stack), np.broadcast_to(np.eye(8) * 0.5, (3, 8, 8)))
+    np.testing.assert_array_equal(np.asarray(step_to_c_idx), np.zeros(6, dtype=np.int32))
+
+
+def test_build_fast_steering_stack_per_step_maps_token_thirds(fast_npz: pathlib.Path):
+    npz = steering.load_conceptor_npz(fast_npz)
+    c_stack, beta, step_to_c_idx = steering.build_fast_steering_stack(
+        npz,
+        {"task": "taskA", "layer": 99, "alpha": 0.1, "beta": 0.3, "strategy": "per_step"},
+        max_decoding_steps=6,
+    )
+    assert beta == 0.3
+    np.testing.assert_allclose(np.asarray(c_stack)[0], np.eye(8) * 0.1)
+    np.testing.assert_allclose(np.asarray(c_stack)[1], np.eye(8) * 0.2)
+    np.testing.assert_allclose(np.asarray(c_stack)[2], np.eye(8) * 0.3)
+    np.testing.assert_array_equal(np.asarray(step_to_c_idx), np.asarray([0, 0, 1, 1, 2, 2], dtype=np.int32))
+
+
+def test_fast_linear_strategy_rejects_cleanly(fast_npz: pathlib.Path):
+    npz = steering.load_conceptor_npz(fast_npz)
+    with pytest.raises(ValueError, match="linear strategy is not supported for pi0-fast"):
+        steering.build_fast_steering_stack(
+            npz,
+            {"task": "taskA", "layer": 99, "alpha": 0.1, "beta": 0.3, "strategy": "linear"},
+            max_decoding_steps=6,
+        )
 
 
 def test_get_conceptor_matrix_unknown_strategy_raises(mini_npz: pathlib.Path):
@@ -390,6 +472,37 @@ class _StubPolicy:
         self.last_steering_hooks = steering_hooks
         self.last_steering_obs = dict(obs)
         return {"actions": np.ones((1, 4))}, {}
+
+    @property
+    def metadata(self):
+        return self._metadata
+
+
+class _FastStubPolicy:
+    def __init__(self):
+        self._model_type = _model.ModelType.PI0_FAST
+        self._sample_kwargs = {"max_decoding_steps": 6}
+        self.infer_calls = 0
+        self.fast_steering_calls = 0
+        self.last_infer_obs = None
+        self.last_fast_obs = None
+        self.last_C_stack = None
+        self.last_beta = None
+        self.last_step_to_C_idx = None
+        self._metadata = {"stub": True, "model_type": "pi0_fast"}
+
+    def infer(self, obs):
+        self.infer_calls += 1
+        self.last_infer_obs = dict(obs)
+        return {"actions": np.zeros((1, 4))}
+
+    def infer_with_steering_fast(self, obs, *, c_stack, beta, step_to_c_idx):
+        self.fast_steering_calls += 1
+        self.last_fast_obs = dict(obs)
+        self.last_C_stack = np.asarray(c_stack)
+        self.last_beta = beta
+        self.last_step_to_C_idx = np.asarray(step_to_c_idx)
+        return {"actions": np.ones((1, 4))}
 
     @property
     def metadata(self):
@@ -467,6 +580,56 @@ def test_wrapper_metadata_extends_underlying(mini_npz: pathlib.Path):
     assert meta["stub"] is True
     assert meta["steering_enabled"] is True
     assert meta["num_conceptor_tasks"] == 2
+
+
+def test_fast_wrapper_routes_through_infer_with_steering_fast(fast_npz: pathlib.Path):
+    p = _FastStubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=fast_npz, device="cpu")
+    obs = {
+        "obs": "data",
+        "__steering__": {"task": "taskA", "layer": 999, "alpha": 0.1, "beta": 0.3, "strategy": "global"},
+    }
+    result = w.infer(obs)
+
+    assert p.infer_calls == 0
+    assert p.fast_steering_calls == 1
+    assert "__steering__" not in p.last_fast_obs
+    np.testing.assert_allclose(p.last_C_stack, np.broadcast_to(np.eye(8) * 0.5, (3, 8, 8)))
+    np.testing.assert_array_equal(p.last_step_to_C_idx, np.zeros(6, dtype=np.int32))
+    assert p.last_beta == 0.3
+    assert np.all(result["actions"] == 1)
+
+
+def test_fast_wrapper_per_step_uses_per_token_stack(fast_npz: pathlib.Path):
+    p = _FastStubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=fast_npz, device="cpu")
+    w.infer({"__steering__": {"task": "taskA", "layer": 11, "alpha": 0.1, "beta": 0.3, "strategy": "per_step"}})
+
+    assert p.fast_steering_calls == 1
+    np.testing.assert_allclose(p.last_C_stack[0], np.eye(8) * 0.1)
+    np.testing.assert_allclose(p.last_C_stack[1], np.eye(8) * 0.2)
+    np.testing.assert_allclose(p.last_C_stack[2], np.eye(8) * 0.3)
+    np.testing.assert_array_equal(p.last_step_to_C_idx, np.asarray([0, 0, 1, 1, 2, 2], dtype=np.int32))
+
+
+def test_fast_wrapper_ignores_layer_in_cache_key(fast_npz: pathlib.Path):
+    p = _FastStubPolicy()
+    w = SteeredPolicyWrapper(p, conceptor_npz_path=fast_npz, device="cpu")
+    payload = {"task": "taskA", "layer": 11, "alpha": 0.1, "beta": 0.3, "strategy": "global"}
+
+    w.infer({"__steering__": dict(payload)})
+    w.infer({"__steering__": {**payload, "layer": 17}})
+
+    assert p.fast_steering_calls == 2
+    assert len(w._fast_cache) == 1  # noqa: SLF001
+
+
+def test_fast_wrapper_metadata_marks_jax_fast_backend(fast_npz: pathlib.Path):
+    w = SteeredPolicyWrapper(_FastStubPolicy(), conceptor_npz_path=fast_npz, device="cpu")
+    meta = w.metadata
+    assert meta["steering_enabled"] is True
+    assert meta["steering_model_type"] == "pi0_fast"
+    assert meta["steering_backend"] == "jax_fast"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

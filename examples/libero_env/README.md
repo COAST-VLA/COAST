@@ -167,14 +167,23 @@ toward the subspace of successful rollouts. The end-user surface is one flag:
        --repo-type dataset --local-dir conceptors/
    ```
 
-2. Start a steering-capable server. `--steer` requires `--pytorch` and
-   `--conceptor_npz`; `torch.compile` is off by default (needed for hooks):
+2. Start a steering-capable server. `--steer` always requires
+   `--conceptor_npz`. For pi0.5, add `--pytorch` because steering uses forward
+   hooks. For pi0-fast, do not add `--pytorch`; steering is JAX-only and uses
+   fast conceptors built from `token_pre_logits`.
 
    ```bash
+   # pi0.5:
    uv run scripts/serve_policy.py --pytorch --steer \
        --conceptor_npz conceptors/libero_conceptors.npz \
        policy:checkpoint \
        --policy.config pi05_libero --policy.dir checkpoints/openpi-libero-2000
+
+   # pi0-FAST:
+   uv run scripts/serve_policy.py --steer \
+       --conceptor_npz conceptors/pi0fast_libero_conceptors.npz \
+       policy:checkpoint \
+       --policy.config pi0_fast_libero --policy.dir checkpoints/pi0_fast_libero/pi0_fast_libero_b200_bs512/2000
    ```
 
    The same `--steer` server happily serves baseline (unsteered) clients too —
@@ -190,6 +199,8 @@ MUJOCO_GL=egl uv run python main.py \
 
 Defaults (duplicated from `src/openpi/serving/steering.py`):
 `--steering_layer 11 --steering_alpha 0.1 --steering_beta 0.3 --steering_strategy global`.
+For pi0-fast, `--steering_layer` is accepted for wire compatibility but ignored;
+the fast NPZ has no layer axis.
 
 ### Single task, explicit params
 
@@ -227,7 +238,7 @@ block if present, or the CLI scalar flags otherwise.
 | Flag                   | Default   | Notes                                     |
 |------------------------|-----------|-------------------------------------------|
 | `--steer`              | False     | Toggle steering on                        |
-| `--steering_layer`     | 11        | Action-expert transformer layer index     |
+| `--steering_layer`     | 11        | Action-expert transformer layer index; ignored by pi0-fast |
 | `--steering_alpha`     | 0.1       | Conceptor aperture                        |
 | `--steering_beta`      | 0.3       | Interpolation weight (β=0 is no-op)       |
 | `--steering_strategy`  | "global"  | See strategy table below                  |
@@ -244,10 +255,10 @@ block if present, or the CLI scalar flags otherwise.
 | Strategy          | Math                                               | Params used                  | Notes |
 |-------------------|----------------------------------------------------|------------------------------|-------|
 | `global`          | `h' = (1−β)h + β(h @ C_contrastive.T)`             | `layer`, `alpha`, `beta`     | Default. Contrastive conceptor `C_s ∧ NOT(C_f)` at aperture α. |
-| `per_step`        | Same as `global` but with a DIFFERENT conceptor at each of pi0.5's 10 denoising steps, swapped per iteration via `set_denoise_step(t)` | `layer`, `beta` (α baked in) | NPZ must contain per_step_0..per_step_9 keys. |
+| `per_step`        | Same as `global` but with a DIFFERENT conceptor by position | pi0.5: `layer`, `beta`; pi0-fast: `alpha`, `beta` | pi0.5 NPZ must contain per_step_0..per_step_9 keys. pi0-fast NPZ must contain per_token_first/mid/last keys. |
 | `positive_only`   | `h' = (1−β)h + β(h @ C_success.T)`                 | `layer`, `alpha`, `beta`     | Ablation dropping the `NOT(C_failure)` term. |
-| `random_matched`  | Same as `global` but with a random-eigenvector conceptor whose spectrum matches `C_contrastive` | `layer`, `alpha`, `beta` | Control. If this helps, the benefit wasn't from the learned direction. Seed derived from `(task, layer, α, β)` for reproducibility. |
-| `linear`          | `h' = h + α · v`, where `v` = unit(μ_success − μ_failure) | `layer`, `alpha` (β ignored) | ActAdd-style additive baseline. Requires `linear_direction` key in NPZ (rebuild via `experiments/{env}/compute_conceptors.py` if missing). |
+| `random_matched`  | Same as `global` but with a random-eigenvector conceptor whose spectrum matches `C_contrastive` | pi0.5: `layer`, `alpha`, `beta`; pi0-fast: `alpha`, `beta` | Control. If this helps, the benefit wasn't from the learned direction. |
+| `linear`          | `h' = h + α · v`, where `v` = unit(μ_success − μ_failure) | pi0.5: `layer`, `alpha` (β ignored) | ActAdd-style additive baseline for pi0.5. pi0-fast rejects this strategy unless a separate fast linear implementation is added. |
 
 ### Error behavior
 

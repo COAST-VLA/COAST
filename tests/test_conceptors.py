@@ -20,6 +20,8 @@ import numpy as np
 import pytest
 
 from openpi.serving.conceptors import DEFAULT_COLLECT_LAYERS
+from openpi.serving.conceptors import GROOT_COLLECT_LAYERS
+from openpi.serving.conceptors import GROOT_PER_STEP_INDICES
 from openpi.serving.conceptors import boolean_and
 from openpi.serving.conceptors import boolean_not
 from openpi.serving.conceptors import compute_all_conceptors
@@ -445,6 +447,36 @@ def _make_fake_tree(tmp_path: pathlib.Path, d: int = 16) -> pathlib.Path:
     return root
 
 
+def _make_fake_groot_tree(tmp_path: pathlib.Path, d: int = 8) -> pathlib.Path:
+    """Build a minimal GR00T groot_v1 activation tree."""
+    root = tmp_path / "groot_acts"
+    ckpt = root / "checkpoint-120000"
+    rng = np.random.default_rng(123)
+
+    for ep_idx in range(4):
+        ep_dir = ckpt / "OpenDrawer" / f"episode_{ep_idx:03d}_env_000"
+        ep_dir.mkdir(parents=True)
+        is_success = ep_idx < 2
+        rewards = np.zeros(2, dtype=np.float32)
+        np.savez(
+            ep_dir / "rewards.npz",
+            per_step_reward=rewards,
+            cumulative_reward=rewards,
+            success_at_step=np.array([False, is_success], dtype=bool),
+        )
+        (ep_dir / "metadata.json").write_text(json.dumps({"task_name": "OpenDrawer"}))
+
+        for s in range(2):
+            step_dir = ep_dir / f"step_{s:04d}"
+            step_dir.mkdir()
+            # GR00T schema: (denoising_steps=4, layers=16, seq_len=10, hidden=d)
+            hidden = rng.standard_normal((4, 16, 10, d)).astype(np.float32)
+            np.savez(step_dir / "dit_hidden_states.npz", all_dit_hidden_states=hidden)
+            (step_dir / "metadata.json").write_text(json.dumps({"step": s}))
+
+    return root
+
+
 def test_iter_episode_dirs_finds_all(tmp_path):
     root = _make_fake_tree(tmp_path)
     eps = list(iter_episode_dirs(root))
@@ -466,6 +498,13 @@ def test_load_episode_hiddens_stacks_step_dirs(tmp_path):
     ep = next(iter_episode_dirs(root))
     H = load_episode_hiddens(ep)
     assert H.shape == (2, 10, 4, 32, 16)  # (T=2, denoise=10, layers=4, tokens=32, d=16)
+
+
+def test_load_episode_hiddens_stacks_groot_dit_hidden_states(tmp_path):
+    root = _make_fake_groot_tree(tmp_path)
+    ep = next(iter_episode_dirs(root))
+    H = load_episode_hiddens(ep)
+    assert H.shape == (2, 4, 16, 10, 8)  # (T=2, denoise=4, layers=16, tokens=10, d=8)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -510,6 +549,28 @@ def test_compute_all_conceptors_end_to_end(tmp_path):
     meta = json.loads((out_path.with_suffix(".meta.json")).read_text())
     assert meta["num_tasks_included"] == 2
     assert meta["layers"] == [11]
+
+
+def test_compute_all_conceptors_groot_v1_end_to_end(tmp_path):
+    root = _make_fake_groot_tree(tmp_path)
+    out_path = tmp_path / "groot_output.npz"
+    summary = compute_all_conceptors(
+        root,
+        out_path,
+        layers=(11,),
+        alphas=(0.1,),
+        per_step_indices=GROOT_PER_STEP_INDICES,
+        collect_layers=GROOT_COLLECT_LAYERS,
+    )
+    assert summary["num_tasks"] == 1
+    # 1 layer x (1 alpha x 3 kinds + 4 per_step x 3 kinds + 1 linear)
+    assert summary["num_keys"] == 16
+    npz = np.load(out_path)
+    assert "OpenDrawer__L11__0.1__C_contrastive" in npz.files
+    assert "OpenDrawer__L11__per_step_3__C_contrastive" in npz.files
+    assert "OpenDrawer__L11__linear_direction" in npz.files
+    assert npz["OpenDrawer__L11__0.1__C_contrastive"].shape == (8, 8)
+    assert npz["OpenDrawer__L11__linear_direction"].shape == (8,)
 
 
 def test_compute_all_conceptors_skips_tasks_without_both_classes(tmp_path):

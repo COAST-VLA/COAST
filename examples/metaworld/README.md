@@ -132,7 +132,10 @@ Conceptor-based activation steering nudges the action expert's hidden state towa
 
 **Only the steering WebSocket server supports steering** — `--collect` targets a collection-mode server, while `--steer` targets a steering-mode server. Run collection and steering as separate passes, each with the matching server mode.
 
-**Only pi0.5 (`pi05_metaworld`) is supported.** TODO: extend to pi0-fast — the autoregressive decoder has a different activation shape (per-token hidden states, not per-denoise-step), so `per_step` and the NPZ key schema need rethinking.
+Both `pi05_metaworld` and `pi0_fast_metaworld` are supported. pi0.5 steering
+uses PyTorch hooks on denoising activations. pi0-fast steering is JAX-only and
+applies conceptor matrices to autoregressive token `pre_logits` before the LM
+head, using Miranda-v2-style fast conceptor keys.
 
 ### Prereqs
 
@@ -143,13 +146,22 @@ Conceptor-based activation steering nudges the action expert's hidden state towa
        --repo-type dataset --local-dir conceptors/
    ```
 
-2. Start a steering-capable server (`--steer` requires `--pytorch` and `--conceptor_npz`; `torch.compile` is off by default so hooks can attach):
+2. Start a steering-capable server. `--steer` always requires
+   `--conceptor_npz`. For pi0.5, add `--pytorch` because steering uses hooks.
+   For pi0-fast, do not add `--pytorch`; the fast path is JAX-only:
 
    ```bash
+   # pi0.5:
    uv run scripts/serve_policy.py --pytorch --steer \
        --conceptor_npz conceptors/metaworld_conceptors.npz \
        policy:checkpoint \
        --policy.config pi05_metaworld --policy.dir checkpoints/openpi-metaworld-5000
+
+   # pi0-FAST:
+   uv run scripts/serve_policy.py --steer \
+       --conceptor_npz conceptors/pi0fast_metaworld_conceptors.npz \
+       policy:checkpoint \
+       --policy.config pi0_fast_metaworld --policy.dir checkpoints/pi0_fast_metaworld/pi0_fast_metaworld_b200_bs512/2500
    ```
 
    The same `--steer` server happily serves baseline (unsteered) clients too — an obs without an `__steering__` key passes straight through.
@@ -160,7 +172,7 @@ Conceptor-based activation steering nudges the action expert's hidden state towa
 MUJOCO_GL=egl uv run examples/metaworld/main.py --env_name reach-v3 --steer
 ```
 
-Defaults (duplicated from `src/openpi/serving/steering.py`): `--steering_layer 11 --steering_alpha 0.1 --steering_beta 0.3 --steering_strategy global`.
+Defaults (duplicated from `src/openpi/serving/steering.py`): `--steering_layer 11 --steering_alpha 0.1 --steering_beta 0.3 --steering_strategy global`. For pi0-fast, `--steering_layer` is accepted for wire compatibility but ignored because the fast NPZ has no layer axis.
 
 ### Single task, explicit params
 
@@ -200,7 +212,7 @@ Tasks not present in `best_configs.json` fall back to the config's `defaults` bl
 
 `eval_all.py` adds `--steering_config <path>` for per-task overrides.
 
-See `examples/libero_env/README.md` for the full strategy table (`global`, `per_step`, `positive_only`, `random_matched`, `linear`) and error-behavior notes — the math and wire protocol are shared.
+See `examples/libero_env/README.md` for the full strategy table (`global`, `per_step`, `positive_only`, `random_matched`, `linear`) and error-behavior notes. For pi0-fast, `per_step` maps to first/mid/last token-position conceptors, and `linear` is rejected unless a separate fast linear/ActAdd implementation is added.
 
 ## Results
 

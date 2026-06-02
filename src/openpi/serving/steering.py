@@ -1,4 +1,4 @@
-"""Conceptor-based activation steering for pi0.5 policies.
+"""Conceptor-based activation steering for pi0.5 and pi0-fast policies.
 
 This module is the single source of truth for steering primitives:
 
@@ -7,6 +7,7 @@ This module is the single source of truth for steering primitives:
     SteeredPolicyWrapper       Policy wrapper dispatching on an obs["__steering__"] key
     load_conceptor_npz         Load the pre-computed conceptor .npz
     get_conceptor_matrix       Look up a (task, layer, alpha, strategy) conceptor
+    get_fast_conceptor_matrix  Look up a pi0-fast (task, alpha, strategy) conceptor
     get_linear_direction       Look up the unit-direction vector for the linear strategy
     validate_steering_payload  Schema check for the on-wire __steering__ dict
 
@@ -14,28 +15,27 @@ The on-wire protocol mirrors activation_collector.py's __collect__ magic key:
 the client attaches obs["__steering__"] = {...}; the wrapper pops it off and
 routes through Policy.infer_with_steering.
 
-**Model support.** Steering here targets the PyTorch pi0.5 action expert
-(flow-matching decoder; 10 denoising steps). Other model types are NOT
-supported yet:
-
-    TODO(pi0-fast): autoregressive decoder has a different activation shape
-    (per-token hidden states, not per-denoise-step), so the per_step strategy
-    and the NPZ key schema need rethinking. See examples/metaworld/README.md
-    for the current pi0-fast eval flow.
-
-    TODO(GR00T N1.5): separate server in groot_env/ with a different backbone
-    architecture; the hook attach points and activation dimensionality differ.
-    Separate effort — see groot_env/README.md.
+**Model support.** pi0/pi0.5 steering uses PyTorch hooks on the action expert
+(flow-matching decoder; 10 denoising steps). pi0-fast steering is JAX-only and
+uses the Miranda-v2 token-prelogit intervention: ``h' = h @ M.T`` before the LM
+head, with fast conceptor NPZ keys such as
+``task__global__alpha__C_contrastive`` and
+``task__per_token_first__alpha__C_contrastive``. GR00T N1.5 steering is
+implemented separately in ``groot_env/groot_steering.py`` because it is served
+from its own venv with a different backbone, hook attach points, and activation
+dimensionality.
 """
 
 # ruff: noqa: E741, N806, RUF001, RUF002, RUF003
 from __future__ import annotations
 
 from collections.abc import Iterable
+import hashlib
 import logging
 import pathlib
 from typing import Any
 
+import jax.numpy as jnp
 import numpy as np
 
 # Re-export the single source of truth for the protocol (defined in
@@ -44,6 +44,8 @@ import numpy as np
 from openpi_client.steering import ALLOWED_STRATEGIES
 from openpi_client.steering import STEERING_KEY as _STEERING_KEY
 import torch
+
+from openpi.models import model as _model
 
 logger = logging.getLogger(__name__)
 
@@ -59,13 +61,24 @@ def load_conceptor_npz(path: str | pathlib.Path) -> Any:
     if not path.exists():
         raise FileNotFoundError(
             f"Conceptor file not found: {path}. "
-            "Download from brandonyang/libero-conceptors or brandonyang/robocasa-conceptors."
+            "Download the matching pi0.5 or pi0-fast conceptor dataset, or rebuild from activations."
         )
     return np.load(path, allow_pickle=True)
 
 
 def _conceptor_key(task: str, layer: int, alpha_or_step: str, kind: str) -> str:
     return f"{task}__L{layer}__{alpha_or_step}__{kind}"
+
+
+def _fast_conceptor_key(task: str, strategy: str, alpha: float, kind: str) -> str:
+    return f"{task}__{strategy}__{alpha}__{kind}"
+
+
+_FAST_KEY_STRATEGIES = frozenset({"global", "per_token_first", "per_token_mid", "per_token_last"})
+
+
+def _stable_random_seed(seed_key: tuple) -> int:
+    return int(hashlib.blake2b(repr(seed_key).encode("utf-8"), digest_size=4).hexdigest(), 16)
 
 
 def get_conceptor_matrix(
@@ -127,6 +140,132 @@ def get_conceptor_matrix(
     return np.asarray(npz[key])
 
 
+def get_fast_conceptor_matrix(
+    npz: Any,
+    task: str,
+    alpha: float,
+    strategy: str,
+    *,
+    random_seed: int | None = None,
+) -> np.ndarray:
+    """Look up or derive a pi0-fast conceptor matrix.
+
+    pi0-fast conceptors are built from autoregressive ``token_pre_logits`` and
+    do not have a transformer-layer axis. The Miranda-v2 key schema is:
+
+      - ``global``        -> ``{task}__global__{alpha}__C_contrastive``
+      - ``positive_only`` -> ``{task}__global__{alpha}__C_success``
+      - ``random_matched`` derives from the global contrastive matrix
+
+    ``per_step`` is position-aware for pi0-fast and returns a first/mid/last
+    stack via ``get_fast_per_token_conceptor_matrices``.
+    """
+    from openpi.serving.conceptors import random_matched_conceptor
+
+    if strategy == "global":
+        keys = [_fast_conceptor_key(task, "global", alpha, "C_contrastive")]
+    elif strategy == "positive_only":
+        keys = [
+            _fast_conceptor_key(task, "global", alpha, "C_success"),
+            _fast_conceptor_key(task, "positive_only", alpha, "C_success"),
+        ]
+    elif strategy == "random_matched":
+        ref_key = _fast_conceptor_key(task, "global", alpha, "C_contrastive")
+        if ref_key not in npz:
+            raise KeyError(
+                f"random_matched: reference key {ref_key!r} not in NPZ. "
+                f"Available: {[k for k in npz.files if k.startswith(task)][:5]}..."
+            )
+        if random_seed is None:
+            raise ValueError("random_matched strategy requires a random_seed")
+        return random_matched_conceptor(np.asarray(npz[ref_key]), seed=random_seed)
+    elif strategy == "per_step":
+        raise ValueError(
+            "strategy='per_step' returns a first/mid/last stack for pi0-fast; "
+            "call get_fast_per_token_conceptor_matrices instead"
+        )
+    elif strategy == "linear":
+        raise ValueError("linear strategy is not supported for pi0-fast conceptor steering")
+    else:
+        raise ValueError(f"Unknown pi0-fast steering strategy {strategy!r}. Allowed: {ALLOWED_STRATEGIES}")
+
+    for key in keys:
+        if key in npz:
+            return np.asarray(npz[key])
+    raise KeyError(
+        f"Conceptor key not found for pi0-fast task={task!r}, strategy={strategy!r}, alpha={alpha}. "
+        f"Tried {keys!r}. Available keys starting with {task!r}: "
+        f"{[k for k in npz.files if k.startswith(task)][:5]}... (truncated)"
+    )
+
+
+def get_fast_per_token_conceptor_matrices(
+    npz: Any,
+    task: str,
+    alpha: float,
+    *,
+    kind: str = "C_contrastive",
+) -> list[np.ndarray]:
+    """Load pi0-fast first/mid/last token-position conceptors.
+
+    The client strategy name remains ``per_step`` for wire compatibility with
+    pi0.5, but fast steering maps it to the Miranda-v2
+    ``per_token_first/mid/last`` keys and selects the matrix by decode-token
+    thirds.
+    """
+    matrices: list[np.ndarray] = []
+    for strategy in ("per_token_first", "per_token_mid", "per_token_last"):
+        key = _fast_conceptor_key(task, strategy, alpha, kind)
+        if key not in npz.files:
+            raise KeyError(
+                f"pi0-fast per_step: missing NPZ key {key!r}. The NPZ must contain "
+                "per_token_first/per_token_mid/per_token_last keys for this task and alpha."
+            )
+        matrices.append(np.asarray(npz[key]))
+    return matrices
+
+
+def _fast_uniform_step_idx(max_steps: int) -> np.ndarray:
+    return np.zeros((max_steps,), dtype=np.int32)
+
+
+def _fast_combined_step_idx(max_steps: int) -> np.ndarray:
+    t1 = max_steps // 3
+    t2 = 2 * max_steps // 3
+    idx = np.empty((max_steps,), dtype=np.int32)
+    idx[:t1] = 0
+    idx[t1:t2] = 1
+    idx[t2:] = 2
+    return idx
+
+
+def build_fast_steering_stack(npz: Any, payload: dict, *, max_decoding_steps: int) -> tuple[Any, float, Any]:
+    """Resolve a wire payload to pi0-fast JAX steering inputs.
+
+    Returns ``(c_stack, beta, step_to_c_idx)``. ``c_stack`` is padded to three
+    matrices even for single-matrix strategies so repeated global/per_step
+    calls share a stable JIT signature.
+    """
+    task = payload["task"]
+    alpha = float(payload["alpha"])
+    beta = float(payload["beta"])
+    strategy = payload["strategy"]
+
+    if strategy == "per_step":
+        matrices = get_fast_per_token_conceptor_matrices(npz, task=task, alpha=alpha)
+        step_to_c_idx = _fast_combined_step_idx(max_decoding_steps)
+    else:
+        random_seed = None
+        if strategy == "random_matched":
+            random_seed = _stable_random_seed((task, alpha, strategy))
+        C = get_fast_conceptor_matrix(npz, task=task, alpha=alpha, strategy=strategy, random_seed=random_seed)
+        matrices = [C, C, C]
+        step_to_c_idx = _fast_uniform_step_idx(max_decoding_steps)
+
+    c_stack = np.stack([np.asarray(C, dtype=np.float32) for C in matrices], axis=0)
+    return jnp.asarray(c_stack), beta, jnp.asarray(step_to_c_idx)
+
+
 def get_per_step_conceptor_matrices(
     npz: Any,
     task: str,
@@ -183,9 +322,14 @@ def available_tasks(npz: Any) -> set[str]:
     for key in npz.files:
         # Keys are "<task>__L<layer>__<alpha_or_per_step_N>__C_{contrastive|success|failure}"
         # Task can contain underscores, so split on "__" (double underscore).
-        task, _, _ = key.partition("__L")
-        if task:
-            tasks.add(task)
+        if "__L" in key:
+            task, _, _ = key.partition("__L")
+            if task:
+                tasks.add(task)
+            continue
+        parts = key.split("__")
+        if len(parts) >= 4 and parts[1] in _FAST_KEY_STRATEGIES:
+            tasks.add(parts[0])
     return tasks
 
 
@@ -405,10 +549,15 @@ class SteeredPolicyWrapper:
         self._npz = load_conceptor_npz(conceptor_npz_path)
         self._available_tasks = available_tasks(self._npz)
         self._device = device
+        self._model_type = _policy_model_type(policy)
+        self._is_fast = self._model_type == _model.ModelType.PI0_FAST
         # Cache key is strategy-projected: only the params the strategy actually
         # uses contribute. See _cache_key(). Avoids rebuilding identical hooks
         # just because an irrelevant CLI flag differs during a sweep.
         self._hook_cache: dict[tuple[str, int, float, float, str], Any] = {}
+        self._fast_cache: dict[tuple[str, float, float, str], tuple[Any, float, Any]] = {}
+        sample_kwargs = getattr(policy, "_sample_kwargs", {}) or {}
+        self._fast_max_decoding_steps = int(sample_kwargs.get("max_decoding_steps", 256))
 
     @staticmethod
     def _cache_key(payload: dict) -> tuple[str, int, float, float, str]:
@@ -450,10 +599,8 @@ class SteeredPolicyWrapper:
                 # Python's built-in hash(str|tuple) is salted per-process (see
                 # PYTHONHASHSEED); a stable hash over repr(seed_key) guarantees
                 # the seed is identical on every run.
-                import hashlib
-
                 seed_key = (key[0], key[1], key[2], key[4])  # (task, layer, α, strategy) — drop β
-                seed = int(hashlib.blake2b(repr(seed_key).encode("utf-8"), digest_size=4).hexdigest(), 16)
+                seed = _stable_random_seed(seed_key)
                 C = get_conceptor_matrix(
                     self._npz,
                     task=key[0],
@@ -493,6 +640,28 @@ class SteeredPolicyWrapper:
             hook.reset_logs()
         return key[1], hook
 
+    @staticmethod
+    def _fast_cache_key(payload: dict) -> tuple[str, float, float, str]:
+        strategy = payload["strategy"]
+        alpha = float(payload["alpha"])
+        beta = float(payload["beta"])
+        if strategy == "linear":
+            beta = 0.0
+        return (payload["task"], alpha, beta, strategy)
+
+    def _get_or_build_fast(self, payload: dict) -> tuple[Any, float, Any]:
+        key = self._fast_cache_key(payload)
+        steering_inputs = self._fast_cache.get(key)
+        if steering_inputs is None:
+            steering_inputs = build_fast_steering_stack(
+                self._npz,
+                payload,
+                max_decoding_steps=self._fast_max_decoding_steps,
+            )
+            self._fast_cache[key] = steering_inputs
+            logger.info("Built pi0-fast steering stack %s (cache size=%d)", key, len(self._fast_cache))
+        return steering_inputs
+
     def infer(self, obs: dict) -> dict:
         # Use .get() (not .pop()) so we don't mutate the caller's obs dict —
         # matches the CollectingPolicy.infer() contract in activation_collector.py.
@@ -505,6 +674,14 @@ class SteeredPolicyWrapper:
             return self._policy.infer(obs)
         validate_steering_payload(payload, self._available_tasks)
         clean_obs = {k: v for k, v in obs.items() if k != _STEERING_KEY}
+        if self._is_fast:
+            c_stack, beta, step_to_c_idx = self._get_or_build_fast(payload)
+            return self._policy.infer_with_steering_fast(
+                clean_obs,
+                beta=beta,
+                c_stack=c_stack,
+                step_to_c_idx=step_to_c_idx,
+            )
         layer, hook = self._get_or_build_hook(payload)
         result, _ = self._policy.infer_with_steering(clean_obs, steering_hooks=[(layer, hook)])
         return result
@@ -516,4 +693,31 @@ class SteeredPolicyWrapper:
     @property
     def metadata(self) -> dict:
         underlying = getattr(self._policy, "metadata", {}) or {}
-        return {**underlying, "steering_enabled": True, "num_conceptor_tasks": len(self._available_tasks)}
+        return {
+            **underlying,
+            "steering_enabled": True,
+            "num_conceptor_tasks": len(self._available_tasks),
+            "steering_model_type": self._model_type.value if self._model_type is not None else "unknown",
+            "steering_backend": "jax_fast" if self._is_fast else "pytorch_hooks",
+        }
+
+
+def _policy_model_type(policy: Any) -> _model.ModelType | None:
+    value = getattr(policy, "_model_type", None)
+    if isinstance(value, _model.ModelType):
+        return value
+    if isinstance(value, str):
+        try:
+            return _model.ModelType(value)
+        except ValueError:
+            return None
+    metadata = getattr(policy, "metadata", {}) or {}
+    value = metadata.get("model_type")
+    if isinstance(value, _model.ModelType):
+        return value
+    if isinstance(value, str):
+        try:
+            return _model.ModelType(value)
+        except ValueError:
+            return None
+    return None
