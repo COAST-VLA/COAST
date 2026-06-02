@@ -1,3 +1,9 @@
+
+
+https://github.com/user-attachments/assets/343316f1-37d3-464c-ad97-2965f0ebe456
+https://github.com/user-attachments/assets/84053a5e-bb96-4368-843a-466db44f5d3d
+https://github.com/user-attachments/assets/9fa72915-379a-4107-9759-f9a6794db4b4
+
 # COAST
 
 COAST is a VLA evaluation, activation-collection, and steering repo built on [Physical Intelligence's openpi](https://github.com/Physical-Intelligence/openpi). It wires MetaWorld, LIBERO, and RoboCasa examples end-to-end, adds server-side activation collection, and includes a pluggable policy-server layer. RoboCasa can target either the pi0/pi0.5 server or the isolated NVIDIA GR00T server without changing the client. For GR00T setup steps, please follow the [groot_env/README.md](groot_env/README.md). The setup steps below are for the openpi-derived pi0 and pi0.5 models.
