@@ -1,6 +1,6 @@
 # GR00T N1.5 Server
 
-An isolated-venv server that serves [NVIDIA Isaac GR00T N1.5](https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release) checkpoints over openpi's WebSocket protocol, so any openpi env client (robocasa, libero, metaworld, droid, …) can target GR00T without client-side changes. N1.5 pins `torch==2.5.1`, which conflicts with the root openpi env — hence the separate venv.
+An isolated-venv server that serves [NVIDIA Isaac GR00T N1.5](https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release) checkpoints over openpi's WebSocket protocol. In this branch, the GR00T adapter is wired for the RoboCasa client only; MetaWorld and LIBERO do not have GR00T adapters. N1.5 pins `torch==2.5.1`, which conflicts with the root openpi env — hence the separate venv.
 
 ## Installation
 

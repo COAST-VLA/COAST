@@ -64,6 +64,11 @@ from robocasa.utils.dataset_registry import TASK_SET_REGISTRY
 
 logger = logging.getLogger(__name__)
 
+_MUTUALLY_EXCLUSIVE_MODE_ERROR = (
+    "--collect and --steer are mutually exclusive; run activation collection and "
+    "steering evaluation as separate passes."
+)
+
 # Curated 7-task subset: these are the tasks with published pi0.5 + GR00T N1.5
 # success rates in this repo (see examples/robocasa_env/README.md and
 # groot_env/README.md). Parallel to metaworld's SUBSET — meant for faster
@@ -82,6 +87,11 @@ SUBSET = [
 # main.py logs this once at the end of eval_task via ``logger.info``, e.g.:
 #   [CloseBlenderLid/pretrain] success_rate=1.00 (1/1)
 SUCCESS_RATE_RE = re.compile(r"success_rate=([0-9.]+)")
+
+
+def _validate_args(args: Any) -> None:
+    if args.collect and args.steer:
+        raise ValueError(_MUTUALLY_EXCLUSIVE_MODE_ERROR)
 
 
 @dataclasses.dataclass
@@ -331,6 +341,7 @@ def _resolve_tasks(args: Args) -> List[str]:
 
 
 def main(args: Args) -> None:
+    _validate_args(args)
     env_names: List[str] = _resolve_tasks(args)
 
     np.random.seed(args.seed)

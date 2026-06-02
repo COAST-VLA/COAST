@@ -3,8 +3,9 @@
 GR00T N1.5 has deep dependency conflicts with the openpi root venv (torch 2.5.1
 vs 2.7.1, wandb 0.18.0 vs >=0.19.1, etc.), so it lives in its own venv here at
 the repo root, peer to `examples/` (which holds CLIENTS) and `scripts/` (which
-holds the pi0 server). Every openpi client in `examples/*_env/` can target this
-server unchanged — the wire protocol matches `scripts/serve_policy.py`.
+holds the pi0 server). The server uses the same wire protocol as
+`scripts/serve_policy.py`; in this branch the GR00T adapter is wired for the
+RoboCasa client only.
 
     cd groot_env
     uv sync
@@ -12,7 +13,7 @@ server unchanged — the wire protocol matches `scripts/serve_policy.py`.
         --model-path ../checkpoints/groot_n15/gr00t_n1-5/multitask_learning/checkpoint-120000 \\
         --port 8000
 
-Then from any env client:
+Then from the RoboCasa client:
 
     cd examples/robocasa_env
     MUJOCO_GL=egl uv run python main.py --env_name CloseBlenderLid

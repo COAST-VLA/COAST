@@ -35,6 +35,11 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
+_MUTUALLY_EXCLUSIVE_MODE_ERROR = (
+    "--collect and --steer are mutually exclusive; run activation collection and "
+    "steering evaluation as separate passes."
+)
+
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 LIBERO_ENV_RESOLUTION = 256
 CAMERA_KEYS = {
@@ -415,7 +420,13 @@ def quat_to_axisangle(quat: np.ndarray) -> np.ndarray:
     return (quat[:3] * 2.0 * math.acos(float(quat[3])) / denominator).astype(np.float32)
 
 
+def _validate_args(args: Args) -> None:
+    if args.collect and args.steer:
+        raise ValueError(_MUTUALLY_EXCLUSIVE_MODE_ERROR)
+
+
 def main(args: Args) -> None:
+    _validate_args(args)
     np.random.seed(args.seed)
 
     policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)

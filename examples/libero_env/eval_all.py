@@ -46,6 +46,11 @@ from main import get_task_suite
 
 logger = logging.getLogger(__name__)
 
+_MUTUALLY_EXCLUSIVE_MODE_ERROR = (
+    "--collect and --steer are mutually exclusive; run activation collection and "
+    "steering evaluation as separate passes."
+)
+
 # Pulls the last ``success_rate=0.50`` (or similar) from the main.py log stream.
 # main.py logs this once at the end of eval_task via ``logger.info``, e.g.:
 #   [libero_spatial/pick_up.../task_00] success_rate=1.00 (1/1)
@@ -59,6 +64,11 @@ def _fallback_from_args(args: Any) -> Dict[str, Any]:
         "beta": args.steering_beta,
         "strategy": args.steering_strategy,
     }
+
+
+def _validate_args(args: Any) -> None:
+    if args.collect and args.steer:
+        raise ValueError(_MUTUALLY_EXCLUSIVE_MODE_ERROR)
 
 
 @dataclasses.dataclass
@@ -272,6 +282,7 @@ def _run_one_task(
 
 
 def main(args: Args) -> None:
+    _validate_args(args)
     np.random.seed(args.seed)
 
     script_dir = os.path.dirname(os.path.abspath(__file__))

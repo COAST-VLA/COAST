@@ -198,8 +198,10 @@ MUJOCO_GL=egl uv run pytest tests/ -v
 Each `eval_all.py` subprocess creates its own `CollectionSession` keyed on its distinct `env_name`, so the shared collection-mode server writes activations to disjoint output directories with no cross-subprocess coordination. The server's single-threaded asyncio dispatch serializes the underlying hook-based `infer_with_intermediates` call automatically, and `CollectingPolicy`'s explicit lock documents the invariant for future executor-based optimizations.
 
 Notes:
-- Collection mode requires `--pytorch` on the server. `infer_with_intermediates`
-  is implemented for the PyTorch backend only.
+- pi0.5 collection mode requires `--pytorch` on `scripts/serve_policy.py`.
+  `infer_with_intermediates` is implemented for the PyTorch backend only. GR00T
+  RoboCasa collection uses `groot_env/serve.py --collect_activations`, which has
+  its own isolated server and does not take `--pytorch`.
 - A collection-mode server **rejects** plain inference requests. If you want to
   also run regular eval, start a separate non-collection server on a different
   port.

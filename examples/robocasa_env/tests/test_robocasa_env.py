@@ -74,6 +74,11 @@ class TestArgs:
     def test_is_dataclass(self) -> None:
         assert dataclasses.is_dataclass(Args)
 
+    def test_collect_and_steer_are_mutually_exclusive(self) -> None:
+        args = Args(collect=True, steer=True)
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            main._validate_args(args)
+
 
 # ── CAMERA_KEYS ───────────────────────────────────────────────────────────────
 

@@ -36,6 +36,11 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
+_MUTUALLY_EXCLUSIVE_MODE_ERROR = (
+    "--collect and --steer are mutually exclusive; run activation collection and "
+    "steering evaluation as separate passes."
+)
+
 # RoboCasa's gym wrapper hardcodes these three camera observations on every step.
 # Keys are short names used in CLI args; values are the obs dict keys.
 CAMERA_KEYS = {
@@ -296,7 +301,13 @@ def eval_task(
     return {"success_rate": success_rate, "num_episodes": float(len(successes))}
 
 
+def _validate_args(args: Args) -> None:
+    if args.collect and args.steer:
+        raise ValueError(_MUTUALLY_EXCLUSIVE_MODE_ERROR)
+
+
 def main(args: Args) -> None:
+    _validate_args(args)
     np.random.seed(args.seed)
 
     policy = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)

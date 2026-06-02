@@ -22,6 +22,8 @@ import math
 import pathlib
 import textwrap
 
+import pytest
+
 import eval_all
 
 # --------------------------------------------------------- SUCCESS_RATE_RE
@@ -504,3 +506,8 @@ class TestArgsDefaults:
             "agentview_right",
             "eye_in_hand",
         ]
+
+    def test_collect_and_steer_are_mutually_exclusive(self) -> None:
+        args = eval_all.Args(collect=True, steer=True)
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            eval_all._validate_args(args)

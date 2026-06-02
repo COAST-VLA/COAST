@@ -1,6 +1,6 @@
 # openpi-metaworld
 
-This is a fork of [Physical Intelligence's openpi](https://github.com/Physical-Intelligence/openpi) with three sim environment examples wired up end-to-end, plus a pluggable policy-server layer so you can swap the pi0/pi0.5 server for NVIDIA's GR00T without touching any client. For GR00T setup steps, please follow the [groot_env/README.md](groot_env/README.md). The setup steps below are for the original openpi and the pi0/pi0.5 models.
+This is a fork of [Physical Intelligence's openpi](https://github.com/Physical-Intelligence/openpi) with three sim environment examples wired up end-to-end, plus a pluggable policy-server layer. RoboCasa can target either the pi0/pi0.5 server or the isolated NVIDIA GR00T server without changing the client. For GR00T setup steps, please follow the [groot_env/README.md](groot_env/README.md). The setup steps below are for the original openpi and the pi0/pi0.5 models.
 
 ## Installation
 
@@ -26,7 +26,7 @@ The base install above is everything `examples/metaworld/` needs. `examples/libe
 | Model | Entry point | Venv | Notes |
 |---|---|---|---|
 | **pi0 / pi0-FAST / pi0.5** | [`scripts/serve_policy.py`](scripts/serve_policy.py) | root (`uv sync`) | Primary openpi server. Serves any `pi05_*` / `pi0_*` training config. Supports `--collect_activations` for mech-interp. |
-| **NVIDIA GR00T N1.5** | [`groot_env/serve.py`](groot_env/README.md) | `groot_env/.venv` (Python 3.10) | Serves `nvidia/GR00T-N1.5-3B` or any robocasa365 fine-tuned checkpoint. Has its own venv — N1.5 pins torch 2.5.1 which conflicts with the root openpi env. Same WebSocket protocol as `serve_policy.py`, so existing clients hit it unchanged. |
+| **NVIDIA GR00T N1.5** | [`groot_env/serve.py`](groot_env/README.md) | `groot_env/.venv` (Python 3.10) | Serves `nvidia/GR00T-N1.5-3B` or any robocasa365 fine-tuned checkpoint. Has its own venv — N1.5 pins torch 2.5.1 which conflicts with the root openpi env. Uses the same WebSocket protocol as `serve_policy.py`; in this branch the GR00T adapter is wired for RoboCasa only. |
 
 ## Support
 
