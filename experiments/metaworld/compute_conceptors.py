@@ -10,7 +10,7 @@ Pipeline:
      ``CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch \
          --collect_activations --output-dir activations/metaworld \
          policy:checkpoint --policy.config=pi05_metaworld \
-         --policy.dir=checkpoints/openpi-metaworld-5000``
+         --policy.dir=checkpoints/coast-metaworld-5000``
      then, in another terminal:
      ``MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
          --collect --split train --num_envs 16``
@@ -20,7 +20,7 @@ Pipeline:
 Usage (from repo root)::
 
     uv run python experiments/metaworld/compute_conceptors.py \\
-        --activation_root activations/metaworld/openpi-metaworld-5000 \\
+        --activation_root activations/metaworld/coast-metaworld-5000 \\
         --output_path conceptors/metaworld_conceptors_fresh.npz
 
 All math lives in ``src/openpi/serving/conceptors.py``; this is just a CLI
@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 class Args:
     # Root directory written by `examples/metaworld/eval_all.py --collect`.
     # Layout: <activation_root>/<checkpoint_step>/<env_name>/episode_NNN_env_NNN/...
-    activation_root: pathlib.Path = pathlib.Path("activations/openpi-metaworld-5000")
+    activation_root: pathlib.Path = pathlib.Path("activations/metaworld/coast-metaworld-5000")
 
     # Output NPZ (parent dir will be created).
     output_path: pathlib.Path = pathlib.Path("conceptors/metaworld_conceptors_fresh.npz")

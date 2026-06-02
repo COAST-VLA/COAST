@@ -37,7 +37,7 @@ Logs land in `experiments/metaworld/run_logs/`. Runs the 5 stages below sequenti
 CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --collect_activations \
     --output-dir activations/metaworld --port 8201 \
     policy:checkpoint --policy.config pi05_metaworld \
-    --policy.dir checkpoints/openpi-metaworld-5000
+    --policy.dir checkpoints/coast-metaworld-5000
 
 # (a1) In a second terminal, collect activations on every ML45 train task: seed=0.
 MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
@@ -49,7 +49,7 @@ MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
 #     checkpoint) are skipped with a warning — conceptor steering needs both
 #     classes. Pick harder tasks or collect more episodes if too many skip.
 CUDA_VISIBLE_DEVICES="" uv run python experiments/metaworld/compute_conceptors.py \
-    --activation_root activations/metaworld/openpi-metaworld-5000 \
+    --activation_root activations/metaworld/coast-metaworld-5000 \
     --output_path conceptors/metaworld_conceptors.npz
 
 # (c) Sweep hyperparameters: seed=15 → disjoint env seeds vs collection.
@@ -64,7 +64,7 @@ CUDA_VISIBLE_DEVICES=0 uv run python experiments/metaworld/find_best_configs.py 
 CUDA_VISIBLE_DEVICES=0 uv run scripts/serve_policy.py --pytorch --steer \
     --conceptor_npz conceptors/metaworld_conceptors.npz --port 8301 \
     policy:checkpoint --policy.config pi05_metaworld \
-    --policy.dir checkpoints/openpi-metaworld-5000
+    --policy.dir checkpoints/coast-metaworld-5000
 
 # (e) Final held-out eval with per-task tuned configs: seed=30 → another disjoint
 #     env-seed population. Run TWICE — once unsteered for baseline, once steered.
@@ -81,7 +81,7 @@ MUJOCO_GL=egl uv run examples/metaworld/eval_all.py \
 
 | Step | Output | Notes |
 |------|--------|-------|
-| (a) | `activations/metaworld/openpi-metaworld-5000/<env_name>/episode_NNN_env_NNN/step_NNNN/*.npz` | 16 envs × 45 ML45-train tasks |
+| (a) | `activations/metaworld/coast-metaworld-5000/<env_name>/episode_NNN_env_NNN/step_NNNN/*.npz` | 16 envs × 45 ML45-train tasks |
 | (b) | `conceptors/metaworld_conceptors.npz` | `{env_name}__L{L}__{α}__C_{kind}` + per-step + `linear_direction` |
 | (d) | `experiments/metaworld/steering_results/<ts>/partial_results.jsonl` + `per_task_results.json` | Streaming SR |
 | (d) | `experiments/metaworld/best_configs.json` | Per-task winners |

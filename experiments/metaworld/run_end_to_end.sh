@@ -17,7 +17,7 @@
 set -euo pipefail
 
 GPU="${GPU:-0}"
-CHECKPOINT_DIR="${CHECKPOINT_DIR:-checkpoints/openpi-metaworld-5000}"
+CHECKPOINT_DIR="${CHECKPOINT_DIR:-checkpoints/coast-metaworld-5000}"
 SPLIT="${SPLIT:-subset}"
 NUM_ENVS="${NUM_ENVS:-16}"
 NUM_EPISODES="${NUM_EPISODES:-15}"

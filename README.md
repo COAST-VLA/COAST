@@ -1,6 +1,6 @@
-# openpi-metaworld
+# COAST
 
-This is a fork of [Physical Intelligence's openpi](https://github.com/Physical-Intelligence/openpi) with three sim environment examples wired up end-to-end, plus a pluggable policy-server layer. RoboCasa can target either the pi0/pi0.5 server or the isolated NVIDIA GR00T server without changing the client. For GR00T setup steps, please follow the [groot_env/README.md](groot_env/README.md). The setup steps below are for the original openpi and the pi0/pi0.5 models.
+COAST is a VLA evaluation, activation-collection, and steering repo built on [Physical Intelligence's openpi](https://github.com/Physical-Intelligence/openpi). It wires MetaWorld, LIBERO, and RoboCasa examples end-to-end, adds server-side activation collection, and includes a pluggable policy-server layer. RoboCasa can target either the pi0/pi0.5 server or the isolated NVIDIA GR00T server without changing the client. For GR00T setup steps, please follow the [groot_env/README.md](groot_env/README.md). The setup steps below are for the openpi-derived pi0 and pi0.5 models.
 
 ## Installation
 
@@ -126,7 +126,7 @@ The repo has been tested with Ubuntu 22.04, we do not currently support other op
 When cloning this repo, make sure to update submodules:
 
 ```bash
-git clone --recurse-submodules git@github.com:Physical-Intelligence/openpi.git
+git clone --recurse-submodules git@github.com:COAST-VLA/COAST.git
 
 # Or if you already cloned the repo:
 git submodule update --init --recursive
