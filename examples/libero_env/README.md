@@ -177,7 +177,7 @@ toward the subspace of successful rollouts. The end-user surface is one flag:
    uv run scripts/serve_policy.py --pytorch --steer \
        --conceptor_npz conceptors/libero_conceptors.npz \
        policy:checkpoint \
-       --policy.config pi05_libero --policy.dir checkpoints/coast-libero-2000
+       --policy.config pi05_libero --policy.dir checkpoints/openpi-libero-2000
 
    # pi0-FAST:
    uv run scripts/serve_policy.py --steer \

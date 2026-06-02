@@ -19,7 +19,7 @@ from openpi.policies import policy_config as _policy_config
 from openpi.serving.steering import ConceptorSteeringHook
 from openpi.training import config as _config
 
-_CHECKPOINT_DIR = "checkpoints/coast-libero-2000"
+_CHECKPOINT_DIR = "checkpoints/openpi-libero-2000"
 
 
 def _prepare_observation(policy):
