@@ -214,13 +214,6 @@ Tasks not present in `best_configs.json` fall back to the config's `defaults` bl
 
 See `examples/libero_env/README.md` for the full strategy table (`global`, `per_step`, `positive_only`, `random_matched`, `linear`) and error-behavior notes. For pi0-fast, `per_step` maps to first/mid/last token-position conceptors, and `linear` is rejected unless a separate fast linear/ActAdd implementation is added.
 
-## Results
-
-Mean success rate and per-task comparisons across released checkpoints:
-
-![Comparison](figures/compare_means_5000_vs_25000.png)
-![Comparison Per Task](figures/compare_per_task_5000_vs_25000.png)
-
 ## Testing
 
 Run from the repo root (root venv). MetaWorld env tests need EGL rendering and are marked `manual` (GPU-required, skipped in CI).

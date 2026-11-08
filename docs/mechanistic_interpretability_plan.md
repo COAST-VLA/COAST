@@ -125,19 +125,7 @@ The Gemma FFN uses a gated MLP: `output = (GELU(x @ W_gate) * (x @ W_up)) @ W_do
 Collect activations during evaluation rollouts on all 45 ML45 train tasks (in-distribution).
 The trained checkpoint is at `checkpoints/pi05_metaworld/pi05_metaworld_test/5000/`.
 
-We use the **5000-step checkpoint** because it has a good mix of successes and failures (mean success rate 75.6%), which is ideal for comparing "good" vs "bad" activations. A fully converged checkpoint would have too few failures to analyze.
-
-### Evaluation Results (5000-step checkpoint)
-
-**Perfect tasks (100%):** button-press-topdown-v3, button-press-topdown-wall-v3, button-press-v3, button-press-wall-v3, coffee-button-v3, door-close-v3, door-open-v3, drawer-close-v3, drawer-open-v3, faucet-open-v3, handle-press-side-v3, handle-press-v3, plate-slide-v3, plate-slide-side-v3, push-wall-v3, sweep-v3, window-open-v3, window-close-v3
-
-**High success (67-93%):** coffee-pull-v3, pick-place-v3, peg-unplug-side-v3, reach-wall-v3, reach-v3, shelf-place-v3, push-v3, faucet-close-v3, push-back-v3, coffee-push-v3, disassemble-v3, hammer-v3, lever-pull-v3, peg-insert-side-v3, stick-pull-v3, sweep-into-v3, plate-slide-back-v3, plate-slide-back-side-v3
-
-**Low success (0-40%):** basketball-v3 (40%), handle-pull-side-v3 (40%), handle-pull-v3 (33%), pick-place-wall-v3 (33%), stick-push-v3 (33%), pick-out-of-hole-v3 (27%), assembly-v3 (20%), soccer-v3 (20%), dial-turn-v3 (0%)
-
-This distribution enables direct comparison of activations between:
-- Tasks the model has fully learned vs tasks it struggles with
-- Successful vs failed rollouts within partially-learned tasks (67-93% range)
+We use the **5000-step checkpoint** because it has a good mix of successes and failures, which is ideal for comparing "good" vs "bad" activations. A fully converged checkpoint would have too few failures to analyze.
 
 ### Evaluation Setup
 

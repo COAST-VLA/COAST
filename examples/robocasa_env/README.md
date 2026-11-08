@@ -104,8 +104,7 @@ Default output: `examples/robocasa_env/output/<env_name>/`. Override with `--out
 ```bash
 cd examples/robocasa_env
 
-# Curated 7-task subset (default; the tasks we have published pi0.5 + GR00T N1.5
-# results for — faster iteration than the full 18-task atomic_seen set).
+# Curated 7-task subset (default; faster iteration than the full 18-task atomic_seen set).
 # eval_all.py defaults --num_episodes=15; drop to --num_episodes 1 for smoke tests.
 MUJOCO_GL=egl uv run python eval_all.py --num_workers 5
 
@@ -178,19 +177,6 @@ cd groot_env
 ACTIVATIONS_DIR=../activations/groot_n15-robocasa-activations-v1-15env/checkpoint-120000/OpenDrawer \
     uv run pytest tests/test_groot_activations.py -v
 ```
-
-## Results
-
-### pi0.5 (15 ep/task, `pi05_pretrain_human300/multitask_learning/75000`, `pretrain` split)
-
-Raw numbers: [`figures/results_75000.json`](figures/results_75000.json). Upstream RoboCasa numbers: [multitask_learning page](https://robocasa.ai/docs/build/html/benchmarking/multitask_learning.html#benchmark-results-and-checkpoints).
-
-![Mean success rate per task set](figures/compare_means_75000.png)
-![Per-task success rates](figures/compare_per_task_75000.png)
-
-### GR00T N1.5
-
-Published comparisons: https://robocasa.ai/docs/build/html/benchmarking/multitask_learning.html
 
 ## Testing
 
