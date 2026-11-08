@@ -46,7 +46,7 @@ The base install above is everything `examples/metaworld/` needs. `examples/libe
 
 | Environment | README | Notes |
 |---|---|---|
-| **MetaWorld** | [`examples/metaworld/README.md`](examples/metaworld/README.md) | 50 manipulation tasks (ML45 split). Shares the root COAST venv. Uses server-side activation collection for mechanistic interpretability, plus the ML45 evaluation results table. |
+| **MetaWorld** | [`examples/metaworld/README.md`](examples/metaworld/README.md) | 50 manipulation tasks (ML45 split). Shares the root COAST venv. Uses server-side activation collection for mechanistic interpretability. |
 | **LIBERO** | [`examples/libero_env/README.md`](examples/libero_env/README.md) | WebSocket client/server LIBERO benchmark. Has its own Python 3.8 venv (`examples/libero_env/.venv`). |
 | **Robocasa** | [`examples/robocasa_env/README.md`](examples/robocasa_env/README.md) | RoboCasa kitchen tasks. Has its own venv (`examples/robocasa_env/.venv`) because robosuite/robocasa conflict with the root COAST venv. Uses a client/server WebSocket eval pattern. |
 

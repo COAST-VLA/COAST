@@ -130,12 +130,7 @@ MUJOCO_GL=egl uv run python eval_all.py --task_suite_name libero_10 --collect --
 Pre-collected datasets:
 
 - [`brandonyang/pi05-libero-activations-v1-2000-15env`](https://huggingface.co/datasets/brandonyang/pi05-libero-activations-v1-2000-15env) — pi0.5, `v1` schema, 2000-step checkpoint, 10 tasks × 15 episodes.
-- [`brandonyang/pi0fast-libero-activations-v1-2000-15env`](https://huggingface.co/datasets/brandonyang/pi0fast-libero-activations-v1-2000-15env) — pi0-FAST, `fast_v1` schema, libero_10, 2000-step, 1.1 GB, mean success 0.65.
-
-## Results
-
-![Comparison of Mean Performance](figures/compare_means_2000_vs_3000_vs_9000.png)
-![Per-task comparison](figures/compare_per_task_2000_vs_3000_vs_9000.png)
+- [`brandonyang/pi0fast-libero-activations-v1-2000-15env`](https://huggingface.co/datasets/brandonyang/pi0fast-libero-activations-v1-2000-15env) — pi0-FAST, `fast_v1` schema, libero_10, 2000-step, 1.1 GB.
 
 ## Testing
 

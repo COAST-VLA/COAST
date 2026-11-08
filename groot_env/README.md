@@ -163,23 +163,6 @@ Supported strategies match the shared client protocol: `global`, `per_step`,
 `per_step_0..per_step_3` keys by default because the published RoboCasa server
 runs 4 denoising steps.
 
-## Results
-
-Robocasa atomic-seen, 15 ep/task, `multitask_learning/checkpoint-120000`:
-
-| Task | **GR00T N1.5 (here)** | pi0.5 (`examples/robocasa_env/figures/results_75000.json`) | GR00T published |
-|---|:-:|:-:|:-:|
-| PickPlaceCounterToStove | **60%** | 47% | 63.2% |
-| PickPlaceCounterToCabinet | **53%** | 47% | 47.5% |
-| OpenDrawer | **53%** | 60% | 81.1% |
-| OpenStandMixerHead | **33%** | 67% | — |
-| CloseFridge | **27%** | 13% | — |
-| TurnOnElectricKettle | **27%** | 13% | — |
-| CoffeeSetupMug | **20%** | 27% | 31.0% |
-| **Mean (these 7)** | **39%** | 39% | — |
-
-RoboCasa's published N1.5 multitask atomic-seen average is **43.0%** over all 18 tasks.
-
 ## Known limitations
 
 1. **Image resolution upsampling.** The pi0-compatible COAST RoboCasa client sends 224×224 images (pi0.5's training resolution); N1.5's RoboCasa head expects 256×256 per its modality config, so `groot_adapter._resize_to_256` upscales via `cv2.INTER_LINEAR` before inference. Rendering the env natively at 256×256 would be marginally better but would require either (a) client-side `--resize_size 256` (breaks pi0.5 compat) or (b) an env-wrapper change.

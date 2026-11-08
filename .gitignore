@@ -200,3 +200,9 @@ cython_debug/
 output/
 
 .vscode/
+
+# Generated steering configs from experiment sweeps (not published)
+experiments/*/best_configs.json
+experiments/droid/selected_params.json
+# Evaluation result figures and per-checkpoint results
+examples/*/figures/
